@@ -35,4 +35,18 @@ class MeetingApiTest {
                 .andExpect(jsonPath("$.title").value("Accessibility standup"))
                 .andExpect(jsonPath("$.status").value("READY"));
     }
+
+    @Test
+    void allowsTheLoopbackOriginUsedByTheFullStackRunner() throws Exception {
+        mockMvc.perform(post("/api/v1/meetings")
+                        .header("Origin", "http://127.0.0.1:3000")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "title": "Loopback validation"
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(header().string("Access-Control-Allow-Origin", "http://127.0.0.1:3000"));
+    }
 }

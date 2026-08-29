@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "modelVersion": "synthetic-v1",
+  "mockModel": true,
+  "labels": [
+    {
+      "index": 0,
+      "id": "NO_SIGN",
+      "captionText": null
+    },
+    {
+      "index": 1,
+      "id": "MOCK_ACTIVE",
+      "captionText": "Synthetic active gesture"
+    }
+  ]
+}

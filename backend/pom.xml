@@ -21,6 +21,7 @@
     <modules>
         <module>meeting-service</module>
         <module>realtime-service</module>
+        <module>sign-inference-service</module>
     </modules>
 
     <properties>

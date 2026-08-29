@@ -1,7 +1,21 @@
 import React, { Component, lazy, Suspense, type ErrorInfo, type ReactNode } from "react";
-import { Captions, Languages, LayoutDashboard, Radio, Settings } from "lucide-react";
+import { Captions, CircleHelp, LockKeyhole, Radio, Settings2 } from "lucide-react";
 
 const MeetingApp = lazy(() => import("meeting/MeetingApp"));
+
+function WaveMark() {
+  return (
+    <svg viewBox="0 0 46 32" aria-hidden="true">
+      <path
+        d="M2 17.5c5.1 0 5.1-10.5 10.2-10.5s5.1 18 10.2 18S27.5 3 32.6 3s5.1 14.5 10.2 14.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="4.5"
+      />
+    </svg>
+  );
+}
 
 type RemoteBoundaryProps = {
   children: ReactNode;
@@ -36,62 +50,54 @@ class RemoteBoundary extends Component<RemoteBoundaryProps, RemoteBoundaryState>
   }
 }
 
-const navigation = [
-  { label: "Live meeting", icon: Radio, active: true },
-  { label: "Transcripts", icon: Captions, active: false },
-  { label: "Vocabulary", icon: Languages, active: false },
-  { label: "Settings", icon: Settings, active: false }
-];
-
 export function App() {
   return (
     <div className="app-shell">
-      <header className="topbar">
-        <a className="brand" href="/" aria-label="SignConnect home">
-          <span className="brand-mark" aria-hidden="true">SC</span>
-          <span>SignConnect</span>
+      <a className="skip-link" href="#meeting-workspace">Skip to meeting workspace</a>
+      <aside className="workspace-rail" aria-label="Application navigation">
+        <a className="brand-symbol" href="/" aria-label="SignConnect home">
+          <WaveMark />
         </a>
-        <div className="topbar-context">
-          <span className="environment-dot" aria-hidden="true" />
-          Prototype environment
-        </div>
-        <button className="avatar" type="button" title="Open account menu" aria-label="Open account menu">
-          LT
-        </button>
-      </header>
-
-      <aside className="sidebar" aria-label="Primary navigation">
-        <div className="workspace-label">
-          <LayoutDashboard size={15} aria-hidden="true" />
-          Workspace
-        </div>
-        <nav>
-          {navigation.map(({ label, icon: Icon, active }) => (
-            <button
-              className={active ? "nav-item active" : "nav-item"}
-              type="button"
-              aria-current={active ? "page" : undefined}
-              disabled={!active}
-              key={label}
-            >
-              <Icon size={18} strokeWidth={1.8} aria-hidden="true" />
-              <span>{label}</span>
-            </button>
-          ))}
+        <nav className="rail-navigation" aria-label="Workspace navigation">
+          <a className="sc-icon-button rail-action active" href="/" aria-current="page" aria-label="Recognition studio">
+            <Radio size={19} strokeWidth={1.7} aria-hidden="true" />
+          </a>
+          <button className="sc-icon-button rail-action" type="button" aria-label="Transcript library" disabled>
+            <Captions size={19} strokeWidth={1.7} aria-hidden="true" />
+          </button>
+          <button className="sc-icon-button rail-action" type="button" aria-label="Workspace settings" disabled>
+            <Settings2 size={19} strokeWidth={1.7} aria-hidden="true" />
+          </button>
         </nav>
-        <div className="sidebar-foot">
-          <span>SGSL pilot</span>
-          <strong>Education pack</strong>
+        <div className="rail-footer">
+          <button className="sc-icon-button rail-action" type="button" aria-label="Help" disabled>
+            <CircleHelp size={19} strokeWidth={1.7} aria-hidden="true" />
+          </button>
+          <span className="region-mark" aria-label="Singapore region">SG</span>
         </div>
       </aside>
 
-      <main className="main-content">
-        <RemoteBoundary>
-          <Suspense fallback={<div className="remote-state">Loading meeting workspace...</div>}>
-            <MeetingApp />
-          </Suspense>
-        </RemoteBoundary>
-      </main>
+      <div className="workspace-frame">
+        <header className="command-header">
+          <div className="product-context">
+            <span className="brand-name">SignConnect</span>
+            <span aria-hidden="true">/</span>
+            <strong>Recognition Studio</strong>
+          </div>
+          <div className="privacy-status" role="note">
+            <LockKeyhole size={14} strokeWidth={1.8} aria-hidden="true" />
+            Camera processing stays private
+          </div>
+        </header>
+
+        <main className="main-content" id="meeting-workspace">
+          <RemoteBoundary>
+            <Suspense fallback={<div className="remote-state">Loading recognition studio…</div>}>
+              <MeetingApp />
+            </Suspense>
+          </RemoteBoundary>
+        </main>
+      </div>
     </div>
   );
 }

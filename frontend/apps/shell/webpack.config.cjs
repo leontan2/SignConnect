@@ -1,6 +1,7 @@
 const HtmlWebpackPlugin = require("html-webpack-plugin");
 const { ModuleFederationPlugin } = require("webpack").container;
 const dependencies = require("./package.json").dependencies;
+const meetingRemoteUrl = process.env.MEETING_REMOTE_URL || "http://127.0.0.1:3001/remoteEntry.js";
 
 module.exports = {
   entry: "./src/index.ts",
@@ -29,7 +30,7 @@ module.exports = {
     new ModuleFederationPlugin({
       name: "shell",
       remotes: {
-        meeting: "meeting@http://localhost:3001/remoteEntry.js"
+        meeting: `meeting@${meetingRemoteUrl}`
       },
       shared: {
         react: { singleton: true, requiredVersion: dependencies.react },
@@ -39,6 +40,7 @@ module.exports = {
     new HtmlWebpackPlugin({ template: "./public/index.html" })
   ],
   devServer: {
+    host: "127.0.0.1",
     port: 3000,
     historyApiFallback: true,
     hot: true

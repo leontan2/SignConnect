@@ -198,11 +198,15 @@ cython_debug/
 node_modules/
 frontend/apps/*/dist/
 npm-debug.log*
+test-results/
+playwright-report/
+.playwright-cli/
 
 # Local tooling
 .idea/
 *.iml
 .DS_Store
+/tasks/**/*.md
 
 # Cursor
 #  Cursor is an AI-powered code editor. `.cursorignore` specifies files/directories to

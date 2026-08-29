@@ -1,0 +1,340 @@
+:root {
+  --sc-canvas: #f3f1eb;
+  --sc-surface: #faf9f5;
+  --sc-surface-raised: #ffffff;
+  --sc-primary: #123b31;
+  --sc-primary-hover: #1b4a3e;
+  --sc-primary-press: #0b2b23;
+  --sc-accent: #e97055;
+  --sc-accent-hover: #d86148;
+  --sc-accent-press: #b94c38;
+  --sc-signal: #c8ff31;
+  --sc-signal-hover: #b9f220;
+  --sc-signal-press: #a3dc0f;
+  --sc-action-ink: #0d1714;
+  --sc-action-ink-hover: #18241f;
+  --sc-selected: #d7e3c7;
+  --sc-selected-hover: #cbdab9;
+  --sc-ink: #142a24;
+  --sc-ink-strong: #0b1f1a;
+  --sc-ink-muted: #65726d;
+  --sc-line: #d9d8d2;
+  --sc-line-strong: #c8cac4;
+  --sc-danger: #b84e3b;
+  --sc-danger-hover: #9e3f30;
+  --sc-focus: rgba(233, 112, 85, 0.46);
+  --sc-radius-control: 9px;
+  --sc-ease-product: cubic-bezier(0.16, 1, 0.3, 1);
+  --sc-shadow-control: 0 1px 2px rgba(13, 37, 31, 0.08), 0 5px 12px rgba(13, 37, 31, 0.06);
+  --sc-shadow-control-hover: 0 2px 4px rgba(13, 37, 31, 0.1), 0 9px 20px rgba(13, 37, 31, 0.1);
+}
+
+.sc-button {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  position: relative;
+  isolation: isolate;
+  border: 1px solid transparent;
+  border-radius: var(--sc-radius-control);
+  padding: 0 14px;
+  overflow: hidden;
+  color: var(--sc-ink);
+  cursor: pointer;
+  font: 700 11px/1 "Plus Jakarta Sans", system-ui, sans-serif;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+  white-space: nowrap;
+  box-shadow: var(--sc-shadow-control);
+  touch-action: manipulation;
+  transition:
+    background-color 160ms var(--sc-ease-product),
+    border-color 160ms var(--sc-ease-product),
+    box-shadow 160ms var(--sc-ease-product),
+    color 160ms var(--sc-ease-product),
+    transform 160ms var(--sc-ease-product);
+}
+
+.sc-button::before {
+  content: "";
+  position: absolute;
+  inset: 0 8px auto;
+  z-index: -1;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.34);
+  pointer-events: none;
+}
+
+.sc-button svg {
+  flex: 0 0 auto;
+  transition: transform 160ms var(--sc-ease-product);
+}
+
+.sc-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: var(--sc-shadow-control-hover);
+}
+
+.sc-button:hover:not(:disabled) svg { transform: scale(1.06); }
+
+.sc-button:active:not(:disabled) {
+  transform: scale(0.98);
+  box-shadow: 0 1px 2px rgba(13, 37, 31, 0.08);
+}
+
+.sc-button:focus-visible,
+.sc-icon-button:focus-visible {
+  outline: 3px solid var(--sc-focus);
+  outline-offset: 2px;
+}
+
+.sc-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+  box-shadow: none;
+}
+
+.sc-button--primary {
+  border-color: var(--sc-primary);
+  background: var(--sc-primary);
+  color: #ffffff;
+}
+
+.sc-button--primary:hover:not(:disabled) {
+  border-color: var(--sc-primary-hover);
+  background: var(--sc-primary-hover);
+}
+
+.sc-button--primary:active:not(:disabled) {
+  border-color: var(--sc-primary-press);
+  background: var(--sc-primary-press);
+}
+
+.sc-button.sc-button--signal {
+  border-color: #a8d81e;
+  background: var(--sc-signal);
+  color: #122018;
+  box-shadow: 0 1px 2px rgba(77, 105, 11, 0.14), 0 7px 17px rgba(161, 218, 18, 0.24);
+}
+
+.sc-button.sc-button--signal::before { background: rgba(255, 255, 255, 0.58); }
+
+.sc-button.sc-button--signal:hover:not(:disabled) {
+  border-color: #9dcc13;
+  background: var(--sc-signal-hover);
+  box-shadow: 0 2px 4px rgba(77, 105, 11, 0.14), 0 10px 24px rgba(161, 218, 18, 0.3);
+}
+
+.sc-button.sc-button--signal:active:not(:disabled) {
+  border-color: #90bd0c;
+  background: var(--sc-signal-press);
+}
+
+.sc-button.sc-button--ink {
+  border-color: var(--sc-action-ink);
+  background: var(--sc-action-ink);
+  color: #ffffff;
+}
+
+.sc-button.sc-button--ink:hover:not(:disabled) {
+  border-color: var(--sc-action-ink-hover);
+  background: var(--sc-action-ink-hover);
+}
+
+.sc-button--secondary {
+  border-color: var(--sc-line-strong);
+  background: var(--sc-surface-raised);
+  color: var(--sc-ink);
+}
+
+.sc-button--secondary:hover:not(:disabled) {
+  border-color: #aeb7b0;
+  background: #f1f2ed;
+}
+
+.sc-button--accent {
+  border-color: var(--sc-accent);
+  background: var(--sc-accent);
+  color: #ffffff;
+  box-shadow: 0 1px 2px rgba(117, 43, 29, 0.1), 0 7px 16px rgba(201, 86, 63, 0.18);
+}
+
+.sc-button--accent:hover:not(:disabled) {
+  border-color: var(--sc-accent-hover);
+  background: var(--sc-accent-hover);
+}
+
+.sc-button--accent:active:not(:disabled) {
+  border-color: var(--sc-accent-press);
+  background: var(--sc-accent-press);
+}
+
+.sc-button--selected {
+  border-color: #c1d1b8;
+  background: var(--sc-selected);
+  color: var(--sc-ink-strong);
+}
+
+.sc-button--selected:hover:not(:disabled) {
+  border-color: #b2c4a7;
+  background: var(--sc-selected-hover);
+}
+
+.sc-button.sc-button--confirmed:disabled {
+  border-color: #bfd1bd;
+  background: #edf2e7;
+  color: #285345;
+  opacity: 1;
+}
+
+.sc-button--danger {
+  border-color: var(--sc-danger);
+  background: var(--sc-danger);
+  color: #ffffff;
+}
+
+.sc-button--danger:hover:not(:disabled) {
+  border-color: var(--sc-danger-hover);
+  background: var(--sc-danger-hover);
+}
+
+.sc-button--compact {
+  min-height: 30px;
+  padding-inline: 10px;
+  font-size: 10px;
+}
+
+.sc-icon-button {
+  width: 40px;
+  height: 40px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--sc-ink-muted);
+  cursor: pointer;
+  text-decoration: none;
+  touch-action: manipulation;
+  transition:
+    background-color 160ms var(--sc-ease-product),
+    border-color 160ms var(--sc-ease-product),
+    box-shadow 160ms var(--sc-ease-product),
+    color 160ms var(--sc-ease-product),
+    transform 160ms var(--sc-ease-product);
+}
+
+.sc-icon-button:hover:not(:disabled) {
+  border-color: rgba(200, 202, 196, 0.7);
+  background: #eceee8;
+  color: var(--sc-ink);
+  transform: translateY(-1px);
+}
+
+.sc-icon-button:active:not(:disabled) { transform: scale(0.96); }
+
+.sc-icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.sc-icon-button[aria-current="page"],
+.sc-icon-button.is-active {
+  border-color: var(--sc-primary);
+  background: var(--sc-primary);
+  color: #ffffff;
+  box-shadow: 0 7px 18px rgba(18, 59, 49, 0.16);
+}
+
+.sc-toast-viewport {
+  position: fixed;
+  top: 88px;
+  right: 20px;
+  z-index: 90;
+  width: min(344px, calc(100vw - 116px));
+  display: grid;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.sc-toast {
+  min-height: 68px;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 10px 10px 12px;
+  border: 1px solid var(--sc-line);
+  border-left: 3px solid var(--sc-primary);
+  border-radius: 11px;
+  background: var(--sc-surface-raised);
+  color: var(--sc-ink);
+  box-shadow: 0 16px 40px rgba(13, 37, 31, 0.16), 0 3px 10px rgba(13, 37, 31, 0.08);
+  pointer-events: auto;
+  animation: sc-toast-enter 240ms var(--sc-ease-product) both;
+}
+
+.sc-toast--info { border-left-color: #6d7e76; }
+.sc-toast--error { border-left-color: var(--sc-danger); }
+
+.sc-toast__icon {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  background: #edf2e7;
+  color: var(--sc-primary);
+}
+
+.sc-toast--info .sc-toast__icon { background: #eef0ec; color: #52645c; }
+.sc-toast--error .sc-toast__icon { background: #f8e4de; color: var(--sc-danger); }
+
+.sc-toast__content {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.sc-toast__content strong {
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.sc-toast__content > span {
+  overflow-wrap: anywhere;
+  color: var(--sc-ink-muted);
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.sc-toast__dismiss {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--sc-ink-muted);
+  cursor: pointer;
+  transition: background-color 160ms var(--sc-ease-product), color 160ms var(--sc-ease-product);
+}
+
+.sc-toast__dismiss:hover { background: #eff0eb; color: var(--sc-ink); }
+.sc-toast__dismiss:focus-visible { outline: 3px solid var(--sc-focus); outline-offset: 1px; }
+
+@keyframes sc-toast-enter {
+  from { opacity: 0; transform: translateY(-8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sc-button,
+  .sc-button svg,
+  .sc-icon-button {
+    transition-duration: 0.01ms;
+  }
+}

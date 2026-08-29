@@ -1,0 +1,316 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.signconnect.dev/sign-recognition/v1/server-event.schema.json",
+  "title": "SignConnect server recognition event v1",
+  "description": "Strict same-client server event union. Only caption.final is transcript content; recognition.unknown and recognition.status are transient feedback.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/captionFinal"
+    },
+    {
+      "$ref": "#/$defs/recognitionUnknown"
+    },
+    {
+      "$ref": "#/$defs/recognitionStatus"
+    }
+  ],
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+      "description": "A UUID serialized with hyphens."
+    },
+    "captionFinal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "type",
+        "meetingId",
+        "streamId",
+        "sequence",
+        "payload",
+        "occurredAt"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "const": 1,
+          "description": "The v1 wire-contract version."
+        },
+        "meetingId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Monotonically increasing event sequence scoped to the submitting WebSocket connection."
+        },
+        "occurredAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "RFC 3339 timestamp at which the server event occurred."
+        },
+        "type": {
+          "type": "string",
+          "const": "caption.final",
+          "description": "Final-caption event discriminator."
+        },
+        "streamId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "type": "object",
+          "description": "Metadata for one finalized caption occurrence.",
+          "additionalProperties": false,
+          "required": [
+            "labelId",
+            "text",
+            "confidence",
+            "modelVersion",
+            "inferenceLatencyMs",
+            "mockModel"
+          ],
+          "properties": {
+            "labelId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[A-Z][A-Z0-9_]*$",
+              "description": "A stable ASCII classifier label identifier."
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240,
+              "description": "Final caption text. NO_SIGN and unknown outcomes cannot produce this event."
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Finite classifier confidence in the inclusive range 0 through 1."
+            },
+            "modelVersion": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+              "description": "A non-sensitive model artifact version identifier."
+            },
+            "inferenceLatencyMs": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Finite inference latency in milliseconds; excludes network and stabilization time."
+            },
+            "mockModel": {
+              "type": "boolean",
+              "description": "True when the caption came from the deterministic synthetic integration model."
+            }
+          }
+        }
+      }
+    },
+    "recognitionUnknown": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "type",
+        "meetingId",
+        "streamId",
+        "sequence",
+        "payload",
+        "occurredAt"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "const": 1,
+          "description": "The v1 wire-contract version."
+        },
+        "meetingId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Monotonically increasing event sequence scoped to the submitting WebSocket connection."
+        },
+        "occurredAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "RFC 3339 timestamp at which the server event occurred."
+        },
+        "type": {
+          "type": "string",
+          "const": "recognition.unknown",
+          "description": "Transient unknown-result event discriminator."
+        },
+        "streamId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "type": "object",
+          "description": "Rate-limited feedback for tracked activity that did not stabilize into a caption.",
+          "additionalProperties": false,
+          "required": [
+            "reason",
+            "confidence",
+            "modelVersion",
+            "inferenceLatencyMs",
+            "mockModel"
+          ],
+          "properties": {
+            "reason": {
+              "type": "string",
+              "enum": [
+                "LOW_CONFIDENCE",
+                "UNSTABLE_PREDICTION"
+              ],
+              "description": "A non-sensitive reason suitable for product feedback."
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Finite classifier confidence in the inclusive range 0 through 1."
+            },
+            "modelVersion": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+              "description": "A non-sensitive model artifact version identifier."
+            },
+            "inferenceLatencyMs": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Finite inference latency in milliseconds; excludes network and stabilization time."
+            },
+            "mockModel": {
+              "type": "boolean",
+              "description": "True when the result came from the deterministic synthetic integration model."
+            }
+          }
+        }
+      }
+    },
+    "recognitionStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "type",
+        "meetingId",
+        "streamId",
+        "sequence",
+        "payload",
+        "occurredAt"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "const": 1,
+          "description": "The v1 wire-contract version."
+        },
+        "meetingId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Monotonically increasing event sequence scoped to the submitting WebSocket connection."
+        },
+        "occurredAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "RFC 3339 timestamp at which the server event occurred."
+        },
+        "type": {
+          "type": "string",
+          "const": "recognition.status",
+          "description": "Recognition status event discriminator."
+        },
+        "streamId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Related stream UUID, or null when malformed input supplied no usable stream identifier."
+        },
+        "payload": {
+          "type": "object",
+          "description": "Recognition lifecycle, availability, recovery, or safe protocol feedback.",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "reason",
+            "message",
+            "modelVersion",
+            "mockModel"
+          ],
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "READY",
+                "UNAVAILABLE",
+                "INVALID_INPUT",
+                "STOPPED"
+              ],
+              "description": "Current recognition service state for this client."
+            },
+            "reason": {
+              "type": "string",
+              "enum": [
+                "STARTED",
+                "RECOVERED",
+                "TIMEOUT",
+                "SERVICE_UNAVAILABLE",
+                "INVALID_EVENT",
+                "OUT_OF_ORDER",
+                "UNSUPPORTED_VERSION",
+                "STOPPED_BY_CLIENT"
+              ],
+              "description": "Stable machine-readable status reason."
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160,
+              "description": "Privacy-safe human-readable status text with no landmark or tensor values."
+            },
+            "modelVersion": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+                  "description": "A non-sensitive model artifact version identifier."
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Active model version when known; null before readiness or for protocol-only feedback."
+            },
+            "mockModel": {
+              "type": [
+                "boolean",
+                "null"
+              ],
+              "description": "Whether the active model is synthetic, or null when no model metadata is available."
+            }
+          }
+        }
+      }
+    }
+  }
+}
