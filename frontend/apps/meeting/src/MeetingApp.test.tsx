@@ -12,8 +12,20 @@ import MeetingApp, * as meetingModule from "./MeetingApp";
 const meeting = {
   id: captionFixture.meetingId,
   title: "Accessible team sync",
+  joinCode: "ABC234",
   status: "READY",
   createdAt: "2026-01-01T00:00:00Z"
+} as const;
+
+const meetingSession = {
+  meeting,
+  participant: {
+    id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    displayName: "You",
+    role: "HOST"
+  },
+  realtimeTicket: "signed-realtime-ticket",
+  realtimeTicketExpiresAt: "2026-01-01T04:00:00Z"
 } as const;
 
 type SocketHandler = ((event: Event) => void) | null;
@@ -207,7 +219,7 @@ function makeHarness(): Harness {
   });
   vi.stubGlobal("fetch", vi.fn(async () => ({
     ok: true,
-    json: async () => meeting
+    json: async () => meetingSession
   })));
   vi.stubGlobal("WebSocket", FakeSocket);
 
@@ -261,6 +273,36 @@ async function connectSession(harness: Harness): Promise<FakeSocket> {
   await waitFor(() => expect(FakeSocket.instances).toHaveLength(1));
   const socket = FakeSocket.instances[0];
   act(() => socket.open());
+  expect(socket.parsedSent()).toContainEqual({
+    schemaVersion: 1,
+    type: "room.join",
+    ticket: meetingSession.realtimeTicket
+  });
+  act(() => {
+    socket.message({
+      schemaVersion: 1,
+      type: "room.joined",
+      meetingId: meeting.id,
+      participantId: meetingSession.participant.id,
+      sequence: 0,
+      payload: { displayName: "You", role: "HOST" },
+      occurredAt: meeting.createdAt
+    });
+    socket.message({
+      schemaVersion: 1,
+      type: "room.snapshot",
+      meetingId: meeting.id,
+      sequence: 1,
+      payload: {
+        participants: [{
+          participantId: meetingSession.participant.id,
+          displayName: "You",
+          role: "HOST"
+        }]
+      },
+      occurredAt: meeting.createdAt
+    });
+  });
   await screen.findByRole("button", { name: "Session active" });
   return socket;
 }
@@ -309,12 +351,33 @@ beforeEach(() => {
 });
 
 describe("Meeting recognition product UX", () => {
+  it("joins an existing room with the participant name and normalized share code", async () => {
+    const harness = makeHarness();
+    const name = screen.getByLabelText("Display name");
+    const code = screen.getByLabelText("Room code");
+
+    await harness.user.clear(name);
+    await harness.user.type(name, "Ari");
+    await harness.user.type(code, "xy7p9q");
+    await harness.user.click(screen.getByRole("button", { name: "Join room" }));
+
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/v1/meetings/XY7P9Q/participants"),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ displayName: "Ari" })
+      })
+    );
+    await waitFor(() => expect(FakeSocket.instances).toHaveLength(1));
+    expect(FakeSocket.instances[0].url).toContain(meeting.id);
+  });
+
   it("keeps camera preview separate from keyboard-operated recognition consent", async () => {
     const harness = makeHarness();
     await enableCamera(harness);
     const socket = await connectSession(harness);
 
-    expect(socket.sent).toHaveLength(0);
+    expect(socket.parsedSent().filter((event) => event.type !== "room.join")).toHaveLength(0);
     expect(FakeWorker.instances).toHaveLength(0);
     expect(screen.getByRole("button", { name: "Start recognition" }))
       .toHaveAccessibleDescription(/transient hand and body landmark transmission.*raw video is not transmitted/i);
@@ -391,7 +454,18 @@ describe("Meeting recognition product UX", () => {
     expect(harness.retryScheduler.delays).toEqual([250]);
     act(() => harness.retryScheduler.runNext());
     const secondSocket = FakeSocket.instances[1];
-    act(() => secondSocket.open());
+    act(() => {
+      secondSocket.open();
+      secondSocket.message({
+        schemaVersion: 1,
+        type: "room.joined",
+        meetingId: meeting.id,
+        participantId: meetingSession.participant.id,
+        sequence: 3,
+        payload: { displayName: "You", role: "HOST" },
+        occurredAt: meeting.createdAt
+      });
+    });
     await waitFor(() => expect(FakeWorker.instances).toHaveLength(2));
     const secondWorker = FakeWorker.instances[1];
     act(() => secondWorker.emit({ type: "worker.ready" }));
@@ -422,7 +496,7 @@ describe("Meeting recognition product UX", () => {
     const start = screen.getByRole("button", { name: "Start recognition" });
     await harness.user.click(start);
     expect(screen.getByText(/mediapipe model is loading/i)).toBeVisible();
-    expect(socket.sent).toHaveLength(0);
+    expect(socket.parsedSent().filter((event) => event.type !== "room.join")).toHaveLength(0);
     const worker = FakeWorker.instances[0];
     act(() => worker.emit({ type: "worker.ready" }));
     await screen.findByText(/tracking is ready/i);
@@ -724,7 +798,7 @@ describe("Meeting recognition product UX", () => {
     await act(async () => {
       meetingRequest.resolve({
         ok: true,
-        json: async () => meeting
+        json: async () => meetingSession
       } as Response);
       await meetingRequest.promise;
       await Promise.resolve();
@@ -755,25 +829,28 @@ describe("Meeting recognition product UX", () => {
     expect(requestMeeting).toHaveBeenCalledTimes(2);
 
     await act(async () => {
-      secondRequest.resolve({ ok: true, json: async () => meeting } as Response);
+      secondRequest.resolve({ ok: true, json: async () => meetingSession } as Response);
       await secondRequest.promise;
       await Promise.resolve();
     });
     expect(createSocket).toHaveBeenCalledTimes(1);
     expect(createSocket).toHaveBeenLastCalledWith(expect.stringContaining(meeting.id));
 
-    const staleMeeting = {
-      ...meeting,
-      id: "55555555-5555-4555-8555-555555555555"
+    const staleMeetingSession = {
+      ...meetingSession,
+      meeting: {
+        ...meeting,
+        id: "55555555-5555-4555-8555-555555555555"
+      }
     };
     await act(async () => {
-      firstRequest.resolve({ ok: true, json: async () => staleMeeting } as Response);
+      firstRequest.resolve({ ok: true, json: async () => staleMeetingSession } as Response);
       await firstRequest.promise;
       await Promise.resolve();
     });
 
     expect(createSocket).toHaveBeenCalledTimes(1);
-    expect(screen.getByText(`Room ${meeting.id.slice(0, 8)}`)).toBeVisible();
+    expect(screen.getByText(`Room ${meeting.joinCode}`)).toBeVisible();
   });
 
   it("cannot enable simulator controls through the public runtime composition seam", () => {

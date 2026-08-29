@@ -27,6 +27,38 @@ describe("parseRealtimeEvent", () => {
     });
     expect(parseRealtimeEvent(unknownFixture)).toEqual({ ok: true, event: unknownFixture });
     expect(parseRealtimeEvent(readyFixture)).toEqual({ ok: true, event: readyFixture });
+    const roomCaption = {
+      ...captionFixture,
+      participantId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      captionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      payload: { ...captionFixture.payload, sourceDisplayName: "Leon" }
+    };
+    const roomJoined = {
+      schemaVersion: 1,
+      type: "room.joined",
+      meetingId: captionFixture.meetingId,
+      participantId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      sequence: 0,
+      payload: { displayName: "Leon", role: "HOST" },
+      occurredAt: captionFixture.occurredAt
+    };
+    const roomSnapshot = {
+      schemaVersion: 1,
+      type: "room.snapshot",
+      meetingId: captionFixture.meetingId,
+      sequence: 1,
+      payload: {
+        participants: [{
+          participantId: roomJoined.participantId,
+          displayName: "Leon",
+          role: "HOST"
+        }]
+      },
+      occurredAt: captionFixture.occurredAt
+    };
+    expect(parseRealtimeEvent(roomCaption)).toEqual({ ok: true, event: roomCaption });
+    expect(parseRealtimeEvent(roomJoined)).toEqual({ ok: true, event: roomJoined });
+    expect(parseRealtimeEvent(roomSnapshot)).toEqual({ ok: true, event: roomSnapshot });
     expect(parseRealtimeEvent(JSON.stringify(malformedCaptionFixture))).toEqual({
       ok: false,
       reason: "malformed"
@@ -40,5 +72,11 @@ describe("parseRealtimeEvent", () => {
       ...readyFixture,
       schemaVersion: 2
     })).toEqual({ ok: false, reason: "unsupported" });
+    expect(parseRealtimeEvent({
+      ...roomSnapshot,
+      payload: {
+        participants: [{ ...roomSnapshot.payload.participants[0], rawLandmarks: [1, 2, 3] }]
+      }
+    })).toEqual({ ok: false, reason: "malformed" });
   });
 });

@@ -1,9 +1,14 @@
 package com.signconnect.meeting.api;
 
-import com.signconnect.meeting.application.MeetingRegistry;
+import com.signconnect.meeting.application.MeetingAccessService;
+import com.signconnect.meeting.application.MeetingNotFoundException;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -20,15 +25,35 @@ import org.springframework.web.bind.annotation.RestController;
 })
 public class MeetingController {
 
-    private final MeetingRegistry meetingRegistry;
+    private final MeetingAccessService meetingAccessService;
 
-    public MeetingController(MeetingRegistry meetingRegistry) {
-        this.meetingRegistry = meetingRegistry;
+    public MeetingController(MeetingAccessService meetingAccessService) {
+        this.meetingAccessService = meetingAccessService;
     }
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public MeetingResponse create(@Valid @RequestBody CreateMeetingRequest request) {
-        return MeetingResponse.from(meetingRegistry.create(request.title().trim()));
+    public MeetingSessionResponse create(@Valid @RequestBody CreateMeetingRequest request) {
+        return MeetingSessionResponse.from(meetingAccessService.create(
+                request.title().trim(),
+                request.displayName()));
+    }
+
+    @PostMapping("/{joinCode}/participants")
+    @ResponseStatus(HttpStatus.CREATED)
+    public MeetingSessionResponse join(
+            @PathVariable String joinCode,
+            @Valid @RequestBody JoinMeetingRequest request) {
+        return MeetingSessionResponse.from(meetingAccessService.join(joinCode, request.displayName()));
+    }
+
+    @GetMapping("/{meetingId}")
+    public MeetingResponse get(@PathVariable java.util.UUID meetingId) {
+        return MeetingResponse.from(meetingAccessService.get(meetingId));
+    }
+
+    @ExceptionHandler(MeetingNotFoundException.class)
+    public ResponseEntity<Void> notFound() {
+        return ResponseEntity.notFound().build();
     }
 }

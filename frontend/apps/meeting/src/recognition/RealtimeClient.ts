@@ -1,7 +1,7 @@
 import type { ClientRealtimeEvent, ServerRealtimeEvent } from "../api";
 import { parseRealtimeEvent, type ParseRealtimeEventResult } from "./parseRealtimeEvent";
 
-export type RealtimeConnectionStatus = "idle" | "connecting" | "connected" | "reconnecting";
+export type RealtimeConnectionStatus = "idle" | "connecting" | "joining" | "connected" | "reconnecting";
 
 export interface RealtimeConnectionState {
   status: RealtimeConnectionStatus;
@@ -28,6 +28,7 @@ export interface RealtimeRetryScheduler {
 
 export interface RealtimeClientOptions {
   meetingId: string;
+  realtimeTicket?: string;
   endpoint(meetingId: string): string;
   socketFactory?: (url: string) => RealtimeSocketLike;
   retryScheduler?: RealtimeRetryScheduler;
@@ -48,6 +49,7 @@ const defaultRetryScheduler: RealtimeRetryScheduler = {
 
 export class RealtimeClient {
   private readonly meetingId: string;
+  private readonly realtimeTicket?: string;
   private readonly endpoint: (meetingId: string) => string;
   private readonly socketFactory: (url: string) => RealtimeSocketLike;
   private readonly retryScheduler: RealtimeRetryScheduler;
@@ -62,9 +64,11 @@ export class RealtimeClient {
   private generationValue = 0;
   private active = false;
   private hasOpened = false;
+  private roomReady = false;
 
   constructor(options: RealtimeClientOptions) {
     this.meetingId = options.meetingId;
+    this.realtimeTicket = options.realtimeTicket;
     this.endpoint = options.endpoint;
     this.socketFactory = options.socketFactory ?? ((url) => new WebSocket(url));
     this.retryScheduler = options.retryScheduler ?? defaultRetryScheduler;
@@ -92,6 +96,7 @@ export class RealtimeClient {
   disconnect(): void {
     if (!this.active && !this.socket && this.retryHandle === null) return;
     this.active = false;
+    this.roomReady = false;
     this.cancelRetry();
     const socket = this.socket;
     this.socket = null;
@@ -106,13 +111,14 @@ export class RealtimeClient {
   }
 
   isOpen(): boolean {
-    return this.active && this.socket?.readyState === SOCKET_OPEN;
+    return this.active && this.roomReady && this.socket?.readyState === SOCKET_OPEN;
   }
 
   isUnderPressure(): boolean {
     const socket = this.socket;
     return !this.active
       || !socket
+      || !this.roomReady
       || socket.readyState !== SOCKET_OPEN
       || socket.bufferedAmount >= this.maximumBufferedAmount;
   }
@@ -132,6 +138,7 @@ export class RealtimeClient {
     if (!this.active) return;
     this.cancelRetry();
     this.generationValue += 1;
+    this.roomReady = false;
     const generation = this.generationValue;
     this.emitState({
       status: reconnecting ? "reconnecting" : "connecting",
@@ -150,16 +157,31 @@ export class RealtimeClient {
 
     socket.onopen = () => {
       if (!this.isCurrent(socket, generation)) return;
-      const recovered = this.hasOpened;
-      this.hasOpened = true;
-      this.retryAttempt = 0;
-      this.emitState({ status: "connected", generation, recovered });
+      if (this.realtimeTicket) {
+        try {
+          socket.send(JSON.stringify({
+            schemaVersion: 1,
+            type: "room.join",
+            ticket: this.realtimeTicket
+          }));
+          this.emitState({ status: "joining", generation, recovered: false });
+        } catch {
+          socket.close();
+        }
+        return;
+      }
+      this.markReady(generation);
     };
     socket.onmessage = (message) => {
       if (!this.isCurrent(socket, generation)) return;
       const parsed = parseRealtimeEvent(message.data);
       if (parsed.ok) {
         this.onEvent?.(parsed.event, generation);
+        if (parsed.event.type === "room.joined") {
+          this.markReady(generation);
+        } else if (parsed.event.type === "room.error") {
+          this.disconnect();
+        }
       } else {
         this.onParseIssue?.(parsed, generation);
       }
@@ -175,6 +197,7 @@ export class RealtimeClient {
     socket.onclose = () => {
       if (!this.isCurrent(socket, generation)) return;
       this.socket = null;
+      this.roomReady = false;
       this.scheduleReconnect();
     };
   }
@@ -200,6 +223,15 @@ export class RealtimeClient {
     if (this.retryHandle === null) return;
     this.retryScheduler.clear(this.retryHandle);
     this.retryHandle = null;
+  }
+
+  private markReady(generation: number): void {
+    if (!this.active || generation !== this.generationValue) return;
+    const recovered = this.hasOpened;
+    this.hasOpened = true;
+    this.roomReady = true;
+    this.retryAttempt = 0;
+    this.emitState({ status: "connected", generation, recovered });
   }
 
   private isCurrent(socket: RealtimeSocketLike, generation: number): boolean {

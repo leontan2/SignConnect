@@ -16,7 +16,8 @@ import static org.assertj.core.api.Assertions.assertThat;
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {
                 "signconnect.recognition.tracking-timeout=50ms",
-                "signconnect.recognition.max-message-size=64KB"
+                "signconnect.recognition.max-message-size=64KB",
+                "signconnect.rooms.require-join=false"
         })
 class RealtimeRecognitionStartupTest {
 

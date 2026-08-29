@@ -4,18 +4,27 @@ import {
   Captions,
   Check,
   CircleAlert,
+  Copy,
   Hand,
   LoaderCircle,
+  LogIn,
+  Plus,
   Radio,
   ScanLine,
   Square,
+  Users,
   Video,
   VideoOff
 } from "lucide-react";
 
 import {
   createMeeting,
+  joinMeeting,
+  MeetingRequestError,
   type CaptionEvent,
+  type Meeting,
+  type Participant,
+  type RoomParticipant,
   type ServerRealtimeEvent
 } from "./api";
 import {
@@ -72,6 +81,9 @@ function productReducer(state: ProductState, action: ProductAction): ProductStat
 
   const event = action.event;
   if (event.type === "caption.final") {
+    if (event.captionId && state.captions.some((caption) => caption.captionId === event.captionId)) {
+      return state;
+    }
     return {
       ...state,
       captions: [...state.captions, event],
@@ -89,6 +101,8 @@ function productReducer(state: ProductState, action: ProductAction): ProductStat
       mockModelActive: state.mockModelActive || event.payload.mockModel
     };
   }
+
+  if (event.type !== "recognition.status") return state;
 
   let serviceStatus = event.payload.message;
   if (event.payload.state === "UNAVAILABLE" && event.payload.reason === "TIMEOUT") {
@@ -137,6 +151,7 @@ function recognitionDisabledReason(cameraState: CameraState, connected: boolean)
 
 function connectionLabel(status: string, recovered: boolean, retryDelayMs?: number): string {
   if (status === "connected") return recovered ? "Connection recovered" : "Connected";
+  if (status === "joining") return "Joining room";
   if (status === "connecting") return "Connecting";
   if (status === "reconnecting") {
     return retryDelayMs === undefined ? "Reconnecting" : `Reconnecting in ${retryDelayMs} ms`;
@@ -265,7 +280,14 @@ function drawBrowserLocalOverlay(
 
 export function createMeetingApp(composition: MeetingAppComposition = {}): React.ComponentType {
   function MeetingAppConfigured() {
-    const [meeting, setMeeting] = useState<Awaited<ReturnType<typeof createMeeting>> | null>(null);
+    const [meeting, setMeeting] = useState<Meeting | null>(null);
+    const [currentParticipant, setCurrentParticipant] = useState<Participant | null>(null);
+    const [participants, setParticipants] = useState<RoomParticipant[]>([]);
+    const [displayName, setDisplayName] = useState("You");
+    const [joinCode, setJoinCode] = useState(() => {
+      if (typeof window === "undefined") return "";
+      return new URLSearchParams(window.location.search).get("room")?.toUpperCase() ?? "";
+    });
     const [meetingRequestPending, setMeetingRequestPending] = useState(false);
     const [cameraState, setCameraState] = useState<CameraState>("off");
     const [error, setError] = useState<string | null>(null);
@@ -284,6 +306,39 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
     const lastStableGestureTimestampRef = useRef(Number.NEGATIVE_INFINITY);
 
     const acceptServerEvent = useCallback((event: ServerRealtimeEvent) => {
+      if (event.type === "room.snapshot") {
+        setParticipants(event.payload.participants);
+        return;
+      }
+      if (event.type === "participant.joined" || event.type === "participant.left") {
+        if (event.type === "participant.joined") {
+          setParticipants((current) => [
+            ...current.filter((participant) => participant.participantId !== event.participantId),
+            {
+              participantId: event.participantId,
+              displayName: event.payload.displayName,
+              role: event.payload.role
+            }
+          ]);
+        } else {
+          setParticipants((current) => current.filter(
+            (participant) => participant.participantId !== event.participantId
+          ));
+        }
+        return;
+      }
+      if (event.type === "room.error") {
+        setError(event.payload.message);
+        setMeeting(null);
+        setCurrentParticipant(null);
+        setParticipants([]);
+        return;
+      }
+      if (event.type === "room.joined") return;
+      if (event.type === "caption.final" && event.participantId !== undefined) {
+        dispatch({ type: "server-event", event });
+        return;
+      }
       const activeStream = recognitionStreamRef.current;
       if (event.streamId !== null && event.streamId !== activeStream) {
         const isTerminalStop = event.type === "recognition.status"
@@ -474,19 +529,35 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       }
     }
 
+    function activateMeetingSession(session: Awaited<ReturnType<typeof createMeeting>>) {
+      setMeeting(session.meeting);
+      setCurrentParticipant(session.participant);
+      setParticipants([]);
+      realtime.connect(session.meeting.id, session.realtimeTicket);
+    }
+
+    function meetingFailureMessage(failure: unknown): string {
+      if (failure instanceof MeetingRequestError) return failure.message;
+      return "The meeting service is unavailable.";
+    }
+
     async function startMeeting() {
+      const normalizedName = displayName.trim();
+      if (!normalizedName) {
+        setError("Enter your display name before creating a room.");
+        return;
+      }
       const requestGeneration = ++meetingRequestGenerationRef.current;
       setMeetingRequestPending(true);
       setError(null);
       dispatch({ type: "reset-feedback" });
       try {
-        const createdMeeting = await createMeeting("Accessible team sync");
+        const createdSession = await createMeeting("Accessible team sync", normalizedName);
         if (!mountedRef.current || requestGeneration !== meetingRequestGenerationRef.current) return;
-        setMeeting(createdMeeting);
-        realtime.connect(createdMeeting.id);
-      } catch {
+        activateMeetingSession(createdSession);
+      } catch (failure) {
         if (!mountedRef.current || requestGeneration !== meetingRequestGenerationRef.current) return;
-        setError("The meeting service is unavailable.");
+        setError(meetingFailureMessage(failure));
         pushToast({
           key: "realtime-connection",
           tone: "error",
@@ -497,6 +568,59 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
         if (mountedRef.current && requestGeneration === meetingRequestGenerationRef.current) {
           setMeetingRequestPending(false);
         }
+      }
+    }
+
+    async function joinExistingMeeting() {
+      const normalizedName = displayName.trim();
+      const normalizedCode = joinCode.replace(/\s+/g, "").toUpperCase();
+      if (!normalizedName) {
+        setError("Enter your display name before joining a room.");
+        return;
+      }
+      if (normalizedCode.length !== 6) {
+        setError("Enter the six-character room code.");
+        return;
+      }
+      const requestGeneration = ++meetingRequestGenerationRef.current;
+      setMeetingRequestPending(true);
+      setError(null);
+      dispatch({ type: "reset-feedback" });
+      try {
+        const joinedSession = await joinMeeting(normalizedCode, normalizedName);
+        if (!mountedRef.current || requestGeneration !== meetingRequestGenerationRef.current) return;
+        activateMeetingSession(joinedSession);
+      } catch (failure) {
+        if (!mountedRef.current || requestGeneration !== meetingRequestGenerationRef.current) return;
+        setError(meetingFailureMessage(failure));
+        pushToast({
+          key: "realtime-connection",
+          tone: "error",
+          title: "Room could not be joined",
+          message: failure instanceof MeetingRequestError && failure.status === 404
+            ? "Check the room code and ask the host to share it again."
+            : "Check that the meeting service is running and try again."
+        });
+      } finally {
+        if (mountedRef.current && requestGeneration === meetingRequestGenerationRef.current) {
+          setMeetingRequestPending(false);
+        }
+      }
+    }
+
+    async function copyInviteLink() {
+      if (!meeting) return;
+      const invite = `${window.location.origin}${window.location.pathname}?room=${meeting.joinCode}`;
+      try {
+        await navigator.clipboard.writeText(invite);
+        pushToast({
+          key: "room-invite",
+          tone: "success",
+          title: "Invitation copied",
+          message: `Room ${meeting.joinCode} is ready to share.`
+        });
+      } catch {
+        setError(`Copy this room code: ${meeting.joinCode}`);
       }
     }
 
@@ -551,40 +675,130 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
 
           <div className="session-cluster">
             <div className={`connection-state ${realtime.state.status}`} aria-live="polite">
-              {(realtime.state.status === "connecting" || realtime.state.status === "reconnecting") && (
+              {(realtime.state.status === "connecting"
+                || realtime.state.status === "joining"
+                || realtime.state.status === "reconnecting") && (
                 <LoaderCircle size={14} className="spin" aria-hidden="true" />
               )}
               {connected && <Radio size={14} aria-hidden="true" />}
               {realtime.state.status === "idle" && <span className="idle-dot" aria-hidden="true" />}
               {currentConnectionLabel}
             </div>
-            <span className="room-reference">{meeting ? `Room ${meeting.id.slice(0, 8)}` : "No active room"}</span>
-            <button
-              type="button"
-              className={`sc-button sc-button--ink session-control${connected ? " sc-button--confirmed" : ""}`}
-              onClick={startMeeting}
-              disabled={meetingRequestPending || realtime.state.status !== "idle" || meeting !== null}
-            >
-              {connected ? <Check size={15} aria-hidden="true" /> : <Radio size={15} aria-hidden="true" />}
-              <span className="sc-button__label">
-                {connected
-                  ? "Session active"
-                  : realtime.state.status === "reconnecting"
-                    ? "Reconnecting…"
-                    : meetingRequestPending || realtime.state.status === "connecting"
-                      ? "Connecting…"
-                      : "Start session"}
-              </span>
-            </button>
+            <span className="room-reference">{meeting ? `Room ${meeting.joinCode}` : "No active room"}</span>
+            {meeting && (
+              <button
+                type="button"
+                className="sc-button sc-button--confirmed session-control"
+                disabled
+              >
+                {connected ? <Check size={15} aria-hidden="true" /> : <LoaderCircle size={15} className="spin" aria-hidden="true" />}
+                <span className="sc-button__label">{connected ? "Session active" : "Joining…"}</span>
+              </button>
+            )}
           </div>
         </header>
 
-        {error && (
-          <div className="meeting-alert" role="alert">
-            <CircleAlert size={16} aria-hidden="true" />
-            <span>{error}</span>
-          </div>
-        )}
+        <div className="workspace-notices">
+          {error && (
+            <div className="meeting-alert" role="alert">
+              <CircleAlert size={16} aria-hidden="true" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          {!meeting ? (
+            <section className="room-entry-panel" aria-labelledby="room-entry-title">
+              <div className="room-entry-intro">
+                <span className="room-entry-icon"><Users size={17} aria-hidden="true" /></span>
+                <div>
+                  <strong id="room-entry-title">Open a shared room</strong>
+                  <span>Create a new conversation or enter a code from another participant.</span>
+                </div>
+              </div>
+
+              <label className="room-field room-name-field">
+                <span>Display name</span>
+                <input
+                  value={displayName}
+                  maxLength={50}
+                  onChange={(event) => setDisplayName(event.target.value)}
+                  disabled={meetingRequestPending}
+                  autoComplete="name"
+                />
+              </label>
+
+              <button
+                type="button"
+                className="sc-button sc-button--ink session-control"
+                onClick={startMeeting}
+                disabled={meetingRequestPending || realtime.state.status !== "idle"}
+              >
+                {meetingRequestPending
+                  ? <LoaderCircle size={15} className="spin" aria-hidden="true" />
+                  : <Plus size={15} aria-hidden="true" />}
+                <span className="sc-button__label">
+                  {meetingRequestPending ? "Opening…" : "Start session"}
+                </span>
+              </button>
+
+              <span className="room-entry-divider" aria-hidden="true">or</span>
+
+              <label className="room-field room-code-field">
+                <span>Room code</span>
+                <input
+                  value={joinCode}
+                  maxLength={6}
+                  placeholder="ABC234"
+                  onChange={(event) => setJoinCode(event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
+                  disabled={meetingRequestPending}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </label>
+
+              <button
+                type="button"
+                className="sc-button sc-button--secondary session-control"
+                onClick={joinExistingMeeting}
+                disabled={meetingRequestPending || realtime.state.status !== "idle"}
+              >
+                <LogIn size={15} aria-hidden="true" />
+                <span className="sc-button__label">Join room</span>
+              </button>
+            </section>
+          ) : (
+            <section className="room-presence-bar" aria-label="Room participants">
+              <div className="room-identity">
+                <span>Share code</span>
+                <strong>{meeting.joinCode}</strong>
+                <button
+                  type="button"
+                  className="sc-icon-button room-copy-action"
+                  aria-label="Copy room invitation"
+                  onClick={copyInviteLink}
+                >
+                  <Copy size={14} aria-hidden="true" />
+                </button>
+              </div>
+              <div className="participant-summary">
+                <Users size={14} aria-hidden="true" />
+                <span>{participants.length} participant{participants.length === 1 ? "" : "s"}</span>
+              </div>
+              <ul className="participant-list" aria-label="People in this room">
+                {participants.map((roomParticipant) => (
+                  <li key={roomParticipant.participantId}>
+                    <span className="participant-avatar" aria-hidden="true">
+                      {roomParticipant.displayName.slice(0, 1).toUpperCase()}
+                    </span>
+                    <span>{roomParticipant.displayName}</span>
+                    {roomParticipant.participantId === currentParticipant?.id && <em>You</em>}
+                    {roomParticipant.role === "HOST" && <small>Host</small>}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+        </div>
 
         <div className="studio-layout">
           <section className="capture-console" aria-label="Camera workspace">
@@ -731,22 +945,31 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
                   <strong>No captions yet</strong>
                   <span>Supported signs appear here after the inference service confirms them.</span>
                 </div>
-              ) : product.captions.map((caption) => (
-                <article className="caption-entry" key={`${caption.streamId}-${caption.sequence}`}>
-                  <div className="caption-meta">
-                    <span>You</span>
-                    <time dateTime={caption.occurredAt}>
-                      {new Date(caption.occurredAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                    </time>
-                  </div>
-                  <p>{caption.payload.text}</p>
-                  <div className="caption-details">
-                    <span className="confidence"><Check size={11} aria-hidden="true" /> {Math.round(caption.payload.confidence * 100)}% confidence</span>
-                    <span>{caption.payload.modelVersion}</span>
-                    {caption.payload.mockModel && <span>Mock model</span>}
-                  </div>
-                </article>
-              ))}
+              ) : product.captions.map((caption) => {
+                const isCurrentParticipant = currentParticipant !== null
+                  && caption.participantId === currentParticipant.id;
+                const sourceName = caption.payload.sourceDisplayName
+                  ?? (isCurrentParticipant ? currentParticipant?.displayName ?? "You" : "Participant");
+                return (
+                  <article className="caption-entry" key={caption.captionId ?? `${caption.streamId}-${caption.sequence}`}>
+                    <div className="caption-meta">
+                      <span>
+                        {sourceName}
+                        {isCurrentParticipant ? " (you)" : ""}
+                      </span>
+                      <time dateTime={caption.occurredAt}>
+                        {new Date(caption.occurredAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      </time>
+                    </div>
+                    <p>{caption.payload.text}</p>
+                    <div className="caption-details">
+                      <span className="confidence"><Check size={11} aria-hidden="true" /> {Math.round(caption.payload.confidence * 100)}% confidence</span>
+                      <span>{caption.payload.modelVersion}</span>
+                      {caption.payload.mockModel && <span>Mock model</span>}
+                    </div>
+                  </article>
+                );
+              })}
             </div>
 
             <section className="system-health" aria-label="Recognition status">

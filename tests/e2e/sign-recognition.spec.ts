@@ -130,10 +130,11 @@ test.describe("sign-recognition full-stack milestone", () => {
     await expect(page.locator("video.visible")).toBeVisible();
     await expect(page.getByText(/derived hand and body landmarks are transmitted temporarily/i)).toBeVisible();
     await expect(page.getByText(/raw video stays in this browser and is never sent/i)).toBeVisible();
-    expect(diagnostics.frames.filter((frame) => frame.direction === "sent")).toHaveLength(0);
+    expect(diagnostics.frames.filter((frame) => frame.direction === "sent").map((frame) => frame.type))
+      .toEqual(["room.join"]);
   });
 
-  test("keyboard consent produces exactly one same-client synthetic final and ignores non-final events", async ({ page }) => {
+  test("keyboard consent produces one shared synthetic final and ignores non-final transcript events", async ({ page, request }) => {
     await exposeNativeSockets(page);
     const diagnostics = collectSocketDiagnostics(page);
     await openWorkspace(page);
@@ -141,14 +142,30 @@ test.describe("sign-recognition full-stack milestone", () => {
 
     const realtimeUrl = diagnostics.urls.find((url) => url.includes("/ws/v1/realtime/"));
     expect(realtimeUrl).toBeTruthy();
-    await page.evaluate((url) => new Promise<void>((resolve, reject) => {
+    const roomCode = (await page.locator(".room-identity strong").textContent())?.trim();
+    expect(roomCode).toMatch(/^[A-Z2-9]{6}$/);
+    const joinResponse = await request.post(
+      `http://127.0.0.1:8081/api/v1/meetings/${roomCode}/participants`,
+      { data: { displayName: "Observer" } }
+    );
+    expect(joinResponse.ok()).toBe(true);
+    const observerSession = await joinResponse.json() as { realtimeTicket: string };
+    await page.evaluate(({ url, ticket }) => new Promise<void>((resolve, reject) => {
       window.__signConnectObserverEvents = [];
       const observer = new WebSocket(url);
       window.__signConnectE2eObserverSocket = observer;
-      observer.onopen = () => resolve();
+      observer.onopen = () => observer.send(JSON.stringify({
+        schemaVersion: 1,
+        type: "room.join",
+        ticket
+      }));
       observer.onerror = () => reject(new Error("Same-meeting observer could not connect"));
-      observer.onmessage = (message) => window.__signConnectObserverEvents!.push(String(message.data));
-    }), realtimeUrl!);
+      observer.onmessage = (message) => {
+        const value = String(message.data);
+        window.__signConnectObserverEvents!.push(value);
+        if (JSON.parse(value).type === "room.joined") resolve();
+      };
+    }), { url: realtimeUrl!, ticket: observerSession.realtimeTicket });
 
     const start = page.getByRole("button", { name: "Start recognition" });
     await expect(start).toHaveAccessibleDescription(/transient hand and body landmark transmission/i);
@@ -175,7 +192,11 @@ test.describe("sign-recognition full-stack milestone", () => {
     expect(diagnostics.frames.some(
       (frame) => frame.direction === "received" && frame.type === "recognition.status"
     )).toBe(true);
-    expect(await page.evaluate(() => window.__signConnectObserverEvents?.length ?? -1)).toBe(0);
+    await expect.poll(() => page.evaluate(() => window.__signConnectObserverEvents
+      ?.map((event) => JSON.parse(event) as { type?: string })
+      .filter((event) => event.type === "caption.final").length ?? 0)).toBe(1);
+    expect(await page.evaluate(() => window.__signConnectObserverEvents
+      ?.some((event) => JSON.parse(event).type === "landmark.chunk") ?? false)).toBe(false);
 
     const final = receivedFinals[0];
     const meetingId = new URL(realtimeUrl!).pathname.split("/").at(-1)!;

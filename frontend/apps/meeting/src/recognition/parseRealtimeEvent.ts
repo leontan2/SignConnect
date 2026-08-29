@@ -16,6 +16,37 @@ const EVENT_KEYS = [
   "occurredAt"
 ] as const;
 
+const ROOM_CAPTION_EVENT_KEYS = [
+  "schemaVersion",
+  "type",
+  "meetingId",
+  "participantId",
+  "captionId",
+  "streamId",
+  "sequence",
+  "payload",
+  "occurredAt"
+] as const;
+
+const PARTICIPANT_EVENT_KEYS = [
+  "schemaVersion",
+  "type",
+  "meetingId",
+  "participantId",
+  "sequence",
+  "payload",
+  "occurredAt"
+] as const;
+
+const ROOM_EVENT_KEYS = [
+  "schemaVersion",
+  "type",
+  "meetingId",
+  "sequence",
+  "payload",
+  "occurredAt"
+] as const;
+
 const CAPTION_PAYLOAD_KEYS = [
   "labelId",
   "text",
@@ -23,6 +54,11 @@ const CAPTION_PAYLOAD_KEYS = [
   "modelVersion",
   "inferenceLatencyMs",
   "mockModel"
+] as const;
+
+const ROOM_CAPTION_PAYLOAD_KEYS = [
+  ...CAPTION_PAYLOAD_KEYS,
+  "sourceDisplayName"
 ] as const;
 
 const UNKNOWN_PAYLOAD_KEYS = [
@@ -41,11 +77,24 @@ const STATUS_PAYLOAD_KEYS = [
   "mockModel"
 ] as const;
 
+const PARTICIPANT_PAYLOAD_KEYS = ["displayName", "role"] as const;
+const SNAPSHOT_PAYLOAD_KEYS = ["participants"] as const;
+const SNAPSHOT_PARTICIPANT_KEYS = ["participantId", "displayName", "role"] as const;
+const ROOM_ERROR_PAYLOAD_KEYS = ["code", "message"] as const;
+
 const SUPPORTED_EVENT_TYPES = new Set([
   "caption.final",
   "recognition.unknown",
-  "recognition.status"
+  "recognition.status",
+  "room.joined",
+  "room.snapshot",
+  "participant.joined",
+  "participant.left",
+  "room.error"
 ]);
+
+const PARTICIPANT_ROLES = new Set(["HOST", "GUEST"]);
+const ROOM_ERROR_CODES = new Set(["JOIN_REQUIRED", "INVALID_JOIN", "ALREADY_JOINED", "ROOM_FULL"]);
 
 const UNKNOWN_REASONS = new Set([
   "LOW_CONFIDENCE",
@@ -185,10 +234,32 @@ function hasValidEnvelope(event: JsonObject, type: string, nullableStreamId: boo
     && isJsonObject(event.payload);
 }
 
+function hasValidRoomEnvelope(event: JsonObject, type: string, keys: readonly string[]): boolean {
+  return hasExactKeys(event, keys)
+    && event.schemaVersion === 1
+    && event.type === type
+    && isUuid(event.meetingId)
+    && isNonNegativeInteger(event.sequence)
+    && isRfc3339DateTime(event.occurredAt)
+    && isJsonObject(event.payload);
+}
+
+function hasValidParticipantPayload(payload: JsonObject): boolean {
+  return hasExactKeys(payload, PARTICIPANT_PAYLOAD_KEYS)
+    && hasStringLength(payload.displayName, 1, 50)
+    && typeof payload.role === "string"
+    && PARTICIPANT_ROLES.has(payload.role);
+}
+
 function isValidCaptionFinal(event: JsonObject): boolean {
-  if (!hasValidEnvelope(event, "caption.final", false)) return false;
+  const roomCaption = hasValidRoomEnvelope(event, "caption.final", ROOM_CAPTION_EVENT_KEYS)
+    && isUuid(event.participantId)
+    && isUuid(event.captionId)
+    && isUuid(event.streamId);
+  const privateCaption = hasValidEnvelope(event, "caption.final", false);
+  if (!roomCaption && !privateCaption) return false;
   const payload = event.payload as JsonObject;
-  return hasExactKeys(payload, CAPTION_PAYLOAD_KEYS)
+  return hasExactKeys(payload, roomCaption ? ROOM_CAPTION_PAYLOAD_KEYS : CAPTION_PAYLOAD_KEYS)
     && hasStringLength(payload.labelId, 1, 64)
     && LABEL_ID_PATTERN.test(payload.labelId)
     && hasStringLength(payload.text, 1, 240)
@@ -196,7 +267,8 @@ function isValidCaptionFinal(event: JsonObject): boolean {
     && hasStringLength(payload.modelVersion, 1, 64)
     && MODEL_VERSION_PATTERN.test(payload.modelVersion)
     && isFiniteInRange(payload.inferenceLatencyMs, 0)
-    && typeof payload.mockModel === "boolean";
+    && typeof payload.mockModel === "boolean"
+    && (!roomCaption || hasStringLength(payload.sourceDisplayName, 1, 50));
 }
 
 function isValidRecognitionUnknown(event: JsonObject): boolean {
@@ -227,6 +299,44 @@ function isValidRecognitionStatus(event: JsonObject): boolean {
     && (payload.mockModel === null || typeof payload.mockModel === "boolean");
 }
 
+function isValidRoomJoined(event: JsonObject): boolean {
+  return hasValidRoomEnvelope(event, "room.joined", PARTICIPANT_EVENT_KEYS)
+    && isUuid(event.participantId)
+    && hasValidParticipantPayload(event.payload as JsonObject);
+}
+
+function isValidRoomSnapshot(event: JsonObject): boolean {
+  if (!hasValidRoomEnvelope(event, "room.snapshot", ROOM_EVENT_KEYS)) return false;
+  const payload = event.payload as JsonObject;
+  if (!hasExactKeys(payload, SNAPSHOT_PAYLOAD_KEYS)
+    || !Array.isArray(payload.participants)
+    || payload.participants.length > 50) {
+    return false;
+  }
+  return payload.participants.every((participant) => isJsonObject(participant)
+    && hasExactKeys(participant, SNAPSHOT_PARTICIPANT_KEYS)
+    && isUuid(participant.participantId)
+    && hasStringLength(participant.displayName, 1, 50)
+    && typeof participant.role === "string"
+    && PARTICIPANT_ROLES.has(participant.role));
+}
+
+function isValidParticipantPresence(event: JsonObject): boolean {
+  return (hasValidRoomEnvelope(event, "participant.joined", PARTICIPANT_EVENT_KEYS)
+      || hasValidRoomEnvelope(event, "participant.left", PARTICIPANT_EVENT_KEYS))
+    && isUuid(event.participantId)
+    && hasValidParticipantPayload(event.payload as JsonObject);
+}
+
+function isValidRoomError(event: JsonObject): boolean {
+  if (!hasValidRoomEnvelope(event, "room.error", ROOM_EVENT_KEYS)) return false;
+  const payload = event.payload as JsonObject;
+  return hasExactKeys(payload, ROOM_ERROR_PAYLOAD_KEYS)
+    && typeof payload.code === "string"
+    && ROOM_ERROR_CODES.has(payload.code)
+    && hasStringLength(payload.message, 1, 160);
+}
+
 export function parseRealtimeEvent(input: unknown): ParseRealtimeEventResult {
   try {
     const candidate: unknown = typeof input === "string" ? JSON.parse(input) : input;
@@ -246,11 +356,31 @@ export function parseRealtimeEvent(input: unknown): ParseRealtimeEventResult {
       return { ok: false, reason: "malformed" };
     }
 
-    const valid = candidate.type === "caption.final"
-      ? isValidCaptionFinal(candidate)
-      : candidate.type === "recognition.unknown"
-        ? isValidRecognitionUnknown(candidate)
-        : isValidRecognitionStatus(candidate);
+    let valid = false;
+    switch (candidate.type) {
+      case "caption.final":
+        valid = isValidCaptionFinal(candidate);
+        break;
+      case "recognition.unknown":
+        valid = isValidRecognitionUnknown(candidate);
+        break;
+      case "recognition.status":
+        valid = isValidRecognitionStatus(candidate);
+        break;
+      case "room.joined":
+        valid = isValidRoomJoined(candidate);
+        break;
+      case "room.snapshot":
+        valid = isValidRoomSnapshot(candidate);
+        break;
+      case "participant.joined":
+      case "participant.left":
+        valid = isValidParticipantPresence(candidate);
+        break;
+      case "room.error":
+        valid = isValidRoomError(candidate);
+        break;
+    }
 
     return valid
       ? { ok: true, event: candidate as ServerRealtimeEvent }

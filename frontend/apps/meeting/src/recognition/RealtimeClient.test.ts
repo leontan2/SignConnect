@@ -79,6 +79,49 @@ type RealtimeClientLike = {
 type RealtimeClientConstructor = new (options: Record<string, unknown>) => RealtimeClientLike;
 
 describe("RealtimeClient", () => {
+  it("authenticates the socket before reporting the room as connected", () => {
+    const RealtimeClient = (meetingApi as unknown as {
+      RealtimeClient?: RealtimeClientConstructor;
+    }).RealtimeClient;
+    expect(RealtimeClient).toBeTypeOf("function");
+    if (!RealtimeClient) return;
+
+    const socket = new FakeSocket();
+    const states: Array<Record<string, unknown>> = [];
+    const client = new RealtimeClient({
+      meetingId: captionFixture.meetingId,
+      realtimeTicket: "signed-ticket",
+      endpoint: (meetingId: string) => `ws://realtime.test/${meetingId}`,
+      socketFactory: () => socket,
+      onStateChange: (state: Record<string, unknown>) => states.push(state)
+    });
+
+    client.connect();
+    socket.open();
+
+    expect(socket.send).toHaveBeenCalledWith(JSON.stringify({
+      schemaVersion: 1,
+      type: "room.join",
+      ticket: "signed-ticket"
+    }));
+    expect(states.at(-1)).toMatchObject({ status: "joining", generation: 1 });
+    expect(client.isUnderPressure()).toBe(true);
+
+    socket.message({
+      schemaVersion: 1,
+      type: "room.joined",
+      meetingId: captionFixture.meetingId,
+      participantId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      sequence: 0,
+      payload: { displayName: "Leon", role: "HOST" },
+      occurredAt: captionFixture.occurredAt
+    });
+
+    expect(states.at(-1)).toMatchObject({ status: "connected", generation: 1 });
+    expect(client.isUnderPressure()).toBe(false);
+    expect(client.send(controlFixture)).toBe(true);
+  });
+
   it("bounds pressure and retry delay, resets generations, rejects stale callbacks, and cleans up", () => {
     const RealtimeClient = (meetingApi as unknown as {
       RealtimeClient?: RealtimeClientConstructor;

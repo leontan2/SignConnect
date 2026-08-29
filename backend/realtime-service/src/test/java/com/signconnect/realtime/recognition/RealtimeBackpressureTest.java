@@ -25,7 +25,8 @@ import static org.assertj.core.api.Assertions.assertThat;
                 "signconnect.recognition.stable-active-evaluations=1",
                 "signconnect.recognition.idle-evaluations=1",
                 "signconnect.recognition.max-message-size=32KB",
-                "signconnect.recognition.tracking-timeout=5s"
+                "signconnect.recognition.tracking-timeout=5s",
+                "signconnect.rooms.require-join=false"
         })
 class RealtimeBackpressureTest {
 

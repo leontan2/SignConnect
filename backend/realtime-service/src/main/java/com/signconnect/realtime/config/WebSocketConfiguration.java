@@ -1,6 +1,7 @@
 package com.signconnect.realtime.config;
 
 import com.signconnect.realtime.web.CaptionWebSocketHandler;
+import com.signconnect.realtimecontract.RealtimeTicketCodec;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -15,7 +16,7 @@ import java.time.Clock;
 import java.util.Map;
 
 @Configuration
-@EnableConfigurationProperties(RecognitionProperties.class)
+@EnableConfigurationProperties({RecognitionProperties.class, RoomProperties.class})
 public class WebSocketConfiguration {
 
     @Bean
@@ -37,5 +38,10 @@ public class WebSocketConfiguration {
     @ConditionalOnMissingBean(Clock.class)
     public Clock recognitionClock() {
         return Clock.systemUTC();
+    }
+
+    @Bean
+    public RealtimeTicketCodec realtimeTicketCodec(RoomProperties properties, Clock clock) {
+        return new RealtimeTicketCodec(properties.getTicketSecret(), clock);
     }
 }

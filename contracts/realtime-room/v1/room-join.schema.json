@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.signconnect.dev/realtime-room/v1/room-join.schema.json",
+  "title": "SignConnect room join event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "type", "ticket"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "type": { "type": "string", "const": "room.join" },
+    "ticket": { "type": "string", "minLength": 1, "maxLength": 2048 }
+  }
+}
