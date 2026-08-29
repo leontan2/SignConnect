@@ -5,6 +5,11 @@ spring:
   application:
     name: meeting-service
 
+signconnect:
+  realtime-access:
+    ticket-secret: ${SIGNCONNECT_REALTIME_TICKET_SECRET:signconnect-local-realtime-ticket-secret-2026}
+    ticket-ttl: ${SIGNCONNECT_REALTIME_TICKET_TTL:4h}
+
 management:
   endpoints:
     web:

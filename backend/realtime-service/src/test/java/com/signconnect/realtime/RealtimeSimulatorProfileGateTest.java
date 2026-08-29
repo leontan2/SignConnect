@@ -15,7 +15,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties = "signconnect.recognition.simulator-enabled=true")
+        properties = {
+                "signconnect.recognition.simulator-enabled=true",
+                "signconnect.rooms.require-join=false"
+        })
 @ActiveProfiles("test")
 class RealtimeSimulatorProfileGateTest {
 

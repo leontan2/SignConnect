@@ -25,7 +25,7 @@ export interface UseRealtimeSessionOptions {
 
 export interface UseRealtimeSessionResult {
   state: RealtimeConnectionState;
-  connect(meetingId: string): void;
+  connect(meetingId: string, realtimeTicket?: string): void;
   disconnect(): void;
   send(event: ClientRealtimeEvent): boolean;
   isUnderPressure(): boolean;
@@ -48,11 +48,12 @@ export function useRealtimeSession(options: UseRealtimeSessionOptions = {}): Use
     clientRef.current = null;
   }, []);
 
-  const connect = useCallback((meetingId: string) => {
+  const connect = useCallback((meetingId: string, realtimeTicket?: string) => {
     clientRef.current?.disconnect();
     const currentOptions = optionsRef.current;
     const clientOptions: RealtimeClientOptions = {
       meetingId,
+      realtimeTicket,
       endpoint: currentOptions.endpoint ?? realtimeEndpoint,
       socketFactory: currentOptions.socketFactory,
       retryScheduler: currentOptions.retryScheduler,

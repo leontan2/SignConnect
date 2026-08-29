@@ -9,10 +9,16 @@ import java.util.UUID;
 public record MeetingResponse(
         UUID id,
         String title,
+        String joinCode,
         MeetingStatus status,
         Instant createdAt
 ) {
     static MeetingResponse from(Meeting meeting) {
-        return new MeetingResponse(meeting.id(), meeting.title(), meeting.status(), meeting.createdAt());
+        return new MeetingResponse(
+                meeting.id(),
+                meeting.title(),
+                meeting.joinCode(),
+                meeting.status(),
+                meeting.createdAt());
     }
 }

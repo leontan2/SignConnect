@@ -1,6 +1,6 @@
 # SignConnect
 
-SignConnect is a mock-first accessibility milestone for sending a signer’s camera-derived landmarks through a five-component local stack and rendering the resulting caption in the same browser client.
+SignConnect is a mock-first accessibility workspace for sending a signer’s camera-derived landmarks through a local inference stack and sharing finalized captions with participants in the same ephemeral meeting room.
 
 > The bundled ONNX model and replay capture are synthetic integration assets. They demonstrate the transport, windowing, inference, and caption experience; they do **not** recognize real Singapore Sign Language (SGSL).
 
@@ -22,9 +22,12 @@ The default path is:
 4. The realtime service creates a sliding window and permits only one inference request at a time.
 5. The inference service runs an actual `OrtSession` against the synthetic ONNX model.
 6. The realtime service stabilizes the result and returns a versioned caption event.
-7. The originating browser announces and adds that caption to its transcript. Captions are not broadcast to observers in this milestone.
+7. The realtime room hub attaches signer identity and broadcasts the finalized caption to authenticated participants in that room.
+8. Every participant adds the same caption to their transcript.
 
 Only landmark coordinates and bounded protocol metadata cross the browser boundary. Raw camera images are not uploaded or retained. Camera permission, meeting start, and recognition start are separate user actions; failure and reconnect states are exposed as text as well as colour.
+
+Creating a room returns a six-character share code and a short-lived signed realtime ticket. Guests join with the share code and a display name. Room membership is currently in memory, supports up to eight connections by default, and is reset when the services restart. Only finalized captions and participant presence are broadcast; recognition status, unknown-sign feedback, and landmark input remain connection-local.
 
 ## Run locally
 
@@ -108,4 +111,4 @@ See [the browser validation matrix](docs/validation/sign-recognition-browser-mat
 
 Real SGSL readiness remains deferred. Replacing the synthetic model requires a consented and documented SGSL dataset, signer-independent evaluation splits, class coverage and fairness evidence, calibrated confidence/stability thresholds, an updated model card, and regression evidence through the same contracts and end-to-end harness. No current screen or test result should be interpreted as an SGSL accuracy claim.
 
-Speech recognition, cross-client caption broadcast, persistent transcripts, authentication, deployment infrastructure, and production model training are future work outside this milestone.
+Speech recognition, persistent transcripts, durable accounts, deployment infrastructure, WebRTC media, and production model training are future work outside this milestone.

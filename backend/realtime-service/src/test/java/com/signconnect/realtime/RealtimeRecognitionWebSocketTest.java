@@ -57,6 +57,7 @@ import static org.assertj.core.api.Assertions.assertThat;
                 "signconnect.recognition.inference-timeout=100ms",
                 "signconnect.recognition.max-message-size=32KB",
                 "signconnect.recognition.tracking-timeout=5s",
+                "signconnect.rooms.require-join=false",
                 "logging.level.com.signconnect.realtime=TRACE"
         })
 @ExtendWith(OutputCaptureExtension.class)

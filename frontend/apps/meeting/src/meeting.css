@@ -128,7 +128,6 @@
 .recognition-toggle:active:not(:disabled) { transform: scale(0.98); }
 
 .meeting-alert {
-  grid-row: 2;
   min-height: 40px;
   display: flex;
   align-items: center;
@@ -140,6 +139,195 @@
   background: #f8e4de;
   color: #75372b;
   font-size: 10px;
+}
+
+.workspace-notices {
+  grid-row: 2;
+  display: grid;
+  gap: 8px;
+}
+
+.room-entry-panel,
+.room-presence-bar {
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgba(43, 55, 49, 0.045);
+}
+
+.room-entry-intro {
+  min-width: 250px;
+  margin-right: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.room-entry-icon {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  background: var(--sc-selected, #d7e3c7);
+  color: var(--sc-primary, #123b31);
+}
+
+.room-entry-intro > div {
+  display: grid;
+  gap: 2px;
+}
+
+.room-entry-intro strong {
+  color: var(--ink-strong);
+  font-size: 11px;
+}
+
+.room-entry-intro span:last-child {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.room-field {
+  display: grid;
+  gap: 3px;
+}
+
+.room-field > span,
+.room-identity > span {
+  color: var(--muted-soft);
+  font-size: 8px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.room-field input {
+  height: 34px;
+  border: 1px solid var(--sc-line-strong, #c8cac4);
+  border-radius: var(--sc-radius-control, 9px);
+  background: var(--sc-surface-raised, #fff);
+  color: var(--ink-strong);
+  padding: 0 10px;
+  font: inherit;
+  font-size: 10px;
+  outline: none;
+  transition: border-color 160ms var(--ease-product), box-shadow 160ms var(--ease-product);
+}
+
+.room-field input:focus-visible {
+  border-color: var(--sc-accent, #e97055);
+  box-shadow: 0 0 0 3px rgba(233, 112, 85, 0.2);
+}
+
+.room-field input:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.room-name-field { width: 150px; }
+.room-code-field { width: 92px; }
+
+.room-code-field input {
+  font-family: "DM Mono", monospace;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.room-entry-divider {
+  color: var(--muted-soft);
+  font-family: "DM Mono", monospace;
+  font-size: 8px;
+  text-transform: uppercase;
+}
+
+.room-presence-bar {
+  justify-content: flex-start;
+}
+
+.room-identity {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  column-gap: 8px;
+  padding-right: 14px;
+  border-right: 1px solid var(--line);
+}
+
+.room-identity > span { grid-column: 1 / -1; }
+
+.room-identity strong {
+  color: var(--ink-strong);
+  font-family: "DM Mono", monospace;
+  font-size: 13px;
+  letter-spacing: 0.1em;
+}
+
+.room-copy-action {
+  width: 28px;
+  height: 28px;
+}
+
+.participant-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.participant-list {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow: hidden;
+}
+
+.participant-list li {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px 3px 4px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--sc-surface-raised, #fff);
+  color: var(--ink-strong);
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.participant-avatar {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: var(--sc-primary, #123b31);
+  color: #fff;
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.participant-list em,
+.participant-list small {
+  color: var(--muted-soft);
+  font-size: 8px;
+  font-style: normal;
 }
 
 .studio-layout {

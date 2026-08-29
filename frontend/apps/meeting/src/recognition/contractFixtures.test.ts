@@ -33,6 +33,15 @@ import inferenceResponseSchema from "../../../../../contracts/sign-recognition/v
 import landmarkChunkSchema from "../../../../../contracts/sign-recognition/v1/landmark-chunk.schema.json";
 import recognitionControlSchema from "../../../../../contracts/sign-recognition/v1/recognition-control.schema.json";
 import serverEventSchema from "../../../../../contracts/sign-recognition/v1/server-event.schema.json";
+import roomJoin from "../../../../../contracts/realtime-room/v1/fixtures/room-join.valid.json";
+import roomCaptionFinal from "../../../../../contracts/realtime-room/v1/fixtures/server-caption-final.valid.json";
+import participantJoined from "../../../../../contracts/realtime-room/v1/fixtures/server-participant-joined.valid.json";
+import roomError from "../../../../../contracts/realtime-room/v1/fixtures/server-room-error.valid.json";
+import roomJoined from "../../../../../contracts/realtime-room/v1/fixtures/server-room-joined.valid.json";
+import roomSnapshotExtraLandmarks from "../../../../../contracts/realtime-room/v1/fixtures/server-room-snapshot-extra-landmarks.invalid.json";
+import roomSnapshot from "../../../../../contracts/realtime-room/v1/fixtures/server-room-snapshot.valid.json";
+import roomJoinSchema from "../../../../../contracts/realtime-room/v1/room-join.schema.json";
+import roomServerEventSchema from "../../../../../contracts/realtime-room/v1/server-event.schema.json";
 
 type FixtureCase = {
   name: string;
@@ -175,5 +184,34 @@ describe("shared sign-recognition v1 contracts", () => {
       value: activeToIdleSequence.stopControl,
       valid: true
     });
+  });
+});
+
+describe("shared realtime-room v1 contracts", () => {
+  it("validates the authenticated room join command", () => {
+    const validate = contractValidator(roomJoinSchema as AnySchema);
+    expectFixture(validate, { name: "room-join.valid.json", value: roomJoin, valid: true });
+    expectFixture(validate, {
+      name: "room-join.extra-field.invalid",
+      value: { ...roomJoin, meetingId: serverCaptionFinal.meetingId },
+      valid: false
+    });
+  });
+
+  it("validates public presence, snapshot, caption, and error events", () => {
+    const validate = contractValidator(roomServerEventSchema as AnySchema);
+    const fixtures: FixtureCase[] = [
+      { name: "server-room-joined.valid.json", value: roomJoined, valid: true },
+      { name: "server-room-snapshot.valid.json", value: roomSnapshot, valid: true },
+      { name: "server-participant-joined.valid.json", value: participantJoined, valid: true },
+      { name: "server-caption-final.valid.json", value: roomCaptionFinal, valid: true },
+      { name: "server-room-error.valid.json", value: roomError, valid: true },
+      {
+        name: "server-room-snapshot-extra-landmarks.invalid.json",
+        value: roomSnapshotExtraLandmarks,
+        valid: false
+      }
+    ];
+    fixtures.forEach((fixture) => expectFixture(validate, fixture));
   });
 });

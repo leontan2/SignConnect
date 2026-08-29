@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "type": "room.snapshot",
+  "meetingId": "22222222-2222-4222-8222-222222222222",
+  "sequence": 1,
+  "payload": {
+    "participants": [
+      {
+        "participantId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "displayName": "Leon",
+        "role": "HOST"
+      },
+      {
+        "participantId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        "displayName": "Ari",
+        "role": "GUEST"
+      }
+    ]
+  },
+  "occurredAt": "2026-08-29T12:00:01Z"
+}
