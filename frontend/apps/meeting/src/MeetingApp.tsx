@@ -566,13 +566,15 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
               disabled={meetingRequestPending || realtime.state.status !== "idle" || meeting !== null}
             >
               {connected ? <Check size={15} aria-hidden="true" /> : <Radio size={15} aria-hidden="true" />}
-              {connected
-                ? "Session active"
-                : realtime.state.status === "reconnecting"
-                  ? "Reconnecting…"
-                  : meetingRequestPending || realtime.state.status === "connecting"
-                    ? "Connecting…"
-                    : "Start session"}
+              <span className="sc-button__label">
+                {connected
+                  ? "Session active"
+                  : realtime.state.status === "reconnecting"
+                    ? "Reconnecting…"
+                    : meetingRequestPending || realtime.state.status === "connecting"
+                      ? "Connecting…"
+                      : "Start session"}
+              </span>
             </button>
           </div>
         </header>
@@ -593,9 +595,10 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
               </div>
             </header>
 
-            <div className="stage-viewport">
+            <div className={`stage-viewport${recognition.enabledByUser ? " is-recognizing" : ""}`}>
               <video ref={videoRef} autoPlay muted playsInline className={cameraEnabled ? "visible" : ""} />
               <canvas ref={overlayCanvasRef} className="landmark-overlay" aria-hidden="true" />
+              <span className="recognition-scan" aria-hidden="true" />
 
               {cameraEnabled && (
                 <div className="framing-guide" aria-hidden="true">
@@ -673,7 +676,9 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
                     : cameraEnabled
                       ? <VideoOff size={16} aria-hidden="true" />
                       : <Video size={16} aria-hidden="true" />}
-                  {cameraState === "requesting" ? "Requesting camera…" : cameraEnabled ? "Turn camera off" : "Turn camera on"}
+                  <span className="sc-button__label">
+                    {cameraState === "requesting" ? "Requesting camera…" : cameraEnabled ? "Turn camera off" : "Turn camera on"}
+                  </span>
                 </button>
 
                 <button
@@ -688,7 +693,9 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
                   {recognition.enabledByUser
                     ? <Square size={12} fill="currentColor" aria-hidden="true" />
                     : <ScanLine size={15} aria-hidden="true" />}
-                  {recognition.enabledByUser ? "Stop recognition" : "Start recognition"}
+                  <span className="sc-button__label">
+                    {recognition.enabledByUser ? "Stop recognition" : "Start recognition"}
+                  </span>
                 </button>
               </div>
 
