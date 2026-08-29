@@ -1,0 +1,12 @@
+spring:
+  config:
+    activate:
+      on-profile: local
+
+signconnect:
+  inference:
+    model:
+      resource: classpath:models/deterministic-sign-v1.onnx
+      labels-resource: classpath:models/deterministic-sign-v1-labels.json
+      input-name: features
+      output-name: probabilities

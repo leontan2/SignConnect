@@ -1,0 +1,302 @@
+import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+
+declare global {
+  interface Window {
+    __signConnectE2eSockets?: WebSocket[];
+    __signConnectE2eObserverSocket?: WebSocket;
+    __signConnectObserverEvents?: string[];
+  }
+}
+
+type FrameSummary = {
+  direction: "sent" | "received";
+  type: string;
+  streamId?: string;
+  sequence?: number;
+  text?: string;
+  modelVersion?: string;
+  mockModel?: boolean;
+};
+
+type SocketDiagnostics = {
+  urls: string[];
+  frames: FrameSummary[];
+};
+
+const CONTROL_URL = process.env.SIGNCONNECT_E2E_CONTROL_URL;
+const CONTROL_TOKEN = process.env.SIGNCONNECT_E2E_CONTROL_TOKEN;
+const SIMULATOR_ENABLED = process.env.SIGNCONNECT_E2E_SIMULATOR === "true";
+
+function collectSocketDiagnostics(page: Page): SocketDiagnostics {
+  const diagnostics: SocketDiagnostics = { urls: [], frames: [] };
+  page.on("websocket", (socket) => {
+    diagnostics.urls.push(socket.url());
+    const summarize = (direction: FrameSummary["direction"], payload: string | Buffer) => {
+      if (diagnostics.frames.length >= 64) return;
+      try {
+        const parsed = JSON.parse(payload.toString()) as Record<string, unknown>;
+        const body = typeof parsed.payload === "object" && parsed.payload !== null
+          ? parsed.payload as Record<string, unknown>
+          : undefined;
+        diagnostics.frames.push({
+          direction,
+          type: typeof parsed.type === "string" ? parsed.type : "malformed",
+          streamId: typeof parsed.streamId === "string" ? parsed.streamId : undefined,
+          sequence: typeof parsed.sequence === "number" ? parsed.sequence : undefined,
+          text: typeof body?.text === "string" ? body.text : undefined,
+          modelVersion: typeof body?.modelVersion === "string" ? body.modelVersion : undefined,
+          mockModel: typeof body?.mockModel === "boolean" ? body.mockModel : undefined
+        });
+      } catch {
+        diagnostics.frames.push({ direction, type: "non-json" });
+      }
+    };
+    socket.on("framesent", ({ payload }) => summarize("sent", payload));
+    socket.on("framereceived", ({ payload }) => summarize("received", payload));
+  });
+  return diagnostics;
+}
+
+async function exposeNativeSockets(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const NativeWebSocket = window.WebSocket;
+    const sockets: WebSocket[] = [];
+    class TrackedWebSocket extends NativeWebSocket {
+      constructor(url: string | URL, protocols?: string | string[]) {
+        if (protocols === undefined) super(url);
+        else super(url, protocols);
+        sockets.push(this);
+      }
+    }
+    Object.defineProperty(window, "WebSocket", { configurable: false, value: TrackedWebSocket });
+    Object.defineProperty(window, "__signConnectE2eSockets", { configurable: false, value: sockets });
+  });
+}
+
+async function openWorkspace(page: Page): Promise<void> {
+  await page.goto("/");
+  await expect(page.getByRole("note", { name: "Automated fixture capture notice" })).toContainText(
+    "Synthetic normalized landmarks"
+  );
+}
+
+async function enableCameraAndSession(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Turn camera on" }).click();
+  await expect(page.getByRole("button", { name: "Turn camera off" })).toBeEnabled();
+  await page.getByRole("button", { name: "Start session" }).click();
+  await expect(page.getByRole("button", { name: "Session active" })).toBeVisible();
+  await expect(page.getByText(/^Connected$/)).toBeVisible();
+}
+
+async function startRecognitionWithKeyboard(page: Page): Promise<void> {
+  const start = page.getByRole("button", { name: "Start recognition" });
+  await start.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "Stop recognition" })).toBeVisible();
+}
+
+async function controlService(
+  request: APIRequestContext,
+  service: "inference" | "realtime",
+  action: "start" | "stop"
+): Promise<void> {
+  expect(CONTROL_URL, "Run browser specs through scripts/run-recognition-e2e.mjs").toBeTruthy();
+  expect(CONTROL_TOKEN, "The full-stack runner did not provide its control token").toBeTruthy();
+  const response = await request.post(`${CONTROL_URL}/control/${service}/${action}`, {
+    headers: { "x-signconnect-e2e-token": CONTROL_TOKEN! }
+  });
+  expect(response.ok(), `${service} ${action} returned HTTP ${response.status()}`).toBe(true);
+}
+
+async function injectServerEvent(page: Page, event: Record<string, unknown>): Promise<void> {
+  await page.evaluate((payload) => {
+    const socket = window.__signConnectE2eSockets
+      ?.filter((candidate) => candidate !== window.__signConnectE2eObserverSocket)
+      .at(-1);
+    if (!socket?.onmessage) throw new Error("The Meeting realtime socket is unavailable");
+    socket.onmessage(new MessageEvent("message", { data: JSON.stringify(payload) }));
+  }, event);
+}
+
+test.describe("sign-recognition full-stack milestone", () => {
+  test.describe.configure({ mode: "serial" });
+  test.setTimeout(45_000);
+
+  test("camera preview remains separate from landmark consent", async ({ page }) => {
+    const diagnostics = collectSocketDiagnostics(page);
+    await openWorkspace(page);
+    await enableCameraAndSession(page);
+
+    await expect(page.locator("video.visible")).toBeVisible();
+    await expect(page.getByText(/derived hand and body landmarks are transmitted temporarily/i)).toBeVisible();
+    await expect(page.getByText(/raw video stays in this browser and is never sent/i)).toBeVisible();
+    expect(diagnostics.frames.filter((frame) => frame.direction === "sent")).toHaveLength(0);
+  });
+
+  test("keyboard consent produces exactly one same-client synthetic final and ignores non-final events", async ({ page }) => {
+    await exposeNativeSockets(page);
+    const diagnostics = collectSocketDiagnostics(page);
+    await openWorkspace(page);
+    await enableCameraAndSession(page);
+
+    const realtimeUrl = diagnostics.urls.find((url) => url.includes("/ws/v1/realtime/"));
+    expect(realtimeUrl).toBeTruthy();
+    await page.evaluate((url) => new Promise<void>((resolve, reject) => {
+      window.__signConnectObserverEvents = [];
+      const observer = new WebSocket(url);
+      window.__signConnectE2eObserverSocket = observer;
+      observer.onopen = () => resolve();
+      observer.onerror = () => reject(new Error("Same-meeting observer could not connect"));
+      observer.onmessage = (message) => window.__signConnectObserverEvents!.push(String(message.data));
+    }), realtimeUrl!);
+
+    const start = page.getByRole("button", { name: "Start recognition" });
+    await expect(start).toHaveAccessibleDescription(/transient hand and body landmark transmission/i);
+    await startRecognitionWithKeyboard(page);
+
+    const transcript = page.getByRole("region", { name: "Live transcript" });
+    await expect(transcript.getByText("Synthetic active gesture")).toBeVisible();
+    await expect(transcript.getByRole("article")).toHaveCount(1);
+    await expect(transcript.getByRole("note")).toContainText(/not validated SGSL recognition/i);
+    await expect(transcript.getByText("synthetic-v1")).toBeVisible();
+    await expect(transcript.getByText("Mock integration model", { exact: true })).toBeVisible();
+
+    await page.waitForTimeout(1_800);
+    await expect(transcript.getByRole("article")).toHaveCount(1);
+    const receivedFinals = diagnostics.frames.filter(
+      (frame) => frame.direction === "received" && frame.type === "caption.final"
+    );
+    expect(receivedFinals).toHaveLength(1);
+    expect(receivedFinals[0]).toMatchObject({
+      text: "Synthetic active gesture",
+      modelVersion: "synthetic-v1",
+      mockModel: true
+    });
+    expect(diagnostics.frames.some(
+      (frame) => frame.direction === "received" && frame.type === "recognition.status"
+    )).toBe(true);
+    expect(await page.evaluate(() => window.__signConnectObserverEvents?.length ?? -1)).toBe(0);
+
+    const final = receivedFinals[0];
+    const meetingId = new URL(realtimeUrl!).pathname.split("/").at(-1)!;
+    await injectServerEvent(page, {
+      schemaVersion: 1,
+      type: "recognition.unknown",
+      meetingId,
+      streamId: final.streamId,
+      sequence: (final.sequence ?? 1) + 1,
+      payload: {
+        reason: "LOW_CONFIDENCE",
+        confidence: 0.2,
+        modelVersion: "synthetic-v1",
+        inferenceLatencyMs: 1,
+        mockModel: true
+      },
+      occurredAt: new Date().toISOString()
+    });
+    await expect(page.getByText(/not recognized with enough confidence/i)).toBeVisible();
+    await expect(transcript.getByRole("article")).toHaveCount(1);
+  });
+
+  test("reconnect creates a fresh stream and rejects stale output", async ({ page, request }) => {
+    await exposeNativeSockets(page);
+    const diagnostics = collectSocketDiagnostics(page);
+    await openWorkspace(page);
+    await enableCameraAndSession(page);
+    await startRecognitionWithKeyboard(page);
+
+    await expect.poll(() => diagnostics.frames.filter(
+      (frame) => frame.direction === "sent" && frame.type === "recognition.control"
+    ).length).toBeGreaterThanOrEqual(1);
+    const firstStream = diagnostics.frames.find(
+      (frame) => frame.direction === "sent" && frame.type === "recognition.control"
+    )!.streamId!;
+
+    let realtimeStopped = false;
+    try {
+      await controlService(request, "realtime", "stop");
+      realtimeStopped = true;
+      await expect(page.getByText(/^Reconnecting in \d+ ms$/i)).toBeVisible();
+      await controlService(request, "realtime", "start");
+      realtimeStopped = false;
+      await expect(page.getByText(/Connection recovered/i)).toBeVisible({ timeout: 20_000 });
+      await expect.poll(() => new Set(diagnostics.frames
+        .filter((frame) => frame.direction === "sent" && frame.type === "recognition.control")
+        .map((frame) => frame.streamId)).size).toBe(2);
+
+      const starts = diagnostics.frames.filter(
+        (frame) => frame.direction === "sent" && frame.type === "recognition.control"
+      );
+      const secondStream = starts.find((frame) => frame.streamId !== firstStream)!.streamId!;
+      const meetingId = diagnostics.urls.find((url) => url.includes("/ws/v1/realtime/"))!
+        .split("/").at(-1)!;
+      await injectServerEvent(page, {
+        schemaVersion: 1,
+        type: "caption.final",
+        meetingId,
+        streamId: firstStream,
+        sequence: 99,
+        payload: {
+          labelId: "MOCK_ACTIVE",
+          text: "Stale caption",
+          confidence: 0.99,
+          modelVersion: "synthetic-v1",
+          inferenceLatencyMs: 1,
+          mockModel: true
+        },
+        occurredAt: new Date().toISOString()
+      });
+      await expect(page.getByText("Stale caption")).toHaveCount(0);
+      await expect(page.getByText("Synthetic active gesture")).toBeVisible({ timeout: 15_000 });
+      expect(secondStream).not.toBe(firstStream);
+      await expect(page.getByRole("region", { name: "Live transcript" }).getByRole("article")).toHaveCount(1);
+    } finally {
+      if (realtimeStopped) await controlService(request, "realtime", "start");
+    }
+  });
+
+  test("reports inference unavailability and recovery without adding captions", async ({ page, request }) => {
+    await openWorkspace(page);
+    await enableCameraAndSession(page);
+    await startRecognitionWithKeyboard(page);
+    const transcript = page.getByRole("region", { name: "Live transcript" });
+    await expect(transcript.getByRole("article")).toHaveCount(1, { timeout: 15_000 });
+
+    let inferenceStopped = false;
+    try {
+      await controlService(request, "inference", "stop");
+      inferenceStopped = true;
+      await expect(page.getByRole("status", { name: "Recognition service status" })).toContainText(
+        /temporarily unavailable/i,
+        { timeout: 10_000 }
+      );
+      await controlService(request, "inference", "start");
+      inferenceStopped = false;
+      await expect(page.getByRole("status", { name: "Recognition service status" })).toContainText(
+        /available again|recovered/i,
+        { timeout: 15_000 }
+      );
+      await expect(transcript.getByRole("article")).toHaveCount(1);
+    } finally {
+      if (inferenceStopped) await controlService(request, "inference", "start");
+    }
+  });
+
+  test("simulator follows the explicit client and server development gates", async ({ page }) => {
+    const diagnostics = collectSocketDiagnostics(page);
+    await openWorkspace(page);
+    if (!SIMULATOR_ENABLED) {
+      await expect(page.getByText("Recognizer simulator")).toHaveCount(0);
+      return;
+    }
+
+    await expect(page.getByText("Recognizer simulator")).toBeVisible();
+    await expect(page.getByText(/server development profile must also be active/i)).toBeVisible();
+    await page.getByRole("button", { name: "Start session" }).click();
+    await expect(page.getByRole("button", { name: "Session active" })).toBeVisible();
+    await page.getByRole("button", { name: "Hello everyone" }).click();
+    await expect.poll(() => diagnostics.frames.some(
+      (frame) => frame.direction === "received" && frame.type === "caption.final"
+    )).toBe(true);
+  });
+});

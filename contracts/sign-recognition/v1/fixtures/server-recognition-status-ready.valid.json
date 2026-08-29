@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "type": "recognition.status",
+  "meetingId": "22222222-2222-4222-8222-222222222222",
+  "streamId": "11111111-1111-4111-8111-111111111111",
+  "sequence": 2,
+  "payload": {
+    "state": "READY",
+    "reason": "STARTED",
+    "message": "Recognition is ready.",
+    "modelVersion": "synthetic-v1",
+    "mockModel": true
+  },
+  "occurredAt": "2026-01-01T00:00:00Z"
+}

@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.signconnect.dev/sign-recognition/v1/recognition-control.schema.json",
+  "title": "SignConnect recognition.control v1",
+  "description": "Strict browser-to-realtime lifecycle event. Start initializes and stop releases one recognition stream; no media data is permitted.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "type",
+    "streamId",
+    "sequence",
+    "timestampMs",
+    "action"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1,
+      "description": "The v1 wire-contract version."
+    },
+    "type": {
+      "type": "string",
+      "const": "recognition.control",
+      "description": "The client event discriminator."
+    },
+    "streamId": {
+      "$ref": "#/$defs/uuid"
+    },
+    "sequence": {
+      "$ref": "#/$defs/sequence"
+    },
+    "timestampMs": {
+      "type": "number",
+      "minimum": 0,
+      "description": "A finite, non-negative monotonic timestamp in milliseconds. Standard JSON forbids NaN and infinity; consumers also reject non-increasing timestamps."
+    },
+    "action": {
+      "type": "string",
+      "enum": [
+        "start",
+        "stop"
+      ],
+      "description": "Start explicitly initializes a fresh stream; stop explicitly releases it."
+    }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+      "description": "A UUID serialized with hyphens."
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "A non-negative sequence number. Producers increment it monotonically; consumers reject regressions or gaps where the protocol requires continuity."
+    }
+  }
+}

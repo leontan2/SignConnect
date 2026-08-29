@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "vocabularyId": "sign-v1-candidates",
+  "artifactStatus": "PENDING_SGSL_REVIEW",
+  "purpose": "Proposed English caption intents for mock-first isolated-sign recognition planning.",
+  "disclaimer": "These candidates are not approved SGSL signs, glosses, sign-performance instructions, or validated sign-to-caption mappings.",
+  "inputBoundary": {
+    "includedSignals": [
+      "left_hand_landmarks_21",
+      "right_hand_landmarks_21",
+      "upper_body_pose_landmarks_11_to_24"
+    ],
+    "excludedSignals": [
+      "face_landmarks",
+      "facial_expression",
+      "mouth_pattern",
+      "gaze",
+      "other_non_manual_features"
+    ],
+    "screeningRule": "Retain a candidate for a real model only after an SGSL-fluent reviewer confirms that the intended distinction is observable within the included signals and does not require an excluded signal."
+  },
+  "candidates": [
+    {
+      "id": "intent_greeting_hello",
+      "proposedCaptionText": "Hello.",
+      "handUpperBodyScreeningNotes": "Common standalone greeting candidate. Confirm that an SGSL mapping is distinguishable using only the permitted two-hand and upper-body inputs and does not depend on non-manual contrast.",
+      "source": "PENDING_SGSL_SOURCE_AND_USAGE_RIGHTS_CHECK",
+      "reviewer": "PENDING_SGSL_FLUENT_REVIEWER",
+      "status": "PENDING_SGSL_REVIEW"
+    },
+    {
+      "id": "intent_farewell_goodbye",
+      "proposedCaptionText": "Goodbye.",
+      "handUpperBodyScreeningNotes": "Standalone farewell candidate. Confirm hand/upper-body-only distinguishability and check for ambiguity with greeting concepts or reliance on conversational context.",
+      "source": "PENDING_SGSL_SOURCE_AND_USAGE_RIGHTS_CHECK",
+      "reviewer": "PENDING_SGSL_FLUENT_REVIEWER",
+      "status": "PENDING_SGSL_REVIEW"
+    },
+    {
+      "id": "intent_gratitude_thank_you",
+      "proposedCaptionText": "Thank you.",
+      "handUpperBodyScreeningNotes": "Common social intent candidate. Confirm that the intended SGSL mapping is a standalone distinction captured by the permitted hand and upper-body inputs without required facial information.",
+      "source": "PENDING_SGSL_SOURCE_AND_USAGE_RIGHTS_CHECK",
+      "reviewer": "PENDING_SGSL_FLUENT_REVIEWER",
+      "status": "PENDING_SGSL_REVIEW"
+    },
+    {
+      "id": "intent_courtesy_please",
+      "proposedCaptionText": "Please.",
+      "handUpperBodyScreeningNotes": "Courtesy intent can be context-sensitive. Retain only if review identifies a standalone SGSL mapping that is distinguishable with the permitted hand and upper-body inputs alone.",
+      "source": "PENDING_SGSL_SOURCE_AND_USAGE_RIGHTS_CHECK",
+      "reviewer": "PENDING_SGSL_FLUENT_REVIEWER",
+      "status": "PENDING_SGSL_REVIEW"
+    },
+    {
+      "id": "intent_apology_sorry",
+      "proposedCaptionText": "Sorry.",
+      "handUpperBodyScreeningNotes": "Apology intent candidate. Confirm a standalone mapping, hand/upper-body-only distinguishability, and whether facial affect or other non-manual information is linguistically required.",
+      "source": "PENDING_SGSL_SOURCE_AND_USAGE_RIGHTS_CHECK",
+      "reviewer": "PENDING_SGSL_FLUENT_REVIEWER",
+      "status": "PENDING_SGSL_REVIEW"
+    },
+    {
+      "id": "intent_affirmation_yes",
+      "proposedCaptionText": "Yes.",
+      "handUpperBodyScreeningNotes": "Affirmation may include non-manual marking. Retain only if SGSL review confirms that this isolated intent has a distinct mapping observable from the permitted hand and upper-body inputs.",
+      "source": "PENDING_SGSL_SOURCE_AND_USAGE_RIGHTS_CHECK",
+      "reviewer": "PENDING_SGSL_FLUENT_REVIEWER",
+      "status": "PENDING_SGSL_REVIEW"
+    },
+    {
+      "id": "intent_negation_no",
+      "proposedCaptionText": "No.",
+      "handUpperBodyScreeningNotes": "Negation may include non-manual marking. Retain only if SGSL review confirms that this isolated intent remains distinct without facial, mouth, gaze, or other excluded signals.",
+      "source": "PENDING_SGSL_SOURCE_AND_USAGE_RIGHTS_CHECK",
+      "reviewer": "PENDING_SGSL_FLUENT_REVIEWER",
+      "status": "PENDING_SGSL_REVIEW"
+    },
+    {
+      "id": "intent_request_help",
+      "proposedCaptionText": "I need help.",
+      "handUpperBodyScreeningNotes": "Assistance-request candidate. Confirm that a single isolated SGSL mapping supports the proposed caption intent and is distinguishable from offering help using only permitted inputs.",
+      "source": "PENDING_SGSL_SOURCE_AND_USAGE_RIGHTS_CHECK",
+      "reviewer": "PENDING_SGSL_FLUENT_REVIEWER",
+      "status": "PENDING_SGSL_REVIEW"
+    },
+    {
+      "id": "intent_request_repeat",
+      "proposedCaptionText": "Please repeat that.",
+      "handUpperBodyScreeningNotes": "Meeting request candidate. Confirm that the caption intent can map to one isolated SGSL label, remains distinct from related concepts, and requires no excluded non-manual signal.",
+      "source": "PENDING_SGSL_SOURCE_AND_USAGE_RIGHTS_CHECK",
+      "reviewer": "PENDING_SGSL_FLUENT_REVIEWER",
+      "status": "PENDING_SGSL_REVIEW"
+    },
+    {
+      "id": "intent_request_wait",
+      "proposedCaptionText": "Please wait.",
+      "handUpperBodyScreeningNotes": "Meeting request candidate. Confirm a standalone SGSL mapping that is distinguishable from stop or stay concepts using only permitted hand and upper-body inputs.",
+      "source": "PENDING_SGSL_SOURCE_AND_USAGE_RIGHTS_CHECK",
+      "reviewer": "PENDING_SGSL_FLUENT_REVIEWER",
+      "status": "PENDING_SGSL_REVIEW"
+    },
+    {
+      "id": "intent_comprehension_understood",
+      "proposedCaptionText": "I understand.",
+      "handUpperBodyScreeningNotes": "Comprehension candidate. Confirm that the intended meaning has a standalone mapping distinguishable from know or agreement concepts within the permitted input boundary.",
+      "source": "PENDING_SGSL_SOURCE_AND_USAGE_RIGHTS_CHECK",
+      "reviewer": "PENDING_SGSL_FLUENT_REVIEWER",
+      "status": "PENDING_SGSL_REVIEW"
+    },
+    {
+      "id": "intent_completion_finished",
+      "proposedCaptionText": "I am finished.",
+      "handUpperBodyScreeningNotes": "Completion candidate. Confirm that the proposed meaning is distinguishable from stop or end concepts using only permitted hand and upper-body inputs and without contextual inference.",
+      "source": "PENDING_SGSL_SOURCE_AND_USAGE_RIGHTS_CHECK",
+      "reviewer": "PENDING_SGSL_FLUENT_REVIEWER",
+      "status": "PENDING_SGSL_REVIEW"
+    }
+  ]
+}
