@@ -1,0 +1,4 @@
+interface:
+  display_name: "Awesome Design MD"
+  short_description: "Apply curated brand design references"
+  default_prompt: "Use $awesome-design-md to turn my visual brief into a coherent, brand-inspired design direction."

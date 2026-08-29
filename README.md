@@ -1,21 +1,67 @@
 # SignConnect
 
-## Recommended Tech Stack
+SignConnect is a real-time accessibility workspace for sign-to-caption and speech-to-caption communication. The current implementation is the first end-to-end tracer slice: a React micro-frontend creates a meeting through Spring Boot and exchanges versioned caption events over WebSocket.
+
+## Current Implementation
+
+| Component | Technology | Port | Responsibility |
+| --- | --- | ---: | --- |
+| Shell MFE | React, TypeScript, Webpack Module Federation | 3000 | Product shell and navigation |
+| Meeting MFE | React, TypeScript, Webpack Module Federation | 3001 | Camera, session state, and transcript UI |
+| Meeting service | Spring Boot, Spring MVC | 8081 | Meeting creation and lifecycle |
+| Realtime service | Spring Boot, WebFlux | 8082 | Recognizer input and caption WebSocket events |
+
+The meeting workspace currently uses a clearly labelled recognizer simulator. Camera video stays in the browser and is not yet processed by a sign-language model.
+
+## Run Locally
+
+Prerequisites: Node.js 20+, npm 10+, and JDK 21.
+
+Install and start the two frontend applications:
+
+```powershell
+npm install
+npm run dev
+```
+
+Start each backend service in a separate terminal:
+
+```powershell
+$env:JAVA_HOME = 'C:\Program Files\Java\jdk-21'
+cd backend
+.\mvnw.cmd -pl meeting-service spring-boot:run
+```
+
+```powershell
+$env:JAVA_HOME = 'C:\Program Files\Java\jdk-21'
+cd backend
+.\mvnw.cmd -pl realtime-service spring-boot:run
+```
+
+Open `http://localhost:3000`, select **Start session**, then use a recognizer simulator action to send a caption through the live WebSocket.
+
+## Verify
+
+```powershell
+.\scripts\verify.ps1
+```
+
+The verification script runs both Spring service tests and production-builds both micro-frontends.
+
+## Target Tech Stack
 
 ### Frontend
-- Next.js (TypeScript)
-- React
-- Tailwind CSS
-- shadcn/ui
-- WebRTC + WebSocket
+- React and TypeScript micro-frontends
+- Webpack 5 Module Federation
+- WebRTC and WebSocket
 - MediaPipe (client-side landmark extraction)
 
 ### Backend and Realtime
-- FastAPI (Python) + Pydantic
-- REST (control plane) + gRPC (internal low-latency service calls)
-- FastAPI WebSocket gateway
+- Spring Boot microservices on Java 21
+- Spring MVC for the control plane and WebFlux for realtime streams
+- REST, WebSocket, and gRPC for model-serving calls
 - Redis (session state/cache)
-- NATS JetStream (event bus)
+- NATS JetStream for asynchronous events outside the live translation path
 
 ### AI/ML Inference
 - Sign-to-text: PyTorch temporal model (Transformer/LSTM hybrid), served via ONNX Runtime/TensorRT
@@ -54,7 +100,9 @@
 - k6 (latency/load)
 - Security scanning in CI
 
-## Proposed Monorepo File Structure
+## Future-State Monorepo Sketch
+
+The structure below is a planning reference, not the current implementation. Components should be introduced only when a validated vertical slice requires them.
 
 ```text
 SignConnect/
