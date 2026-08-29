@@ -1,6 +1,6 @@
 ---
 name: SignConnect Product Design System
-version: 1.0.0
+version: 1.1.0
 status: active
 source_of_truth: frontend/styles/system.css
 ---
@@ -162,6 +162,19 @@ Buttons must use active, specific labels such as “Start session,” “Turn ca
 - Page or panel entrance: no more than 380ms.
 - Animate only `transform` and `opacity` where possible.
 - Honor `prefers-reduced-motion` and remove nonessential motion.
+
+### Uiverse-inspired interaction layer
+
+Use these patterns as a restrained product-motion vocabulary. They are SignConnect adaptations inspired by the open-source [Uiverse element library](https://uiverse.io/buttons), not copied visual themes.
+
+- Signal sheen: a single diagonal highlight crosses the start-recognition button on hover. This identifies the primary task action without adding a permanent glow.
+- Ink response: the start-session button uses a contained radial highlight to acknowledge pointer intent while preserving its dark infrastructure role.
+- Icon and label choreography: icons and labels separate by no more than 2px on hover, then the whole control compresses on press.
+- Recognition scan: a lime scan pass appears only while recognition is active. It communicates ongoing processing and must never imply a successful prediction.
+- Caption reveal: new confirmed transcript entries settle upward once so incoming output is easy to locate.
+- Toast lifetime: a 2px edge timer shows how long a transient notification remains visible.
+
+Do not run more than one perpetual animation in the camera workspace. The recognition scan is the only allowed continuous decorative motion there. Disable sheen, scan, caption reveal, icon settle, and toast timing under `prefers-reduced-motion`.
 
 ## Accessibility requirements
 

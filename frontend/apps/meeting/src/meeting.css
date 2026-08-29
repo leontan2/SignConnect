@@ -239,6 +239,29 @@
 .stage-viewport video.visible { opacity: 1; }
 .landmark-overlay { z-index: 3; pointer-events: none; }
 
+.recognition-scan {
+  position: absolute;
+  top: -100%;
+  right: 22%;
+  left: 22%;
+  z-index: 4;
+  height: 100%;
+  opacity: 0;
+  background: linear-gradient(
+    to bottom,
+    transparent 49.4%,
+    rgba(200, 255, 49, 0.08) 49.5%,
+    rgba(200, 255, 49, 0.72) 50%,
+    rgba(200, 255, 49, 0.08) 50.5%,
+    transparent 50.6%
+  );
+  pointer-events: none;
+}
+
+.stage-viewport.is-recognizing .recognition-scan {
+  animation: recognition-scan-pass 2600ms var(--ease-product) infinite;
+}
+
 .framing-guide {
   position: absolute;
   inset: 10% 22% 12%;
@@ -437,6 +460,7 @@
 .caption-entry {
   padding: 13px 6px;
   border-bottom: 1px solid var(--line);
+  animation: caption-reveal 300ms var(--ease-product) both;
 }
 .caption-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--muted-soft); font-family: "DM Mono", monospace; font-size: 7px; text-transform: uppercase; }
 .caption-meta > span { color: var(--ink); font-weight: 500; }
@@ -500,6 +524,18 @@
 
 .spin { animation: spin 900ms linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+@keyframes recognition-scan-pass {
+  0% { opacity: 0; transform: translateY(0); }
+  12% { opacity: 0.82; }
+  82% { opacity: 0.82; }
+  100% { opacity: 0; transform: translateY(200%); }
+}
+
+@keyframes caption-reveal {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 
 .studio-workspace button:focus-visible { outline: 3px solid var(--sc-focus, rgba(233, 112, 85, 0.5)); outline-offset: 2px; }
 
