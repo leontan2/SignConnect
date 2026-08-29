@@ -6,11 +6,17 @@
     "frontend/apps/*"
   ],
   "scripts": {
+    "prepare": "node scripts/install-git-hooks.mjs",
+    "hooks:install": "node scripts/install-git-hooks.mjs",
     "dev": "concurrently --names meeting,shell --prefix-colors yellow,green \"npm run dev --workspace @signconnect/meeting\" \"npm run dev --workspace @signconnect/shell\"",
     "dev:shell": "npm run dev --workspace @signconnect/shell",
     "dev:meeting": "npm run dev --workspace @signconnect/meeting",
     "build": "npm run build --workspace @signconnect/meeting && npm run build --workspace @signconnect/shell",
-    "test": "npm run test --workspaces --if-present"
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "tsc --noEmit -p frontend/apps/meeting/tsconfig.json && tsc --noEmit -p frontend/apps/shell/tsconfig.json",
+    "check": "npm run typecheck && npm test",
+    "check:staged": "node scripts/check-staged-files.mjs",
+    "check:push": "npm run check && npm run build"
   },
   "devDependencies": {
     "@types/react": "18.3.12",
