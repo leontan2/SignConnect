@@ -1,27 +1,40 @@
 import React, { useRef } from "react";
 import { Send } from "lucide-react";
 
-import type { LegacyRecognitionResultEvent } from "../api";
+import type { ClientRealtimeEvent } from "../api";
 
 const DEMO_PHRASES = ["Hello everyone", "Please repeat that", "Thank you"] as const;
+const SIMULATOR_REQUEST_ID = "11111111-1111-4111-8111-111111111111";
+const SIMULATOR_STREAM_ID = "00000000-0000-4000-8000-000000000000";
 
 export interface RecognitionSimulatorProps {
   connected: boolean;
-  send(event: LegacyRecognitionResultEvent): boolean;
+  send(event: ClientRealtimeEvent): boolean;
 }
 
 export default function RecognitionSimulator({
   connected,
   send
 }: RecognitionSimulatorProps): React.ReactElement {
-  const sequence = useRef(0);
+  const resultSequence = useRef(0);
+  const requestSequence = useRef(0);
 
   function sendDemoPhrase(text: string): void {
     if (!connected) return;
-    sequence.current += 1;
+    const ownershipRequested = send({
+      schemaVersion: 1,
+      type: "signer.request",
+      requestId: SIMULATOR_REQUEST_ID,
+      streamId: SIMULATOR_STREAM_ID,
+      sequence: requestSequence.current,
+      timestampMs: Date.now()
+    });
+    if (!ownershipRequested) return;
+    requestSequence.current += 1;
+    resultSequence.current += 1;
     send({
       type: "recognition.result",
-      sequence: sequence.current,
+      sequence: resultSequence.current,
       payload: { text, confidence: 0.93 }
     });
   }

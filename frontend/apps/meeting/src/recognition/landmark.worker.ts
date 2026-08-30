@@ -27,6 +27,11 @@ import {
   POSE_LANDMARK_INDICES
 } from "./contracts";
 import { normalizeLandmarks } from "./normalizeLandmarks";
+import {
+  GestureSegmenter,
+  SessionCalibrator,
+  evaluateTrackingQuality
+} from "./trackingQuality";
 import type { LandmarkWorkerCommand, LandmarkWorkerResult } from "./workerProtocol";
 
 export interface HandLandmarkerTaskLike {
@@ -284,6 +289,8 @@ export function createLandmarkWorkerProcessor(options: LandmarkWorkerProcessorOp
   let lastTimestampMs = Number.NEGATIVE_INFINITY;
   let lastGestureLabel: BrowserLocalGestureLabel | null = null;
   let consecutiveGestureFrames = 0;
+  const calibrator = new SessionCalibrator();
+  const segmenter = new GestureSegmenter();
   let disposed = false;
 
   function stabilizeGesture(
@@ -359,6 +366,21 @@ export function createLandmarkWorkerProcessor(options: LandmarkWorkerProcessorOp
       const result = detection
         ? normalizeLandmarks(detection)
         : { kind: "rejected" as const, reason: "LOW_QUALITY" as const };
+      const qualityDetection = detection ?? {
+        hands: [],
+        poseLandmarks: poseResult.landmarks[0] as RawLandmark[] | undefined
+      };
+      const quality = evaluateTrackingQuality(qualityDetection);
+      const calibration = calibrator.observe(quality);
+      const segmentation = segmenter.observe(
+        qualityDetection,
+        quality,
+        command.timestampMs,
+        result.kind === "accepted"
+          ? { timestampMs: command.timestampMs, features: result.features }
+          : undefined,
+        calibration.state === "ready"
+      );
       const browserLocal: BrowserLocalVisionFrame = {
         timestampMs: command.timestampMs,
         gestureModel: tasks.gesture ? "ready" : "unavailable",
@@ -367,7 +389,10 @@ export function createLandmarkWorkerProcessor(options: LandmarkWorkerProcessorOp
           (poseResult.landmarks[0] ?? []) as RawLandmark[],
           POSE_LANDMARK_INDICES
         ),
-        gesture: stabilizeGesture(toGenericGesturePrediction(gestureResult))
+        gesture: stabilizeGesture(toGenericGesturePrediction(gestureResult)),
+        trackingQuality: quality.facts,
+        calibration,
+        gesturePhase: segmentation.phase
       };
 
       options.emit({
@@ -375,7 +400,8 @@ export function createLandmarkWorkerProcessor(options: LandmarkWorkerProcessorOp
         requestId: command.requestId,
         timestampMs: command.timestampMs,
         result,
-        browserLocal
+        browserLocal,
+        ...(segmentation.candidate ? { gestureCandidate: segmentation.candidate } : {})
       });
     } catch {
       options.emit({
@@ -403,6 +429,8 @@ export function createLandmarkWorkerProcessor(options: LandmarkWorkerProcessorOp
     disposed = true;
     lastGestureLabel = null;
     consecutiveGestureFrames = 0;
+    calibrator.reset();
+    segmenter.reset();
     if (tasks) closeTaskSet(tasks);
     tasks = null;
   }

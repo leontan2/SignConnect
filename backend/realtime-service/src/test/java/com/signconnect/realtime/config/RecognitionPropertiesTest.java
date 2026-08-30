@@ -17,4 +17,17 @@ class RecognitionPropertiesTest {
         properties.setMaxMessageSize(DataSize.ofKilobytes(32));
         assertThat(properties.isSafeConfiguration()).isTrue();
     }
+
+    @Test
+    void defaultsToSegmentedGesturesAndRequiresNonOverlappingThirtyFrameCandidates() {
+        RecognitionProperties properties = new RecognitionProperties();
+
+        assertThat(properties.getInputMode())
+                .isEqualTo(RecognitionProperties.InputMode.SEGMENTED_GESTURES);
+        assertThat(properties.effectiveStrideFrames()).isEqualTo(30);
+
+        properties.setInputMode(RecognitionProperties.InputMode.ROLLING);
+        assertThat(properties.effectiveStrideFrames()).isEqualTo(5);
+        assertThat(properties.isSafeConfiguration()).isTrue();
+    }
 }

@@ -21,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {
+                "signconnect.recognition.input-mode=ROLLING",
                 "signconnect.recognition.inference-timeout=5s",
                 "signconnect.recognition.stable-active-evaluations=1",
                 "signconnect.recognition.idle-evaluations=1",

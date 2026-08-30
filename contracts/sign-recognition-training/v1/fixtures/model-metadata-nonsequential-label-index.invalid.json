@@ -1,0 +1,129 @@
+{
+  "schemaVersion": 1,
+  "modelId": "synthetic-integration-model",
+  "modelVersion": "synthetic-v1",
+  "generatedAt": "2026-08-30T13:00:00Z",
+  "mockModel": true,
+  "genuineSignLanguageData": false,
+  "targetLanguage": "sg-SG",
+  "architecture": {
+    "family": "SYNTHETIC_FIXTURE",
+    "name": "Deterministic integration fixture",
+    "parameterCount": 0
+  },
+  "artifactSha256": "3ea81d50540a314493687a961211a3bfc07e23714382bf669199d45c0abfbfa5",
+  "input": {
+    "name": "features",
+    "shape": [
+      1,
+      30,
+      224
+    ],
+    "tensorType": "FLOAT32",
+    "featureLayoutVersion": "mediapipe-holistic-224-v1",
+    "normalizationVersion": "shoulder-midpoint-shoulder-width-v1",
+    "featureOrder": [
+      "LEFT_HAND_0_20_XYZ_PRESENCE",
+      "RIGHT_HAND_0_20_XYZ_PRESENCE",
+      "POSE_11_24_XYZ_PRESENCE"
+    ]
+  },
+  "output": {
+    "name": "probabilities",
+    "shape": [
+      1,
+      3
+    ],
+    "tensorType": "FLOAT32",
+    "semanticsVersion": "softmax-class-probabilities-v1"
+  },
+  "decision": {
+    "minimumConfidence": 0.8
+  },
+  "labels": [
+    {
+      "index": 0,
+      "id": "NO_SIGN",
+      "captionText": null,
+      "outcome": "NO_SIGN"
+    },
+    {
+      "index": 7,
+      "id": "MOCK_ACTIVE",
+      "captionText": "Synthetic active gesture",
+      "outcome": "SIGN"
+    },
+    {
+      "index": 2,
+      "id": "OUT_OF_VOCABULARY",
+      "captionText": null,
+      "outcome": "REJECT"
+    }
+  ],
+  "trainingDataset": {
+    "datasetId": "synthetic-contract-fixtures",
+    "datasetVersion": "1.0.0",
+    "manifestPath": "manifests/synthetic-contract-fixtures.json",
+    "manifestSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "licence": {
+      "spdxExpression": "MIT",
+      "commercialUseAllowed": true,
+      "redistributionAllowed": true
+    }
+  },
+  "evaluation": {
+    "protocol": {
+      "splitStrategy": "SYNTHETIC",
+      "splitSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "signerOverlapCount": 0,
+      "testSignerCount": 0
+    },
+    "metrics": {
+      "macroF1": 1,
+      "accuracy": 1,
+      "falseFinalRate": 0,
+      "sampleCount": 3
+    }
+  },
+  "onnx": {
+    "artifactPath": "models/fixtures/synthetic-integration.onnx",
+    "opset": 17,
+    "parity": {
+      "verified": true,
+      "absoluteTolerance": 0.00001,
+      "relativeTolerance": 0.0001,
+      "maxAbsoluteDifference": 0
+    }
+  },
+  "runtime": {
+    "engine": "ONNX_RUNTIME_JAVA",
+    "minimumVersion": "1.22.0",
+    "executionProviders": [
+      "CPUExecutionProvider"
+    ],
+    "maxBatchSize": 1,
+    "warmedP95LatencyMs": 1
+  },
+  "sgslReview": {
+    "status": "PENDING",
+    "reviewerRole": "SGSL_FLUENT_DEAF_REVIEWER",
+    "reviewedLabelIds": [],
+    "reviewArtifactSha256": null,
+    "reviewedAt": null
+  },
+  "governance": {
+    "allTrainingSamplesConsentVerified": false,
+    "usageRightsVerified": true,
+    "signerIndependentEvaluationVerified": false,
+    "rawVideoOrImageDataIncluded": false
+  },
+  "productionPromotion": {
+    "status": "BLOCKED",
+    "assessedAt": "2026-08-30T13:00:00Z",
+    "blockingReasons": [
+      "Synthetic fixtures are not genuine SGSL data.",
+      "SGSL-fluent Deaf review is absent.",
+      "Signer-independent evaluation is absent."
+    ]
+  }
+}

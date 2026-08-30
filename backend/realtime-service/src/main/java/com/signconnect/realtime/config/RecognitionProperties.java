@@ -41,6 +41,9 @@ public class RecognitionProperties {
     @Max(5)
     private int strideFrames = 5;
 
+    @NotNull
+    private InputMode inputMode = InputMode.SEGMENTED_GESTURES;
+
     @DecimalMin("0.80")
     @DecimalMax("1.0")
     private double confidenceThreshold = 0.80;
@@ -80,6 +83,7 @@ public class RecognitionProperties {
                 && positiveAndAtMost(inferenceTimeout, Duration.ofSeconds(10))
                 && windowFrames == 30
                 && strideFrames == 5
+                && inputMode != null
                 && Double.isFinite(confidenceThreshold)
                 && confidenceThreshold >= 0.80
                 && confidenceThreshold <= 1.0
@@ -132,6 +136,18 @@ public class RecognitionProperties {
 
     public void setStrideFrames(int strideFrames) {
         this.strideFrames = strideFrames;
+    }
+
+    public InputMode getInputMode() {
+        return inputMode;
+    }
+
+    public void setInputMode(InputMode inputMode) {
+        this.inputMode = inputMode;
+    }
+
+    public int effectiveStrideFrames() {
+        return inputMode == InputMode.SEGMENTED_GESTURES ? windowFrames : strideFrames;
     }
 
     public double getConfidenceThreshold() {
@@ -196,5 +212,10 @@ public class RecognitionProperties {
 
     public void setSimulatorEnabled(boolean simulatorEnabled) {
         this.simulatorEnabled = simulatorEnabled;
+    }
+
+    public enum InputMode {
+        SEGMENTED_GESTURES,
+        ROLLING
     }
 }

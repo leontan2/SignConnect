@@ -97,6 +97,14 @@ async function startRecognitionWithKeyboard(page: Page): Promise<void> {
   await expect(page.getByRole("button", { name: "Stop recognition" })).toBeVisible();
 }
 
+async function restartRecognition(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Stop recognition" }).click();
+  const start = page.getByRole("button", { name: "Start recognition" });
+  await expect(start).toBeEnabled();
+  await start.click();
+  await expect(page.getByRole("button", { name: "Stop recognition" })).toBeVisible();
+}
+
 async function controlService(
   request: APIRequestContext,
   service: "inference" | "realtime",
@@ -267,7 +275,7 @@ test.describe("sign-recognition full-stack milestone", () => {
     }
   });
 
-  test("reports inference unavailability and recovery without adding captions", async ({ page, request }) => {
+  test("reports inference unavailability, suppresses outage captions, and recovers", async ({ page, request }) => {
     await openWorkspace(page);
     await enableCameraAndSession(page);
     await startRecognitionWithKeyboard(page);
@@ -278,23 +286,26 @@ test.describe("sign-recognition full-stack milestone", () => {
     try {
       await controlService(request, "inference", "stop");
       inferenceStopped = true;
+      await restartRecognition(page);
       await expect(page.getByLabel("Recognition service status")).toContainText(
         /temporarily unavailable/i,
         { timeout: 10_000 }
       );
+      await expect(transcript.getByRole("article")).toHaveCount(1);
       await controlService(request, "inference", "start");
       inferenceStopped = false;
+      await restartRecognition(page);
       await expect(page.getByLabel("Recognition service status")).toContainText(
-        /available again|recovered/i,
+        /recognition is ready/i,
         { timeout: 15_000 }
       );
-      await expect(transcript.getByRole("article")).toHaveCount(1);
+      await expect(transcript.getByRole("article")).toHaveCount(2, { timeout: 15_000 });
     } finally {
       if (inferenceStopped) await controlService(request, "inference", "start");
     }
   });
 
-  test("simulator follows the explicit client and server development gates", async ({ page }) => {
+  test("@simulator simulator follows the explicit client and server development gates", async ({ page }) => {
     const diagnostics = collectSocketDiagnostics(page);
     await openWorkspace(page);
     if (!SIMULATOR_ENABLED) {

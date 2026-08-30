@@ -200,6 +200,7 @@ class RealtimeRecognitionSessionTimeoutTest {
 
         private Harness(Mono<InferenceClient.Prediction> defaultPrediction) {
             RecognitionProperties properties = new RecognitionProperties();
+            properties.setInputMode(RecognitionProperties.InputMode.ROLLING);
             properties.setTrackingTimeout(Duration.ofSeconds(2));
             properties.setStableActiveEvaluations(1);
             properties.setIdleEvaluations(1);

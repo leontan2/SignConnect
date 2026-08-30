@@ -680,6 +680,28 @@ async function buildBackend() {
   console.log("Backend jars are packaged.");
 }
 
+function playwrightSelection(options) {
+  if (options.performance) {
+    return {
+      project: "performance",
+      target: "tests/performance/sign-recognition-latency.spec.ts",
+      grep: null
+    };
+  }
+  if (options.simulator) {
+    return {
+      project: options.project,
+      target: "tests/e2e",
+      grep: "@simulator"
+    };
+  }
+  return {
+    project: options.project,
+    target: "tests/e2e",
+    grep: null
+  };
+}
+
 async function runPlaywright(options, control) {
   lifecycle.assertOpen();
   for (const name of ["meeting-frontend", "shell-frontend"]) {
@@ -690,12 +712,10 @@ async function runPlaywright(options, control) {
   }
   const playwrightCli = path.join(repositoryRoot, "node_modules", "@playwright", "test", "cli.js");
   if (!existsSync(playwrightCli)) throw new Error("Playwright is not installed. Run npm install first.");
-  const project = options.performance ? "performance" : options.project;
-  const target = options.performance
-    ? "tests/performance/sign-recognition-latency.spec.ts"
-    : "tests/e2e";
-  const args = [playwrightCli, "test", target, `--project=${project}`, "--workers=1"];
-  console.log(`Running Playwright project '${project}'...`);
+  const selection = playwrightSelection(options);
+  const args = [playwrightCli, "test", selection.target, `--project=${selection.project}`, "--workers=1"];
+  if (selection.grep) args.push("--grep", selection.grep);
+  console.log(`Running Playwright project '${selection.project}'...`);
   const output = await runPreparation("playwright", process.execPath, args, {
     cwd: repositoryRoot,
     env: sanitizedEnvironment({
@@ -930,6 +950,25 @@ async function runLifecycleSelfTest() {
     assert.equal(compilation.state, "error", "an error after a prior success invalidates readiness");
     compilation.append("\nwebpack 5.110.1 compiled successfully");
     assert.equal(compilation.state, "success", "a later successful rebuild restores readiness");
+
+    assert.deepEqual(
+      playwrightSelection({ performance: false, project: "chromium", simulator: true }),
+      {
+        project: "chromium",
+        target: "tests/e2e",
+        grep: "@simulator"
+      },
+      "the simulator stack must select only the explicit simulator development-gate test"
+    );
+    assert.deepEqual(
+      playwrightSelection({ performance: false, project: "chromium", simulator: false }),
+      {
+        project: "chromium",
+        target: "tests/e2e",
+        grep: null
+      },
+      "the production stack must retain the complete correctness suite, including simulator absence coverage"
+    );
   };
 
   let timeout;

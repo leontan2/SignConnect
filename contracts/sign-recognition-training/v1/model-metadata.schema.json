@@ -1,0 +1,494 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://signconnect.local/contracts/sign-recognition-training/v1/model-metadata.schema.json",
+  "title": "SignConnect sign-recognition model metadata v1",
+  "description": "The single authoritative runtime, provenance, evaluation, governance, and production-promotion contract for a SignConnect ONNX model.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "modelId",
+    "modelVersion",
+    "generatedAt",
+    "mockModel",
+    "genuineSignLanguageData",
+    "targetLanguage",
+    "architecture",
+    "artifactSha256",
+    "input",
+    "output",
+    "decision",
+    "labels",
+    "trainingDataset",
+    "evaluation",
+    "onnx",
+    "runtime",
+    "sgslReview",
+    "governance",
+    "productionPromotion"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "modelId": { "type": "string", "pattern": "^[a-z][a-z0-9-]{2,63}$" },
+    "modelVersion": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+    },
+    "generatedAt": { "$ref": "#/$defs/timestamp" },
+    "mockModel": { "type": "boolean" },
+    "genuineSignLanguageData": { "type": "boolean" },
+    "targetLanguage": { "const": "sg-SG" },
+    "architecture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["family", "name", "parameterCount"],
+      "properties": {
+        "family": { "enum": ["TCN", "GRU", "BILSTM", "ST_GCN", "SYNTHETIC_FIXTURE"] },
+        "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "parameterCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "artifactSha256": { "$ref": "#/$defs/sha256" },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "shape",
+        "tensorType",
+        "featureLayoutVersion",
+        "normalizationVersion",
+        "featureOrder"
+      ],
+      "properties": {
+        "name": { "const": "features" },
+        "shape": {
+          "type": "array",
+          "prefixItems": [{ "const": 1 }, { "const": 30 }, { "const": 224 }],
+          "items": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "tensorType": { "const": "FLOAT32" },
+        "featureLayoutVersion": { "const": "mediapipe-holistic-224-v1" },
+        "normalizationVersion": { "const": "shoulder-midpoint-shoulder-width-v1" },
+        "featureOrder": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "LEFT_HAND_0_20_XYZ_PRESENCE" },
+            { "const": "RIGHT_HAND_0_20_XYZ_PRESENCE" },
+            { "const": "POSE_11_24_XYZ_PRESENCE" }
+          ],
+          "items": false,
+          "minItems": 3,
+          "maxItems": 3
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "shape", "tensorType", "semanticsVersion"],
+      "properties": {
+        "name": { "const": "probabilities" },
+        "shape": {
+          "type": "array",
+          "prefixItems": [{ "const": 1 }, { "type": "integer", "minimum": 2 }],
+          "items": false,
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "The second dimension must equal labels.length; the semantic validator enforces that cross-field constraint."
+        },
+        "tensorType": { "const": "FLOAT32" },
+        "semanticsVersion": { "const": "softmax-class-probabilities-v1" }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimumConfidence"],
+      "properties": {
+        "minimumConfidence": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "labels": {
+      "type": "array",
+      "minItems": 2,
+      "uniqueItems": true,
+      "allOf": [
+        {
+          "contains": {
+            "type": "object",
+            "properties": {
+              "id": { "const": "NO_SIGN" },
+              "captionText": { "type": "null" },
+              "outcome": { "const": "NO_SIGN" }
+            },
+            "required": ["id", "captionText", "outcome"]
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "properties": { "outcome": { "const": "SIGN" } },
+            "required": ["outcome"]
+          },
+          "minContains": 1
+        }
+      ],
+      "items": { "$ref": "#/$defs/label" }
+    },
+    "trainingDataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["datasetId", "datasetVersion", "manifestPath", "manifestSha256", "licence"],
+      "properties": {
+        "datasetId": { "type": "string", "pattern": "^[a-z][a-z0-9-]{2,63}$" },
+        "datasetVersion": { "$ref": "#/$defs/semanticVersion" },
+        "manifestPath": {
+          "type": "string",
+          "pattern": "^manifests/(?:[A-Za-z0-9][A-Za-z0-9._-]*/)*[A-Za-z0-9][A-Za-z0-9._-]*\\.json$"
+        },
+        "manifestSha256": { "$ref": "#/$defs/sha256" },
+        "licence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["spdxExpression", "commercialUseAllowed", "redistributionAllowed"],
+          "properties": {
+            "spdxExpression": {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9.+() -]*$"
+            },
+            "commercialUseAllowed": { "type": "boolean" },
+            "redistributionAllowed": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "evaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "metrics"],
+      "properties": {
+        "protocol": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["splitStrategy", "splitSha256", "signerOverlapCount", "testSignerCount"],
+          "properties": {
+            "splitStrategy": { "enum": ["SIGNER_INDEPENDENT", "RANDOM_SAMPLE", "SYNTHETIC"] },
+            "splitSha256": { "$ref": "#/$defs/sha256" },
+            "signerOverlapCount": { "type": "integer", "minimum": 0 },
+            "testSignerCount": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "metrics": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["macroF1", "accuracy", "falseFinalRate", "sampleCount"],
+          "properties": {
+            "macroF1": { "$ref": "#/$defs/probability" },
+            "accuracy": { "$ref": "#/$defs/probability" },
+            "falseFinalRate": { "$ref": "#/$defs/probability" },
+            "sampleCount": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "onnx": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifactPath", "opset", "parity"],
+      "properties": {
+        "artifactPath": {
+          "type": "string",
+          "pattern": "^models/(?:[A-Za-z0-9][A-Za-z0-9._-]*/)*[A-Za-z0-9][A-Za-z0-9._-]*\\.onnx$"
+        },
+        "opset": { "type": "integer", "minimum": 17, "maximum": 21 },
+        "parity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["verified", "absoluteTolerance", "relativeTolerance", "maxAbsoluteDifference"],
+          "properties": {
+            "verified": { "type": "boolean" },
+            "absoluteTolerance": { "type": "number", "exclusiveMinimum": 0, "maximum": 0.0001 },
+            "relativeTolerance": { "type": "number", "exclusiveMinimum": 0, "maximum": 0.001 },
+            "maxAbsoluteDifference": { "type": "number", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["engine", "minimumVersion", "executionProviders", "maxBatchSize", "warmedP95LatencyMs"],
+      "properties": {
+        "engine": { "const": "ONNX_RUNTIME_JAVA" },
+        "minimumVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "executionProviders": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "contains": { "const": "CPUExecutionProvider" },
+          "items": { "enum": ["CPUExecutionProvider"] }
+        },
+        "maxBatchSize": { "const": 1 },
+        "warmedP95LatencyMs": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Measured warmed ONNX Runtime Java CPU p95 latency. Zero is the explicit unmeasured sentinel and is valid only while production promotion is BLOCKED."
+        }
+      }
+    },
+    "sgslReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reviewerRole", "reviewedLabelIds", "reviewArtifactSha256", "reviewedAt"],
+      "properties": {
+        "status": { "enum": ["PENDING", "APPROVED", "REJECTED"] },
+        "reviewerRole": { "const": "SGSL_FLUENT_DEAF_REVIEWER" },
+        "reviewedLabelIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,63}$" }
+        },
+        "reviewArtifactSha256": { "$ref": "#/$defs/nullableSha256" },
+        "reviewedAt": {
+          "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": { "status": { "const": "APPROVED" } },
+            "required": ["status"]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "reviewedLabelIds": { "type": "array", "minItems": 1 },
+              "reviewArtifactSha256": { "$ref": "#/$defs/sha256" },
+              "reviewedAt": { "$ref": "#/$defs/timestamp" }
+            }
+          },
+          "else": {
+            "type": "object",
+            "properties": {
+              "reviewArtifactSha256": { "type": "null" },
+              "reviewedAt": { "type": "null" }
+            }
+          }
+        }
+      ]
+    },
+    "governance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allTrainingSamplesConsentVerified",
+        "usageRightsVerified",
+        "signerIndependentEvaluationVerified",
+        "rawVideoOrImageDataIncluded"
+      ],
+      "properties": {
+        "allTrainingSamplesConsentVerified": { "type": "boolean" },
+        "usageRightsVerified": { "type": "boolean" },
+        "signerIndependentEvaluationVerified": { "type": "boolean" },
+        "rawVideoOrImageDataIncluded": { "const": false }
+      }
+    },
+    "productionPromotion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "assessedAt", "blockingReasons"],
+      "properties": {
+        "status": { "enum": ["BLOCKED", "APPROVED"] },
+        "assessedAt": { "$ref": "#/$defs/timestamp" },
+        "blockingReasons": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 256 }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": { "status": { "const": "APPROVED" } },
+            "required": ["status"]
+          },
+          "then": {
+            "type": "object",
+            "properties": { "blockingReasons": { "type": "array", "maxItems": 0 } }
+          },
+          "else": {
+            "type": "object",
+            "properties": { "blockingReasons": { "type": "array", "minItems": 1 } }
+          }
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "type": "object",
+        "properties": {
+          "productionPromotion": {
+            "type": "object",
+            "properties": { "status": { "const": "APPROVED" } },
+            "required": ["status"]
+          }
+        },
+        "required": ["productionPromotion"]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "mockModel": { "const": false },
+          "genuineSignLanguageData": { "const": true },
+          "architecture": {
+            "type": "object",
+            "properties": { "family": { "not": { "const": "SYNTHETIC_FIXTURE" } } }
+          },
+          "evaluation": {
+            "type": "object",
+            "properties": {
+              "protocol": {
+                "type": "object",
+                "properties": {
+                  "splitStrategy": { "const": "SIGNER_INDEPENDENT" },
+                  "signerOverlapCount": { "const": 0 },
+                  "testSignerCount": { "type": "integer", "minimum": 1 }
+                }
+              },
+              "metrics": {
+                "type": "object",
+                "properties": {
+                  "macroF1": { "type": "number", "minimum": 0.8 },
+                  "falseFinalRate": { "type": "number", "maximum": 0.05 },
+                  "sampleCount": { "type": "integer", "minimum": 1 }
+                }
+              }
+            }
+          },
+          "onnx": {
+            "type": "object",
+            "properties": {
+              "parity": {
+                "type": "object",
+                "properties": { "verified": { "const": true } }
+              }
+            }
+          },
+          "runtime": {
+            "type": "object",
+            "properties": {
+              "warmedP95LatencyMs": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 500
+              }
+            }
+          },
+          "sgslReview": {
+            "type": "object",
+            "properties": { "status": { "const": "APPROVED" } }
+          },
+          "governance": {
+            "type": "object",
+            "properties": {
+              "allTrainingSamplesConsentVerified": { "const": true },
+              "usageRightsVerified": { "const": true },
+              "signerIndependentEvaluationVerified": { "const": true },
+              "rawVideoOrImageDataIncluded": { "const": false }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "semanticVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[a-z0-9.-]+)?$"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]{1,6})?Z$"
+    },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "nullableSha256": {
+      "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+    },
+    "probability": { "type": "number", "minimum": 0, "maximum": 1 },
+    "label": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["index", "id", "captionText", "outcome"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "id": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,63}$" },
+        "captionText": {
+          "oneOf": [
+            { "type": "string", "minLength": 1, "maxLength": 240, "pattern": "\\S" },
+            { "type": "null" }
+          ]
+        },
+        "outcome": { "enum": ["SIGN", "NO_SIGN", "REJECT"] }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": { "outcome": { "const": "NO_SIGN" } },
+            "required": ["outcome"]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "id": { "const": "NO_SIGN" },
+              "captionText": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": { "outcome": { "const": "SIGN" } },
+            "required": ["outcome"]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "id": { "not": { "const": "NO_SIGN" } },
+              "captionText": { "type": "string", "minLength": 1, "maxLength": 240, "pattern": "\\S" }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": { "outcome": { "const": "REJECT" } },
+            "required": ["outcome"]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "id": { "not": { "const": "NO_SIGN" } },
+              "captionText": { "type": "null" }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

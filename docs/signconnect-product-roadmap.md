@@ -1,7 +1,7 @@
 # SignConnect Product and Implementation Roadmap
 
 > Status: Active
-> Last updated: 2026-08-29
+> Last updated: 2026-08-30
 > Product focus: Desktop-first, two-person sign-supported meetings
 > Inference strategy: Local MediaPipe capture with Spring Boot and ONNX Runtime Java
 
@@ -42,11 +42,11 @@ SignConnect already contains a meaningful recognition pipeline:
 
 - MediaPipe hand and upper-body landmark extraction runs in a browser worker.
 - Capture targets approximately 25 processed frames per second.
-- Accepted frames are sent in five-frame `landmark.chunk` messages.
-- The realtime service owns a rolling 30-frame window with shape `[1, 30, 224]`.
+- A completed browser-local gesture is resampled to 30 frames and sent as six ordered five-frame `landmark.chunk` messages.
+- The realtime service assembles one `[1, 30, 224]` candidate per completed gesture; at most one inference is in flight and newer completed work may replace an older pending candidate. Rolling windows remain an explicit legacy mode only.
 - Spring Boot calls the inference service over HTTP.
 - ONNX Runtime Java executes the configured model locally.
-- The realtime service handles stability, idle separation, unknown results, duplicate suppression, backpressure, timeouts, and reconnect resets.
+- The realtime service returns immediate final/unknown decisions in default segmented mode and handles occurrence separation, backpressure, timeouts, and reconnect resets; temporal voting, idle finalization, cooldown, and duplicate suppression belong to explicit legacy rolling mode.
 - The meeting frontend owns a single reconnecting WebSocket client per meeting.
 
 The two important prototype limitations are:
@@ -103,7 +103,7 @@ Camera pixels stay in the browser recognition pipeline. Derived landmark data is
 6. SignConnect reports whether the upper body and hands are adequately tracked.
 7. The signer performs a supported sign.
 8. The browser extracts and normalizes landmarks.
-9. The realtime and inference services recognize and stabilize the sign.
+9. The realtime and inference services classify the completed sign and return a final caption or private unknown feedback; explicit legacy rolling mode adds temporal stabilization.
 10. The same finalized caption appears for both participants.
 11. Once WebRTC is added, both participants can also see and hear each other.
 
@@ -419,7 +419,7 @@ Recommended events:
 
 Treat event categories differently:
 
-- Landmark chunks: latest-complete-window behavior; older pending data may be replaced.
+- Completed landmark candidates: one inference may be in flight; a newer complete candidate may replace older pending work without mixing gesture frames.
 - Control and signer-ownership events: ordered and never silently dropped.
 - Final captions: ordered, idempotent, and never replaced by a newer caption.
 - Presence: snapshots may supersede older transient presence updates.
@@ -484,7 +484,7 @@ The automated acceptance scenarios are implemented in the backend WebSocket and 
 
 ## Status
 
-- [ ] Not started
+- [x] Complete — 2026-08-30
 
 ## Objective
 
@@ -527,7 +527,7 @@ After camera startup:
 1. Ask the user to sit or stand naturally.
 2. Confirm shoulders and both hands are visible.
 3. Measure approximate shoulder scale.
-4. Confirm camera orientation and mirroring.
+4. Hold the ready setup for eight stable quality frames; preview mirroring remains presentation-only.
 5. Keep calibration data only for the active session.
 
 ## Gesture boundary state machine
@@ -571,26 +571,26 @@ Preserve the existing MediaPipe handedness correction and validate it with recor
 
 ## Implementation checklist
 
-- [ ] Define the camera-quality model.
-- [ ] Calculate frame-edge and visibility quality.
-- [ ] Add the optional landmark overlay.
-- [ ] Add the signing-area guide.
-- [ ] Add session calibration.
-- [ ] Implement local activity detection.
-- [ ] Implement gesture start/end hysteresis.
-- [ ] Resample bounded gestures into the model input window.
-- [ ] Preserve missing-landmark masks.
-- [ ] Create a small recorded fixture collection.
-- [ ] Add actionable unknown-sign feedback.
+- [x] Define the camera-quality model.
+- [x] Calculate frame-edge and visibility quality.
+- [x] Add the optional landmark overlay.
+- [x] Add the signing-area guide.
+- [x] Add session calibration.
+- [x] Implement local activity detection.
+- [x] Implement gesture start/end hysteresis.
+- [x] Resample bounded gestures into the model input window.
+- [x] Preserve missing-landmark masks.
+- [x] Create deterministic normalized landmark fixtures for segmentation and browser validation. These are synthetic fixtures, not SGSL recordings or accuracy evidence.
+- [x] Add actionable unknown-sign feedback.
 
 ## Acceptance gate
 
-- [ ] The interface explains why recognition is unavailable.
-- [ ] Users can position themselves without guessing.
-- [ ] Camera adjustment does not begin a sign accidentally.
-- [ ] Held signs do not repeatedly emit captions.
-- [ ] Returning to idle separates genuine repeated signs.
-- [ ] Recorded fixtures normalize consistently across distance and speed.
+- [x] The interface explains why recognition is unavailable.
+- [x] Users can position themselves without guessing.
+- [x] Camera adjustment does not begin a sign accidentally.
+- [x] Held signs do not repeatedly emit captions.
+- [x] Returning to idle separates genuine repeated signs.
+- [x] Deterministic fixtures normalize consistently across distance, frame rate, missing-point masks, and dropped-frame gaps.
 
 ---
 
@@ -598,7 +598,7 @@ Preserve the existing MediaPipe handedness correction and validate it with recor
 
 ## Status
 
-- [ ] Not started
+- [-] In progress — engineering pipeline complete; genuine SGSL proof is externally blocked
 
 ## Objective
 
@@ -680,18 +680,18 @@ The model contract should include:
 ## Implementation checklist
 
 - [ ] Confirm five initial signs with an SGSL reviewer.
-- [ ] Add the development-only capture route.
-- [ ] Define the dataset manifest format.
+- [ ] Add the development-only capture route only after separate collection consent, retention, deletion, reviewer, and governance approval. Live-recognition consent does not authorize training capture.
+- [x] Define the strict dataset manifest format and signer-disjoint split contract.
 - [ ] Capture `NO_SIGN` and transition movement.
 - [ ] Collect the pipeline-proof dataset.
-- [ ] Build the TCN baseline.
-- [ ] Build the GRU comparison baseline.
-- [ ] Evaluate by held-out signer.
-- [ ] Export the selected model to ONNX.
-- [ ] Verify Python/ONNX parity.
-- [ ] Add real model metadata and label map.
-- [ ] Load the model through the existing Java runtime.
-- [ ] Add an explicit mock/real development configuration.
+- [x] Build reproducible TCN and GRU implementations; synthetic smoke runs validate mechanics only.
+- [x] Build the common TCN/GRU evaluation interface; a genuine comparison run remains blocked on approved data.
+- [x] Implement signer-disjoint evaluation and leakage checks; a genuine held-out-signer report remains blocked.
+- [x] Export a self-contained model to ONNX with pinned metadata and checksum.
+- [x] Verify Python/ONNX parity on frozen synthetic fixtures; genuine-model parity remains open.
+- [ ] Add promoted real model metadata and label map. Strict schemas exist, but the current metadata remains explicitly synthetic and `BLOCKED`.
+- [x] Load and validate a schema-conformant synthetic TCN through the existing Java runtime; promoted genuine-artifact evidence remains open.
+- [x] Add explicit mock/real configuration with fail-closed startup and no silent fallback.
 - [ ] Demonstrate an actual supported sign in the browser.
 
 ## Acceptance gate
@@ -1133,10 +1133,32 @@ Copy this template when completing a milestone:
 ### Milestone 2 implementation record
 
 - Branch: `codex/milestone-2-camera-framing`
-- Pull request or commit: Pending
+- Pull request or commit: `d062c83912f3acf2aa3502c8201812218e24286b`
 - Implementation date: 2026-08-30
-- Demonstration performed: The running web app was checked at desktop, 720 px, and 320 px widths with a local canvas-backed camera stream; the 4:3 video and tracking overlay remained aligned with no horizontal overflow.
-- Automated checks run: Backend focused reliability tests, frontend component and contract tests, TypeScript checking, production packaging, Playwright discovery, and full-stack runner startup.
-- Known limitations: The complete two-browser WebSocket acceptance run is blocked on this managed host because its Java runtime cannot establish the internal loopback selector. The bundled recognition model remains synthetic and WebRTC is out of scope.
-- Follow-up work: Run `npm run test:e2e` on a local JDK 21 host with working loopback sockets, complete the two-browser reconnect demonstration, and then mark the acceptance gate.
-- Acceptance gate: PENDING ENVIRONMENT VERIFICATION
+- Demonstration performed: The running web app was checked at desktop, 720 px, and 320 px widths with a local canvas-backed camera stream; the 4:3 video and tracking overlay remained aligned with no horizontal overflow. Two-browser reconnect, ownership, privacy, and caption flows passed in bundled Chromium.
+- Automated checks run: Full repository verifier plus the complete Milestone 2 Chromium suite (`14/14`).
+- Known limitations: The bundled recognition model remains synthetic and WebRTC is out of scope.
+- Follow-up work: Milestone 3 browser-local tracking quality and bounded gesture segmentation.
+- Acceptance gate: PASS
+
+### Milestone 3 implementation record
+
+- Branch: `codex/gesture-segmentation`
+- Pull request or commit: Recorded when the implementation loop is committed.
+- Implementation date: 2026-08-30
+- Demonstration performed: The running fixture-backed app traversed actionable camera-quality, calibration, gesture, processing, recognized, and unknown states; the optional overlay remained keyboard-operable and the completed UI reflowed at 320 CSS pixels.
+- Automated checks run: Repository verifier, 90 meeting tests, 145 backend tests, 18 ML tests, 23 training-contract fixtures, production builds, and 16/16 E2E tests in bundled Chromium, installed Chrome, and installed Edge. Performance evidence is recorded in the AI implementation checklist.
+- Known limitations: Browser fixtures use deterministic normalized landmarks and the bundled classifier is synthetic; this is not SGSL recognition evidence.
+- Follow-up work: Obtain approved training governance, an SGSL-fluent Deaf reviewer, and consented multi-signer SGSL data before genuine model training.
+- Acceptance gate: PASS
+
+### Milestone 4 engineering-pipeline record
+
+- Branch: `codex/gesture-segmentation`
+- Pull request or commit: Recorded when the implementation loop is committed.
+- Implementation date: 2026-08-30
+- Demonstration performed: Reproducible synthetic TCN training/export/parity and explicit Java loading proved the mechanics without claiming SGSL quality.
+- Automated checks run: Strict contract fixtures, signer-leak checks, TCN/GRU unit coverage, Python/ONNX parity, Java fail-closed model validation, full repository verifier, Chromium E2E, and synthetic latency probes.
+- Known limitations: No approved SGSL reviewer, collection consent, licensed multi-signer SGSL dataset, locked independent test signer, or promoted `mockModel: false` artifact exists.
+- Follow-up work: Clear the G5 external-input gate in `docs/ai-model-implementation-checklist.md`, then run identical signer-disjoint TCN/GRU evaluation and the genuine browser promotion gates.
+- Acceptance gate: BLOCKED — engineering groundwork is complete; genuine SGSL proof is not.

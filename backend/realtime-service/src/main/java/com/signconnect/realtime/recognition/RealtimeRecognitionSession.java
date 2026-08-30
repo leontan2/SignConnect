@@ -120,7 +120,7 @@ public final class RealtimeRecognitionSession {
         this.trackingScheduler = Objects.requireNonNull(trackingScheduler, "trackingScheduler");
         this.developmentProfileActive = developmentProfileActive;
         this.rollingWindow = new RollingLandmarkWindow(
-                properties.getWindowFrames(), properties.getStrideFrames());
+                properties.getWindowFrames(), properties.effectiveStrideFrames());
         this.stabilizer = new RecognitionStabilizer(
                 clock,
                 new RecognitionStabilizer.Settings(
@@ -438,19 +438,21 @@ public final class RealtimeRecognitionSession {
                     prediction.modelVersion(),
                     prediction.mockModel());
         }
-        RecognitionStabilizer.Outcome outcome = stabilizer.evaluate(
-                new RecognitionStabilizer.Prediction(
-                        prediction.schemaVersion(),
-                        prediction.requestId(),
-                        prediction.streamId(),
-                        prediction.windowSequence(),
-                        prediction.labelId(),
-                        prediction.captionText(),
-                        prediction.confidence(),
-                        prediction.modelVersion(),
-                        prediction.inferenceLatencyMs(),
-                        prediction.mockModel()),
-                candidate.window().recentHandPresent());
+        RecognitionStabilizer.Prediction stabilizedPrediction = new RecognitionStabilizer.Prediction(
+                prediction.schemaVersion(),
+                prediction.requestId(),
+                prediction.streamId(),
+                prediction.windowSequence(),
+                prediction.labelId(),
+                prediction.captionText(),
+                prediction.confidence(),
+                prediction.modelVersion(),
+                prediction.inferenceLatencyMs(),
+                prediction.mockModel());
+        RecognitionStabilizer.Outcome outcome = properties.getInputMode()
+                == RecognitionProperties.InputMode.SEGMENTED_GESTURES
+                ? stabilizer.evaluateCompletedGesture(stabilizedPrediction)
+                : stabilizer.evaluate(stabilizedPrediction, candidate.window().recentHandPresent());
         if (outcome instanceof RecognitionStabilizer.Final completed) {
             RecognitionStabilizer.Prediction result = completed.prediction();
             emit(new CaptionEvent(

@@ -34,6 +34,10 @@ import {
 } from "./recognition/RealtimeClient";
 import type { BrowserLocalVisionFrame, LandmarkCaptureStatus } from "./recognition/contracts";
 import {
+  mapCanonicalApplicationState,
+  type CanonicalApplicationState
+} from "./recognition/CanonicalStateMapper";
+import {
   observeCanvasBackingStore,
   synchronizeCanvasBackingStore
 } from "./recognition/overlayCanvas";
@@ -52,6 +56,7 @@ type CameraState = "off" | "requesting" | "on" | "permission-denied" | "no-devic
 
 type ProductState = {
   captions: CaptionEvent[];
+  latestRecognitionOutcome: "recognized" | "not-recognized" | null;
   recognitionFeedback: string | null;
   serviceStatus: string;
   protocolFeedback: string | null;
@@ -63,11 +68,13 @@ type ProductAction =
   | { type: "server-event"; event: ServerRealtimeEvent }
   | { type: "parse-issue"; reason: "malformed" | "unsupported" }
   | { type: "room-order-issue" }
+  | { type: "gesture-dispatched" }
   | { type: "signer-feedback"; message: string | null }
   | { type: "reset-session" };
 
 const INITIAL_PRODUCT_STATE: ProductState = {
   captions: [],
+  latestRecognitionOutcome: null,
   recognitionFeedback: null,
   serviceStatus: "Recognition service is waiting.",
   protocolFeedback: null,
@@ -81,6 +88,9 @@ function productReducer(state: ProductState, action: ProductAction): ProductStat
   if (action.type === "reset-session") return { ...INITIAL_PRODUCT_STATE };
   if (action.type === "room-order-issue") {
     return { ...state, protocolFeedback: "Some room updates arrived out of order. The newest room state is shown." };
+  }
+  if (action.type === "gesture-dispatched") {
+    return { ...state, latestRecognitionOutcome: null };
   }
   if (action.type === "signer-feedback") return { ...state, signerFeedback: action.message };
   if (action.type === "parse-issue") {
@@ -98,6 +108,7 @@ function productReducer(state: ProductState, action: ProductAction): ProductStat
     return {
       ...state,
       captions: [...state.captions, event],
+      latestRecognitionOutcome: "recognized",
       recognitionFeedback: null,
       mockModelActive: state.mockModelActive || event.payload.mockModel
     };
@@ -109,6 +120,7 @@ function productReducer(state: ProductState, action: ProductAction): ProductStat
     return {
       ...state,
       recognitionFeedback: reason,
+      latestRecognitionOutcome: "not-recognized",
       mockModelActive: state.mockModelActive || event.payload.mockModel
     };
   }
@@ -136,7 +148,7 @@ export interface MeetingAppComposition {
   socketFactory?: (url: string) => RealtimeSocketLike;
   retryScheduler?: RealtimeRetryScheduler;
   maximumBufferedAmount?: number;
-  captureOptions?: Omit<UseLandmarkCaptureOptions, "consumer" | "onStatus">;
+  captureOptions?: Omit<UseLandmarkCaptureOptions, "onStatus" | "onGestureCandidate">;
   clock?: RecognitionClock;
   trackingAnnouncementDelayMs?: number;
   requestIdFactory?: () => string;
@@ -159,6 +171,60 @@ function recognitionDisabledReason(cameraState: CameraState, connected: boolean)
   if (cameraState !== "on") return "Turn on the camera before recognition.";
   if (!connected) return "Start a session before recognition.";
   return "Recognition is ready to start.";
+}
+
+type CameraReadinessGuidance = {
+  title: CanonicalApplicationState;
+  message: string;
+};
+
+function cameraReadinessGuidance(
+  cameraState: CameraState,
+  recognitionEnabled: boolean,
+  frame: BrowserLocalVisionFrame | null,
+  recognitionOutcome: ProductState["latestRecognitionOutcome"]
+): CameraReadinessGuidance {
+  const title = mapCanonicalApplicationState({
+    camera: cameraState === "requesting" ? "initializing" : cameraState === "on" ? "on" : "off",
+    recognitionEnabled,
+    hasFrame: frame !== null,
+    trackingQuality: frame?.trackingQuality.state ?? null,
+    calibrationReady: frame?.calibration.state === "ready",
+    gesturePhase: frame?.gesturePhase ?? null,
+    recognitionOutcome
+  });
+  switch (title) {
+    case "Camera off":
+      return { title, message: "Turn on the camera to position yourself before recognition." };
+    case "Camera initializing":
+      return { title, message: cameraState === "requesting"
+        ? "Approve camera access, then keep your upper body in view."
+        : recognitionEnabled
+          ? "Keep your shoulders and both hands inside the guide while positioning completes."
+          : "Start recognition when you are ready to check positioning." };
+    case "No person detected":
+      return { title, message: "Sit or stand naturally in the center of the camera guide." };
+    case "Upper body not fully visible":
+      return { title, message: "Move back until both shoulders, elbows, and wrists are visible." };
+    case "Left hand missing":
+      return { title, message: "Bring your left hand into the camera guide." };
+    case "Right hand missing":
+      return { title, message: "Bring your right hand into the camera guide." };
+    case "Hands too close to the frame edge":
+      return { title, message: "Move both hands away from the edge of the guide." };
+    case "Lighting or tracking quality too poor":
+      return { title, message: "Face the camera, improve lighting, and keep your upper body steady." };
+    case "Gesture in progress":
+      return { title, message: "Continue naturally until your hands settle." };
+    case "Processing":
+      return { title, message: "The completed gesture is being recognized." };
+    case "Sign recognized":
+      return { title, message: "The latest completed gesture produced a final caption." };
+    case "Sign not recognized":
+      return { title, message: "Try the gesture again with both hands clearly visible." };
+    default:
+      return { title, message: "Shoulders and both hands are visible and calibrated." };
+  }
 }
 
 function connectionLabel(status: string, recovered: boolean, hasMeeting: boolean, retryDelayMs?: number): string {
@@ -318,6 +384,7 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
     });
     const [meetingRequestPending, setMeetingRequestPending] = useState(false);
     const [cameraState, setCameraState] = useState<CameraState>("off");
+    const [trackingOverlayVisible, setTrackingOverlayVisible] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [demoGesture, setDemoGesture] = useState<DemoGesture | null>(null);
     const [signerOwnership, setSignerOwnership] = useState<SignerOwnershipState>(INITIAL_SIGNER_STATE);
@@ -511,6 +578,7 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       signerGranted: signerOwnership.status === "granted"
         && signerOwnership.streamId === recognitionStreamRef.current,
       trackingAnnouncementDelayMs: composition.trackingAnnouncementDelayMs,
+      onGestureDispatched: () => dispatch({ type: "gesture-dispatched" }),
       onStreamChange: (streamId) => {
         const previousStreamId = recognitionStreamRef.current;
         if (streamId === null && previousStreamId !== null) {
@@ -654,7 +722,7 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       const frame = recognition.browserLocalFrame;
       const canvas = overlayCanvasRef.current;
       const video = videoRef.current;
-      if (!frame || !canvas || !video) {
+      if (!trackingOverlayVisible || !frame || !canvas || !video) {
         clearOverlay(canvas);
         if (!recognition.enabledByUser) setDemoGesture(null);
         return;
@@ -680,7 +748,7 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       } else if (frame.timestampMs - lastStableGestureTimestampRef.current > 700) {
         setDemoGesture(null);
       }
-    }, [recognition.browserLocalFrame, recognition.enabledByUser]);
+    }, [recognition.browserLocalFrame, recognition.enabledByUser, trackingOverlayVisible]);
 
     useEffect(() => {
       const canvas = overlayCanvasRef.current;
@@ -688,10 +756,10 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       return observeCanvasBackingStore(canvas, () => {
         const frame = browserLocalFrameRef.current;
         const video = videoRef.current;
-        if (frame && video) drawBrowserLocalOverlay(canvas, video, frame);
+        if (trackingOverlayVisible && frame && video) drawBrowserLocalOverlay(canvas, video, frame);
         else clearOverlay(canvas);
       });
-    }, []);
+    }, [trackingOverlayVisible]);
 
     const stopMedia = useCallback(() => {
       cameraRequestGenerationRef.current += 1;
@@ -947,6 +1015,12 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
     const activeSigner = participants.find((participant) => participant.activeSigner);
     const mockNoticeVisible = recognition.enabledByUser || product.mockModelActive;
     const browserLocalFrame = recognition.browserLocalFrame;
+    const readinessGuidance = cameraReadinessGuidance(
+      cameraState,
+      recognition.enabledByUser,
+      browserLocalFrame,
+      product.latestRecognitionOutcome
+    );
     const trackedHandCount = browserLocalFrame?.hands.length ?? 0;
     const trackingLost = recognition.enabledByUser
       && (recognition.captureStatus === "no-hands" || recognition.captureStatus === "low-quality");
@@ -957,6 +1031,12 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
         : browserLocalFrame?.gestureModel === "unavailable"
           ? "Landmark-only fallback active"
           : "Loading local gesture model";
+    const previousReadinessTitleRef = useRef("");
+    useEffect(() => {
+      if (!recognition.enabledByUser || previousReadinessTitleRef.current === readinessGuidance.title) return;
+      previousReadinessTitleRef.current = readinessGuidance.title;
+      announce(readinessGuidance.title + ". " + readinessGuidance.message);
+    }, [announce, readinessGuidance.message, readinessGuidance.title, recognition.enabledByUser]);
 
     return (
       <section className="studio-workspace" aria-labelledby="meeting-title">
@@ -1112,7 +1192,12 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
 
             <div className={`stage-viewport${signerGranted ? " is-recognizing" : ""}`}>
               <video ref={videoRef} autoPlay muted playsInline className={cameraEnabled ? "visible" : ""} />
-              <canvas ref={overlayCanvasRef} className="landmark-overlay" aria-hidden="true" />
+              <canvas
+                ref={overlayCanvasRef}
+                className="landmark-overlay"
+                aria-hidden="true"
+                hidden={!trackingOverlayVisible}
+              />
               <span className="recognition-scan" aria-hidden="true" />
 
               {cameraEnabled && (
@@ -1159,18 +1244,14 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
                     ? demoGesture.displayName
                     : signerRequestPending
                       ? "Waiting for signer access"
-                      : recognition.enabledByUser
-                      ? "Show a clear hand gesture"
-                      : "Recognition is ready"}
+                      : readinessGuidance.title}
                 </strong>
                 <p>
                   {demoGesture
                     ? `${Math.round(demoGesture.confidence * 100)}% confidence${demoGesture.handedness ? `, ${demoGesture.handedness} hand` : ""}`
                     : signerRequestPending
                       ? "The room must grant ownership before landmarks are transmitted."
-                      : recognition.enabledByUser
-                      ? "Hold the gesture steady inside the guide."
-                      : "Enable the camera and recognition to begin."}
+                      : readinessGuidance.message}
                 </p>
               </div>
             </div>
@@ -1185,6 +1266,21 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
               </div>
 
               <div className="control-actions">
+                <button
+                  className={trackingOverlayVisible
+                    ? "sc-button sc-button--selected sc-button--compact"
+                    : "sc-button sc-button--secondary sc-button--compact"}
+                  type="button"
+                  aria-label="Tracking overlay"
+                  aria-pressed={trackingOverlayVisible}
+                  onClick={() => setTrackingOverlayVisible((visible) => !visible)}
+                >
+                  <ScanLine size={14} aria-hidden="true" />
+                  <span className="sc-button__label">
+                    Tracking overlay: {trackingOverlayVisible ? "On" : "Off"}
+                  </span>
+                </button>
+
                 <button
                   className={cameraEnabled
                     ? "sc-button sc-button--selected camera-control active"
@@ -1306,6 +1402,13 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
                 <span className={`health-light ${recognition.captureStatus}`} aria-hidden="true" />
               </div>
               <dl>
+                <div>
+                  <dt>Camera readiness</dt>
+                  <dd className="readiness-detail" aria-label="Camera readiness">
+                    <strong>{readinessGuidance.title}</strong>
+                    <span>{readinessGuidance.message}</span>
+                  </dd>
+                </div>
                 <div>
                   <dt>Landmark capture</dt>
                   <dd>{captureHealthLabel(recognition.captureStatus)}</dd>

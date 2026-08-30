@@ -1,0 +1,21 @@
+{
+  "timestampMs": 720,
+  "gestureModel": "ready",
+  "hands": [],
+  "upperBody": [],
+  "gesture": null,
+  "trackingQuality": {
+    "state": "person-partly-visible",
+    "personDetected": true,
+    "upperBodyVisible": false,
+    "leftHandVisible": false,
+    "rightHandVisible": false,
+    "handsInsideFrame": false
+  },
+  "calibration": {
+    "state": "collecting",
+    "stableFrames": 2,
+    "requiredStableFrames": 8
+  },
+  "gesturePhase": "idle"
+}

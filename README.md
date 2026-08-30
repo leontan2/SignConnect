@@ -11,17 +11,17 @@ SignConnect is a mock-first accessibility workspace for sending a signer’s cam
 | Shell MFE | React, TypeScript, Webpack Module Federation | 3000 | Product shell and navigation |
 | Meeting MFE | React, TypeScript, MediaPipe | 3001 | Consent, camera capture, landmarks, and transcript |
 | Meeting service | Spring Boot MVC | 8081 | Meeting creation and lifecycle |
-| Realtime service | Spring WebFlux | 8082 | WebSocket validation, stabilization, and caption delivery |
+| Realtime service | Spring WebFlux | 8082 | WebSocket validation, recognition decisions, and caption delivery |
 | Inference service | Spring Boot, ONNX Runtime | 8083 | Local-profile inference against the bundled synthetic model |
 
 The default path is:
 
 1. The user grants camera consent and starts a meeting.
 2. The Meeting MFE extracts pose/hand landmarks locally; video frames remain in the browser.
-3. Versioned landmark batches travel over the meeting WebSocket.
-4. The realtime service creates a sliding window and permits only one inference request at a time.
+3. A completed gesture is resampled to 30 frames and travels as six ordered, versioned landmark batches over the meeting WebSocket.
+4. The realtime service assembles one candidate per completed gesture and permits only one inference request at a time; under load, a newer completed candidate may replace older pending work without mixing frames. Rolling windows are legacy opt-in behavior.
 5. The inference service runs an actual `OrtSession` against the synthetic ONNX model.
-6. The realtime service stabilizes the result and returns a versioned caption event.
+6. In the default segmented mode, the realtime service immediately returns a versioned final caption for a known result or private unknown feedback. Temporal voting and idle finalization apply only to explicit legacy `ROLLING` mode.
 7. The realtime room hub attaches signer identity and broadcasts the finalized caption to authenticated participants in that room.
 8. Every participant adds the same caption to their transcript.
 
@@ -33,7 +33,7 @@ The camera workspace uses a responsive 4:3 stage with contained, centered video 
 
 ## Run locally
 
-Prerequisites: Node.js 20+, npm 10+, a compatible JDK 21, and dependencies installed with `npm install`. On Windows, use a process-scoped JDK/runtime compatible with ONNX Runtime; do not replace installed JDK or System32 DLLs.
+Prerequisites: Node.js 20+, npm 10+, a compatible JDK 21, Python 3.10-3.12, and [uv](https://docs.astral.sh/uv/). Install JavaScript dependencies with `npm install` and the locked model-development environment with `uv sync --project ml/sign-recognition --extra test`. On Windows, use a process-scoped JDK/runtime compatible with ONNX Runtime; do not replace installed JDK or System32 DLLs.
 
 Start each backend service in its own terminal:
 
@@ -85,6 +85,15 @@ Run the unit, type, production-build, and full Maven reactor gates:
 
 ```powershell
 .\scripts\verify.ps1 -JavaHome 'C:\path\to\compatible-jdk-21'
+```
+
+The verification script also validates the versioned training contracts and runs the locked Python model, export, and ONNX parity tests. The bundled generated dataset is a mechanical non-production fixture, not SgSL training data or accuracy evidence. See [`ml/sign-recognition/README.md`](ml/sign-recognition/README.md) for the reproducible TCN/GRU commands and safety boundary.
+
+On a managed Windows host where Java NIO cannot use the default long temporary path, set a short process-local path before the verifier or browser suites:
+
+```powershell
+$env:TEMP = 'C:\jtmp'
+$env:TMP = 'C:\jtmp'
 ```
 
 Install Playwright’s bundled Chromium once if it is not already cached, then run the complete local stack through the exact-process runner:

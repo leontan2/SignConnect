@@ -31,10 +31,13 @@ $blockedEnvironmentNames = @(
     "SIGN_MODEL_LABELS_RESOURCE",
     "SIGN_MODEL_INPUT_NAME",
     "SIGN_MODEL_OUTPUT_NAME",
+    "SIGN_MODEL_EXPECTED_VERSION",
+    "SIGN_MODEL_ALLOW_MOCK_MODEL",
     "SIGN_INFERENCE_URL",
     "SIGN_INFERENCE_TIMEOUT",
     "SIGN_RECOGNITION_WINDOW_FRAMES",
     "SIGN_RECOGNITION_STRIDE_FRAMES",
+    "SIGN_RECOGNITION_INPUT_MODE",
     "SIGN_RECOGNITION_CONFIDENCE_THRESHOLD",
     "SIGN_RECOGNITION_STABLE_ACTIVE_EVALUATIONS",
     "SIGN_RECOGNITION_IDLE_EVALUATIONS",
@@ -95,6 +98,19 @@ try {
 
 Push-Location $repositoryRoot
 try {
+    node contracts/sign-recognition-training/v1/validate-fixtures.mjs
+    if ($LASTEXITCODE -ne 0) {
+        throw "Training contract verification failed with exit code $LASTEXITCODE."
+    }
+
+    if (-not (Get-Command "uv" -ErrorAction SilentlyContinue)) {
+        throw "uv was not found on PATH. Install uv to verify the reproducible ML environment."
+    }
+    uv run --project ml/sign-recognition --extra test --frozen pytest -W error
+    if ($LASTEXITCODE -ne 0) {
+        throw "ML training/export verification failed with exit code $LASTEXITCODE."
+    }
+
     npm test
     if ($LASTEXITCODE -ne 0) {
         throw "Frontend unit and contract verification failed with exit code $LASTEXITCODE."

@@ -3,6 +3,8 @@ package com.signconnect.inference.model;
 import ai.onnxruntime.OrtEnvironment;
 import ai.onnxruntime.OrtSession;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.signconnect.inference.SignInferenceServiceApplication;
 import com.signconnect.inference.api.PredictionRequest;
 import com.signconnect.inference.api.PredictionResponse;
@@ -16,9 +18,12 @@ import org.springframework.core.io.DefaultResourceLoader;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
@@ -104,7 +109,50 @@ class OnnxModelRuntimeTest {
             assertThat(runtime.modelMode()).isEqualTo("unavailable");
             assertThatThrownBy(() -> runtime.predict(fixture(context, "inference-request-active.valid.json")))
                     .isInstanceOf(OnnxModelRuntime.ModelUnavailableException.class)
-                    .hasMessage("Inference model is not ready");
+                    .hasMessage("Inference model is not ready")
+                    .satisfies(failure -> assertThat(
+                            ((OnnxModelRuntime.ModelUnavailableException) failure).outcome())
+                            .isEqualTo(CanonicalModelDecision.Outcome.MODEL_UNAVAILABLE));
+        }
+    }
+
+    @Test
+    void syntheticFixtureRequiresBothAnExplicitFlagAndADevelopmentOrTestProfile() throws Exception {
+        try (ConfigurableApplicationContext context = context(
+                "--signconnect.inference.model.resource=" + MODEL_RESOURCE,
+                "--signconnect.inference.model.labels-resource=" + LABEL_RESOURCE,
+                "--signconnect.inference.model.expected-version=synthetic-v1",
+                "--signconnect.inference.model.allow-mock-model=true")) {
+            assertUnavailable(context);
+        }
+        try (ConfigurableApplicationContext context = localContext(
+                "--signconnect.inference.model.allow-mock-model=false")) {
+            assertUnavailable(context);
+        }
+    }
+
+    @Test
+    void defaultProfileRejectsABlockedNonGenuineNonMockModel() throws Exception {
+        byte[] modelBytes = modelWithDifferentProducerName();
+        Path model = temporaryDirectory.resolve("blocked-candidate.onnx");
+        Files.write(model, modelBytes);
+
+        ObjectMapper objectMapper = new ObjectMapper();
+        ObjectNode metadata = canonicalMetadata(objectMapper);
+        metadata.put("mockModel", false);
+        metadata.put("genuineSignLanguageData", false);
+        ((ObjectNode) metadata.path("architecture")).put("family", "TCN");
+        metadata.put("artifactSha256", sha256(modelBytes));
+        ((ObjectNode) metadata.path("onnx"))
+                .put("artifactPath", "models/blocked-candidate.onnx");
+        Path labels = temporaryDirectory.resolve("blocked-candidate-metadata.json");
+        Files.writeString(labels, objectMapper.writeValueAsString(metadata));
+
+        try (ConfigurableApplicationContext context = context(
+                "--signconnect.inference.model.resource=" + model.toUri(),
+                "--signconnect.inference.model.labels-resource=" + labels.toUri(),
+                "--signconnect.inference.model.expected-version=synthetic-v1")) {
+            assertUnavailable(context);
         }
     }
 
@@ -165,12 +213,100 @@ class OnnxModelRuntimeTest {
     }
 
     @Test
-    void wrongInputShapeLeavesReadinessUnavailable() throws Exception {
-        Path wrongShapeModel = temporaryDirectory.resolve("wrong-shape.onnx");
-        Files.write(wrongShapeModel, modelWithFrameDimension(29));
+    void artifactDigestMismatchLeavesReadinessUnavailable() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        ObjectNode metadata;
+        try (InputStream input = getClass().getResourceAsStream(
+                "/models/deterministic-sign-v1-labels.json")) {
+            assertThat(input).isNotNull();
+            metadata = (ObjectNode) objectMapper.readTree(input);
+        }
+        metadata.put("artifactSha256", "0".repeat(64));
+        Path labels = temporaryDirectory.resolve("mismatched-artifact-metadata.json");
+        Files.writeString(labels, objectMapper.writeValueAsString(metadata));
 
         try (ConfigurableApplicationContext context = localContext(
-                "--signconnect.inference.model.resource=" + wrongShapeModel.toUri())) {
+                "--signconnect.inference.model.labels-resource=" + labels.toUri())) {
+            assertUnavailable(context);
+        }
+    }
+
+    @Test
+    void selectedModelVersionMismatchLeavesReadinessUnavailable() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        ObjectNode metadata = canonicalMetadata(objectMapper);
+        metadata.put("modelVersion", "synthetic-v2");
+        Path labels = temporaryDirectory.resolve("wrong-model-version-metadata.json");
+        Files.writeString(labels, objectMapper.writeValueAsString(metadata));
+
+        try (ConfigurableApplicationContext context = localContext(
+                "--signconnect.inference.model.labels-resource=" + labels.toUri())) {
+            assertUnavailable(context);
+        }
+    }
+
+    @Test
+    void incompatibleMinimumRuntimeVersionLeavesReadinessUnavailable() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        ObjectNode metadata = canonicalMetadata(objectMapper);
+        ((ObjectNode) metadata.get("runtime")).put("minimumVersion", "999.0.0");
+        Path labels = temporaryDirectory.resolve("future-runtime-metadata.json");
+        Files.writeString(labels, objectMapper.writeValueAsString(metadata));
+
+        try (ConfigurableApplicationContext context = localContext(
+                "--signconnect.inference.model.labels-resource=" + labels.toUri())) {
+            assertUnavailable(context);
+        }
+    }
+
+    @Test
+    void metadataArtifactPathMismatchLeavesReadinessUnavailable() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        ObjectNode metadata = canonicalMetadata(objectMapper);
+        ((ObjectNode) metadata.get("onnx")).put("artifactPath", "models/other-model.onnx");
+        Path labels = temporaryDirectory.resolve("wrong-artifact-path-metadata.json");
+        Files.writeString(labels, objectMapper.writeValueAsString(metadata));
+
+        try (ConfigurableApplicationContext context = localContext(
+                "--signconnect.inference.model.labels-resource=" + labels.toUri())) {
+            assertUnavailable(context);
+        }
+    }
+
+    @Test
+    void bundledSyntheticArtifactCannotBeRelabeledAsARealModel() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        ObjectNode metadata;
+        try (InputStream input = getClass().getResourceAsStream(
+                "/models/deterministic-sign-v1-labels.json")) {
+            assertThat(input).isNotNull();
+            metadata = (ObjectNode) objectMapper.readTree(input);
+        }
+        metadata.put("mockModel", false);
+        Path labels = temporaryDirectory.resolve("relabeled-synthetic-metadata.json");
+        Files.writeString(labels, objectMapper.writeValueAsString(metadata));
+
+        try (ConfigurableApplicationContext context = localContext(
+                "--signconnect.inference.model.labels-resource=" + labels.toUri())) {
+            assertUnavailable(context);
+        }
+    }
+
+    @Test
+    void wrongInputShapeLeavesReadinessUnavailable() throws Exception {
+        Path wrongShapeModel = temporaryDirectory.resolve("wrong-shape.onnx");
+        byte[] modelBytes = modelWithFrameDimension(29);
+        Files.write(wrongShapeModel, modelBytes);
+        ObjectMapper objectMapper = new ObjectMapper();
+        ObjectNode metadata = canonicalMetadata(objectMapper);
+        metadata.put("artifactSha256", sha256(modelBytes));
+        ((ObjectNode) metadata.get("onnx")).put("artifactPath", "models/wrong-shape.onnx");
+        Path labels = temporaryDirectory.resolve("wrong-shape-metadata.json");
+        Files.writeString(labels, objectMapper.writeValueAsString(metadata));
+
+        try (ConfigurableApplicationContext context = localContext(
+                "--signconnect.inference.model.resource=" + wrongShapeModel.toUri(),
+                "--signconnect.inference.model.labels-resource=" + labels.toUri())) {
             assertUnavailable(context);
         }
     }
@@ -189,22 +325,37 @@ class OnnxModelRuntimeTest {
 
     @Test
     void labelCountMismatchLeavesReadinessUnavailable() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        ObjectNode metadata = canonicalMetadata(objectMapper);
+        ArrayNode labelsNode = metadata.withArray("labels");
+        ObjectNode thirdLabel = labelsNode.addObject();
+        thirdLabel.put("index", 2);
+        thirdLabel.put("id", "OTHER_SIGN");
+        thirdLabel.put("captionText", "Other sign.");
+        thirdLabel.put("outcome", "SIGN");
+        ((ObjectNode) metadata.get("output")).withArray("shape").set(
+                1, objectMapper.getNodeFactory().numberNode(3));
         Path labels = temporaryDirectory.resolve("private-label-map.json");
-        Files.writeString(labels, """
-                {
-                  "schemaVersion": 1,
-                  "modelVersion": "synthetic-v1",
-                  "mockModel": true,
-                  "labels": [
-                    {"index": 0, "id": "NO_SIGN", "captionText": null}
-                  ]
-                }
-                """);
+        Files.writeString(labels, objectMapper.writeValueAsString(metadata));
 
         try (ConfigurableApplicationContext context = localContext(
                 "--signconnect.inference.model.labels-resource=" + labels.toUri())) {
             assertUnavailable(context);
         }
+    }
+
+    @Test
+    void malformedSoftmaxProbabilitySumFailsClosed() {
+        assertThatThrownBy(() -> OnnxModelRuntime.validateProbabilityVector(
+                new float[]{0.9f, 0.9f}))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Model output is not a normalized probability vector");
+        assertThatThrownBy(() -> OnnxModelRuntime.validateProbabilityVector(
+                new float[]{0.2f, 0.3f}))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Model output is not a normalized probability vector");
+        assertThat(OnnxModelRuntime.validateProbabilityVector(new float[]{0.2f, 0.8f}))
+                .containsExactly(0.2f, 0.8f);
     }
 
     @Test
@@ -293,6 +444,26 @@ class OnnxModelRuntimeTest {
         return model;
     }
 
+    private static byte[] modelWithDifferentProducerName() throws IOException {
+        byte[] model;
+        try (InputStream input = OnnxModelRuntimeTest.class.getResourceAsStream(
+                "/models/deterministic-sign-v1.onnx")) {
+            if (input == null) {
+                throw new IllegalStateException("Synthetic ONNX test resource is missing");
+            }
+            model = input.readAllBytes();
+        }
+
+        byte[] producerName = "SignConnect deterministic fixture generator"
+                .getBytes(StandardCharsets.UTF_8);
+        int match = indexOf(model, producerName);
+        if (match < 0) {
+            throw new IllegalStateException("Synthetic model producer marker was not found");
+        }
+        model[match] = (byte) Character.toLowerCase(model[match]);
+        return model;
+    }
+
     private static int indexOf(byte[] bytes, byte[] target) {
         outer:
         for (int index = 0; index <= bytes.length - target.length; index++) {
@@ -304,6 +475,20 @@ class OnnxModelRuntimeTest {
             return index;
         }
         return -1;
+    }
+
+    private ObjectNode canonicalMetadata(ObjectMapper objectMapper) throws IOException {
+        try (InputStream input = getClass().getResourceAsStream(
+                "/models/deterministic-sign-v1-labels.json")) {
+            if (input == null) {
+                throw new IllegalStateException("Synthetic model metadata is missing");
+            }
+            return (ObjectNode) objectMapper.readTree(input);
+        }
+    }
+
+    private static String sha256(byte[] bytes) throws Exception {
+        return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
     }
 
     private static Path contractsRoot() {

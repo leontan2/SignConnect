@@ -1,0 +1,10 @@
+seed = 20260830
+model = "gru"
+manifest = "fixtures/NON_PRODUCTION_SYNTHETIC/generated/manifest.json"
+output_dir = "runs/gru-v1"
+epochs = 4
+batch_size = 16
+learning_rate = 0.001
+hidden_size = 64
+dropout = 0.10
+false_final_threshold = 0.80

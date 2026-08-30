@@ -62,6 +62,22 @@ public final class RecognitionStabilizer {
     }
 
     /**
+     * Evaluates one gesture whose temporal boundary has already been confirmed by the browser.
+     * Each completed gesture is an independent occurrence, so rolling votes, idle finalization,
+     * rate limiting, and duplicate cooldown do not apply.
+     */
+    public synchronized Outcome evaluateCompletedGesture(Prediction prediction) {
+        Objects.requireNonNull(prediction, "prediction");
+        Instant occurredAt = Instant.now(clock);
+        if (NO_SIGN.equals(prediction.labelId())
+                || prediction.confidence() < settings.confidenceThreshold()
+                || prediction.captionText() == null) {
+            return new Unknown(UnknownReason.LOW_CONFIDENCE, prediction, occurredAt);
+        }
+        return new Final(prediction, occurredAt);
+    }
+
+    /**
      * Clears every piece of connection/stream-local stabilization state.
      */
     public synchronized void reset() {

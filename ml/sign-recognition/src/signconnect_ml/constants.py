@@ -1,0 +1,6 @@
+SEQUENCE_LENGTH = 30
+FEATURE_COUNT = 224
+FEATURE_CONTRACT = "mediapipe-holistic-224-v1"
+NO_SIGN = "NO_SIGN"
+SCHEMA_VERSION = 1
+PREPROCESSING_VERSION = "shoulder-midpoint-shoulder-width-v1"

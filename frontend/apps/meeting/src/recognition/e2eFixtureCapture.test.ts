@@ -2,10 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const STREAM_ID = "11111111-1111-4111-8111-111111111111";
 
-async function replayGateConstructor() {
+async function fixtureModule() {
   vi.stubEnv("RECOGNITION_E2E_FIXTURE_ENABLED", "true");
   vi.resetModules();
-  return (await import("./e2eFixtureCapture")).E2eFixtureReplayGate;
+  return import("./e2eFixtureCapture");
 }
 
 afterEach(() => {
@@ -15,7 +15,7 @@ afterEach(() => {
 
 describe("E2eFixtureReplayGate", () => {
   it("preserves the complete finite replay until the matching recognition start is sent", async () => {
-    const E2eFixtureReplayGate = await replayGateConstructor();
+    const { E2eFixtureReplayGate } = await fixtureModule();
     const gate = new E2eFixtureReplayGate(50);
 
     gate.observeSuccessfullySent(JSON.stringify({
@@ -53,7 +53,7 @@ describe("E2eFixtureReplayGate", () => {
   });
 
   it("ignores malformed and duplicate start signals without restarting an active replay", async () => {
-    const E2eFixtureReplayGate = await replayGateConstructor();
+    const { E2eFixtureReplayGate } = await fixtureModule();
     const gate = new E2eFixtureReplayGate(3);
 
     expect(gate.observeSuccessfullySent("not-json")).toBe(false);
@@ -70,6 +70,32 @@ describe("E2eFixtureReplayGate", () => {
       streamId: STREAM_ID
     }))).toBe(false);
     expect(gate.nextSourceIndex()).toBe(1);
+  });
+
+  it("emits one exact fixture candidate after 30 authorized frames and clears it on reset", async () => {
+    const { E2eFixtureCandidateBuffer } = await fixtureModule();
+    const buffer = new E2eFixtureCandidateBuffer();
+    const features = Array.from({ length: 224 }, () => 0);
+
+    expect(Array.from({ length: 29 }, (_unused, index) => buffer.observe({
+      timestampMs: 40 + index * 40,
+      features
+    })).every((candidate) => candidate === null)).toBe(true);
+    const candidate = buffer.observe({ timestampMs: 1_200, features });
+    expect(candidate).toHaveLength(30);
+    expect(candidate?.map((frame) => frame.timestampMs))
+      .toEqual(Array.from({ length: 30 }, (_unused, index) => 40 + index * 40));
+
+    expect(Array.from({ length: 30 }, (_unused, index) => buffer.observe({
+      timestampMs: 1_240 + index * 40,
+      features
+    })).every((next) => next === null)).toBe(true);
+
+    buffer.reset();
+    expect(Array.from({ length: 29 }, (_unused, index) => buffer.observe({
+      timestampMs: 2_000 + index * 40,
+      features
+    })).every((next) => next === null)).toBe(true);
   });
 
 });

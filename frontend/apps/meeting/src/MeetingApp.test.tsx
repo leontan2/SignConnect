@@ -61,6 +61,8 @@ class FakeSocket {
   onmessage: MessageHandler = null;
   readonly sent: string[] = [];
   failNextSendForType: string | null = null;
+  failLandmarkSendAt: number | null = null;
+  private landmarkSendCount = 0;
   readonly close = vi.fn(() => {
     this.readyState = FakeSocket.CLOSED;
   });
@@ -72,6 +74,12 @@ class FakeSocket {
 
   send(data: string): void {
     const event = JSON.parse(data) as { type?: string };
+    if (event.type === "landmark.chunk") {
+      this.landmarkSendCount += 1;
+      if (this.landmarkSendCount === this.failLandmarkSendAt) {
+        throw new Error(`Failed landmark send ${this.landmarkSendCount}`);
+      }
+    }
     if (event.type === this.failNextSendForType) {
       this.failNextSendForType = null;
       throw new Error(`Failed to send ${event.type}`);
@@ -369,7 +377,12 @@ async function startRecognition(harness: Harness, socket: FakeSocket): Promise<F
   return worker;
 }
 
-async function emitAcceptedFrame(harness: Harness, worker: FakeWorker, frameKind: "active" | "idle" = "active") {
+async function emitAcceptedFrame(
+  harness: Harness,
+  worker: FakeWorker,
+  frameKind: "active" | "idle" = "active",
+  browserLocal?: Record<string, unknown>
+) {
   harness.clock.value += 40;
   await act(async () => {
     harness.captureScheduler.step(harness.clock.value);
@@ -386,8 +399,40 @@ async function emitAcceptedFrame(harness: Harness, worker: FakeWorker, frameKind
       kind: "accepted",
       frameKind,
       features: activeChunkFixture.frames[0].features
-    }
+    },
+    ...(browserLocal ? { browserLocal } : {})
   }));
+}
+
+function completedGestureCandidate(startTimestampMs: number) {
+  return Array.from({ length: 30 }, (_unused, index) => ({
+    timestampMs: startTimestampMs + index * 40,
+    features: [...activeChunkFixture.frames[index % activeChunkFixture.frames.length].features]
+  }));
+}
+
+async function emitCompletedGesture(harness: Harness, worker: FakeWorker) {
+  const candidate = completedGestureCandidate(harness.clock.value + 40);
+  harness.clock.value = candidate.at(-1)!.timestampMs;
+  await act(async () => {
+    harness.captureScheduler.step(harness.clock.value);
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  const request = worker.posted.filter((message) => message.type === "frame.process").at(-1);
+  if (!request) throw new Error("Capture did not post a frame");
+  act(() => worker.emit({
+    type: "frame.result",
+    requestId: request.requestId,
+    timestampMs: request.timestampMs,
+    result: {
+      kind: "accepted",
+      frameKind: "active",
+      features: activeChunkFixture.frames[0].features
+    },
+    gestureCandidate: candidate
+  }));
+  return candidate;
 }
 
 beforeEach(() => {
@@ -438,10 +483,19 @@ describe("Meeting recognition product UX", () => {
       .toHaveAccessibleDescription(/transient hand and body landmark transmission.*raw video is not transmitted/i);
 
     const worker = await startRecognition(harness, socket);
-    for (let index = 0; index < 5; index += 1) {
+    for (let index = 0; index < 15; index += 1) {
       await emitAcceptedFrame(harness, worker);
     }
-    expect(socket.parsedSent().filter((event) => event.type === "landmark.chunk")).toHaveLength(1);
+    expect(socket.parsedSent().filter((event) => event.type === "landmark.chunk")).toHaveLength(0);
+
+    const candidate = await emitCompletedGesture(harness, worker);
+    const chunks = socket.parsedSent().filter((event) => event.type === "landmark.chunk");
+    expect(chunks).toHaveLength(6);
+    expect(chunks.map((chunk) => chunk.sequence)).toEqual([0, 1, 2, 3, 4, 5]);
+    const frames = chunks.flatMap((chunk) => chunk.frames as Array<Record<string, unknown>>);
+    expect(frames.map((frame) => frame.sequence)).toEqual(Array.from({ length: 30 }, (_unused, index) => index));
+    expect(frames.map((frame) => frame.timestampMs)).toEqual(candidate.map((frame) => frame.timestampMs));
+    expect(chunks.every((chunk) => (chunk.frames as unknown[]).length === 5)).toBe(true);
 
     const stop = screen.getByRole("button", { name: "Stop recognition" });
     stop.focus();
@@ -459,6 +513,157 @@ describe("Meeting recognition product UX", () => {
     );
     expect(signerCommands).toHaveLength(1);
     expect(signerCommands[0].sequence).toBe(0);
+  });
+
+  it("toggles the decorative tracking overlay by keyboard without moving focus or disabling recognition", async () => {
+    const harness = makeHarness();
+    const toggle = screen.getByRole("button", { name: "Tracking overlay" });
+    const overlay = document.querySelector("canvas.landmark-overlay");
+
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(toggle).toHaveTextContent("Tracking overlay: On");
+    expect(overlay).toHaveAttribute("aria-hidden", "true");
+    expect(overlay).toBeVisible();
+
+    await enableCamera(harness);
+    await connectSession(harness);
+    const start = screen.getByRole("button", { name: "Start recognition" });
+    expect(start).toBeEnabled();
+
+    toggle.focus();
+    await harness.user.keyboard(" ");
+    expect(toggle).toHaveFocus();
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    expect(toggle).toHaveTextContent("Tracking overlay: Off");
+    expect(overlay).not.toBeVisible();
+    expect(start).toBeEnabled();
+
+    await harness.user.keyboard("{Enter}");
+    expect(toggle).toHaveFocus();
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(toggle).toHaveTextContent("Tracking overlay: On");
+    expect(overlay).toBeVisible();
+    expect(start).toBeEnabled();
+  });
+
+  it("turns browser-local quality, calibration, and gesture phases into actionable readiness guidance", async () => {
+    const harness = makeHarness();
+    expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/camera off/i);
+    await enableCamera(harness);
+    expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/camera initializing/i);
+    const socket = await connectSession(harness);
+    const worker = await startRecognition(harness, socket);
+    expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/camera initializing/i);
+
+    const states = [
+      ["no-person", "No person detected"],
+      ["upper-body-missing", "Upper body not fully visible"],
+      ["left-hand-missing", "Left hand missing"],
+      ["right-hand-missing", "Right hand missing"],
+      ["out-of-frame", "Hands too close to the frame edge"],
+      ["low-quality", "Lighting or tracking quality too poor"]
+    ] as const;
+    for (const [state, label] of states) {
+      await emitAcceptedFrame(harness, worker, state === "no-person" ? "idle" : "active", {
+        timestampMs: harness.clock.value,
+        gestureModel: "unavailable",
+        hands: [],
+        upperBody: [],
+        gesture: null,
+        trackingQuality: {
+          state,
+          personDetected: state !== "no-person",
+          upperBodyVisible: !["no-person", "upper-body-missing"].includes(state),
+          leftHandVisible: !["no-person", "upper-body-missing", "left-hand-missing"].includes(state),
+          rightHandVisible: !["no-person", "upper-body-missing", "right-hand-missing"].includes(state),
+          handsInsideFrame: state !== "out-of-frame"
+        },
+        calibration: { state: "collecting", stableFrames: 0, requiredStableFrames: 8 },
+        gesturePhase: "idle"
+      });
+      expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(label);
+    }
+
+    await emitAcceptedFrame(harness, worker, "active", {
+      timestampMs: harness.clock.value,
+      gestureModel: "unavailable",
+      hands: [],
+      upperBody: [],
+      gesture: null,
+      trackingQuality: {
+        state: "ready",
+        personDetected: true,
+        upperBodyVisible: true,
+        leftHandVisible: true,
+        rightHandVisible: true,
+        handsInsideFrame: true
+      },
+      calibration: { state: "collecting", stableFrames: 4, requiredStableFrames: 8 },
+      gesturePhase: "idle"
+    });
+    expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/camera initializing/i);
+
+    await emitAcceptedFrame(harness, worker, "active", {
+      timestampMs: harness.clock.value,
+      gestureModel: "unavailable",
+      hands: [],
+      upperBody: [],
+      gesture: null,
+      trackingQuality: {
+        state: "ready",
+        personDetected: true,
+        upperBodyVisible: true,
+        leftHandVisible: true,
+        rightHandVisible: true,
+        handsInsideFrame: true
+      },
+      calibration: { state: "ready", stableFrames: 8, requiredStableFrames: 8 },
+      gesturePhase: "active"
+    });
+    expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/gesture in progress/i);
+
+    await emitAcceptedFrame(harness, worker, "active", {
+      timestampMs: harness.clock.value,
+      gestureModel: "unavailable",
+      hands: [],
+      upperBody: [],
+      gesture: null,
+      trackingQuality: {
+        state: "ready",
+        personDetected: true,
+        upperBodyVisible: true,
+        leftHandVisible: true,
+        rightHandVisible: true,
+        handsInsideFrame: true
+      },
+      calibration: { state: "ready", stableFrames: 8, requiredStableFrames: 8 },
+      gesturePhase: "ready-for-inference"
+    });
+    expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/^Processing/);
+    expect(screen.queryAllByRole("article")).toHaveLength(0);
+
+    await emitAcceptedFrame(harness, worker, "idle", {
+      timestampMs: harness.clock.value,
+      gestureModel: "unavailable",
+      hands: [],
+      upperBody: [],
+      gesture: null,
+      trackingQuality: {
+        state: "ready",
+        personDetected: true,
+        upperBodyVisible: true,
+        leftHandVisible: true,
+        rightHandVisible: true,
+        handsInsideFrame: true
+      },
+      calibration: { state: "ready", stableFrames: 8, requiredStableFrames: 8 },
+      gesturePhase: "idle"
+    });
+    act(() => socket.message(unknownFixture));
+    expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/sign not recognized/i);
+    act(() => socket.message(captionFixture));
+    expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/sign recognized/i);
+    expect(screen.queryAllByRole("article")).toHaveLength(1);
   });
 
   it("releases signer ownership when tracking initialization fails after a grant", async () => {
@@ -509,14 +714,11 @@ describe("Meeting recognition product UX", () => {
       type: "recognition.control",
       action: "start"
     })));
-    for (let index = 0; index < 5; index += 1) {
-      await emitAcceptedFrame(harness, worker);
-    }
+    await emitCompletedGesture(harness, worker);
 
-    expect(socket.parsedSent()).toContainEqual(expect.objectContaining({
-      type: "landmark.chunk",
-      sequence: 0
-    }));
+    expect(socket.parsedSent().filter((event) => event.type === "landmark.chunk"))
+      .toHaveLength(6);
+    expect(socket.parsedSent()).toContainEqual(expect.objectContaining({ type: "landmark.chunk", sequence: 0 }));
   });
 
   it("fails closed and reconnects when recognition start cannot be sent after a grant", async () => {
@@ -792,24 +994,56 @@ describe("Meeting recognition product UX", () => {
     expect(screen.getByText(/unsupported realtime event was ignored/i)).toBeVisible();
   });
 
-  it("keeps capture pressure bounded to the newest chunk without exposing landmarks in React", async () => {
+  it("fails closed without retaining a completed gesture when realtime is pressured", async () => {
     const harness = makeHarness();
     await enableCamera(harness);
     const socket = await connectSession(harness);
     const worker = await startRecognition(harness, socket);
     socket.bufferedAmount = 1024 * 1024;
 
-    for (let index = 0; index < 15; index += 1) {
-      await emitAcceptedFrame(harness, worker);
-    }
+    await emitCompletedGesture(harness, worker);
     expect(socket.parsedSent().filter((event) => event.type === "landmark.chunk")).toHaveLength(0);
-
-    socket.bufferedAmount = 0;
-    await emitAcceptedFrame(harness, worker);
-    const chunks = socket.parsedSent().filter((event) => event.type === "landmark.chunk");
-    expect(chunks).toHaveLength(1);
-    expect(chunks[0]).toMatchObject({ sequence: 2 });
+    await waitFor(() => expect(socket.close).toHaveBeenCalledWith(4001, "Essential realtime send blocked"));
+    expect(worker.terminate).toHaveBeenCalledOnce();
+    expect(screen.getByText("Reconnecting in 250 ms")).toBeVisible();
     expect(document.body.textContent).not.toContain("-0.45");
+  });
+
+  it("stops the stream if a completed gesture can only be sent partially", async () => {
+    const harness = makeHarness();
+    await enableCamera(harness);
+    const socket = await connectSession(harness);
+    const worker = await startRecognition(harness, socket);
+    socket.failLandmarkSendAt = 3;
+
+    await emitCompletedGesture(harness, worker);
+
+    const chunks = socket.parsedSent().filter((event) => event.type === "landmark.chunk");
+    expect(chunks.map((chunk) => chunk.sequence)).toEqual([0, 1]);
+    expect(socket.parsedSent()).toContainEqual(expect.objectContaining({
+      type: "recognition.control",
+      sequence: 1,
+      action: "stop"
+    }));
+    expect(worker.terminate).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "Start recognition" })).toBeEnabled();
+  });
+
+  it("keeps chunk, frame, and timestamp ordering monotonic across completed gestures", async () => {
+    const harness = makeHarness();
+    await enableCamera(harness);
+    const socket = await connectSession(harness);
+    const worker = await startRecognition(harness, socket);
+
+    await emitCompletedGesture(harness, worker);
+    await emitCompletedGesture(harness, worker);
+
+    const chunks = socket.parsedSent().filter((event) => event.type === "landmark.chunk");
+    const frames = chunks.flatMap((chunk) => chunk.frames as Array<Record<string, unknown>>);
+    expect(chunks.map((chunk) => chunk.sequence)).toEqual(Array.from({ length: 12 }, (_unused, index) => index));
+    expect(frames.map((frame) => frame.sequence)).toEqual(Array.from({ length: 60 }, (_unused, index) => index));
+    const timestamps = frames.map((frame) => frame.timestampMs as number);
+    expect(timestamps.every((value, index) => index === 0 || value > timestamps[index - 1])).toBe(true);
   });
 
   it("restarts with a fresh stream after reconnect and ignores the stale socket generation", async () => {
@@ -848,6 +1082,21 @@ describe("Meeting recognition product UX", () => {
     })));
     expect(firstWorker.terminate).toHaveBeenCalledOnce();
     expect(screen.getByText(/connection recovered/i)).toBeVisible();
+
+    act(() => firstWorker.emit({
+      type: "frame.result",
+      requestId: 99,
+      timestampMs: 4_000,
+      result: { kind: "accepted", frameKind: "active", features: activeChunkFixture.frames[0].features },
+      gestureCandidate: completedGestureCandidate(2_000)
+    }));
+    expect(firstSocket.parsedSent().filter((event) => event.type === "landmark.chunk")).toHaveLength(0);
+    await emitCompletedGesture(harness, secondWorker);
+    const restartedChunks = secondSocket.parsedSent().filter((event) => event.type === "landmark.chunk");
+    expect(restartedChunks).toHaveLength(6);
+    expect(restartedChunks.map((chunk) => chunk.sequence)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(restartedChunks.flatMap((chunk) => chunk.frames as Array<Record<string, unknown>>)
+      .map((frame) => frame.sequence)).toEqual(Array.from({ length: 30 }, (_unused, index) => index));
 
     act(() => firstSocket.message(captionFixture));
     expect(screen.queryByText("Synthetic active gesture")).not.toBeInTheDocument();

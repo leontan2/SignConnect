@@ -202,6 +202,22 @@ test-results/
 playwright-report/
 .playwright-cli/
 
+# Sign-recognition training data and generated artifacts
+ml/sign-recognition/.venv/
+ml/sign-recognition/data/
+ml/sign-recognition/captures/
+ml/sign-recognition/consent/
+ml/sign-recognition/runs/
+ml/sign-recognition/artifacts/
+ml/sign-recognition/checkpoints/
+ml/sign-recognition/fixtures/NON_PRODUCTION_SYNTHETIC/generated/
+*.pt
+*.pth
+*.ckpt
+*.npy
+*.npz
+*.onnx
+
 # Local tooling
 .idea/
 *.iml

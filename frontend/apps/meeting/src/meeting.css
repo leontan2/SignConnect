@@ -694,6 +694,9 @@
 .system-health dl > div { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; padding: 6px 0; border-top: 1px solid rgba(20, 42, 36, 0.08); }
 .system-health dt { color: var(--sc-ink, var(--ink)); font-size: 7px; }
 .system-health dd { margin: 0; overflow: hidden; color: var(--ink); font-size: 7px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+.system-health dd.readiness-detail { display: grid; gap: 2px; overflow: visible; white-space: normal; }
+.readiness-detail strong { color: var(--sc-ink, var(--ink)); font-size: 7px; }
+.readiness-detail span { color: var(--sc-ink, var(--ink)); }
 
 .demo-disclosure,
 .recognition-feedback,

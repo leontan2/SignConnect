@@ -2,21 +2,22 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
   BrowserLocalVisionFrame,
-  LandmarkCaptureStatus,
-  LandmarkChunkConsumer
+  LandmarkCaptureStatus
 } from "./contracts";
 import {
   LandmarkCaptureController,
   type LandmarkCaptureControllerOptions
 } from "./LandmarkCaptureController";
+import type { GestureCandidateFrame } from "./trackingQuality";
 
 export interface UseLandmarkCaptureOptions extends Omit<
   LandmarkCaptureControllerOptions,
-  "consumer" | "onStatus" | "onBrowserLocalFrame"
+  "onStatus" | "onBrowserLocalFrame" | "onGestureCandidate"
 > {
-  consumer: LandmarkChunkConsumer;
   onStatus?: (status: LandmarkCaptureStatus) => void;
   onBrowserLocalFrame?: (frame: BrowserLocalVisionFrame | null) => void;
+  /** Browser-local M3 adapter; callers decide when to convert the candidate into v1 chunks. */
+  onGestureCandidate?: (candidate: GestureCandidateFrame[]) => void;
 }
 
 export interface UseLandmarkCaptureResult {
@@ -28,8 +29,6 @@ export interface UseLandmarkCaptureResult {
   restart(video: HTMLVideoElement): string | null;
   cameraOff(): void;
   resumeCapture(): void;
-  drainPendingChunk(): boolean;
-  getDroppedChunkCount(): number;
 }
 
 export function useLandmarkCapture(options: UseLandmarkCaptureOptions): UseLandmarkCaptureResult {
@@ -41,13 +40,8 @@ export function useLandmarkCapture(options: UseLandmarkCaptureOptions): UseLandm
   const controllerRef = useRef<LandmarkCaptureController | null>(null);
 
   if (!controllerRef.current) {
-    const consumer: LandmarkChunkConsumer = {
-      isUnderPressure: () => optionsRef.current.consumer.isUnderPressure(),
-      send: (chunk) => optionsRef.current.consumer.send(chunk)
-    };
     controllerRef.current = new LandmarkCaptureController({
       ...options,
-      consumer,
       onStatus: (nextStatus) => {
         setStatus(nextStatus);
         if (nextStatus === "stopped" || nextStatus === "unavailable" || nextStatus === "error") {
@@ -58,6 +52,9 @@ export function useLandmarkCapture(options: UseLandmarkCaptureOptions): UseLandm
       onBrowserLocalFrame: (frame) => {
         setBrowserLocalFrame(frame);
         optionsRef.current.onBrowserLocalFrame?.(frame);
+      },
+      onGestureCandidate: (candidate) => {
+        optionsRef.current.onGestureCandidate?.(candidate);
       }
     });
   }
@@ -93,9 +90,6 @@ export function useLandmarkCapture(options: UseLandmarkCaptureOptions): UseLandm
     controllerRef.current!.resumeCapture();
   }, []);
 
-  const drainPendingChunk = useCallback(() => controllerRef.current!.drainPendingChunk(), []);
-  const getDroppedChunkCount = useCallback(() => controllerRef.current!.stats.droppedChunks, []);
-
   return {
     status,
     streamId,
@@ -104,8 +98,6 @@ export function useLandmarkCapture(options: UseLandmarkCaptureOptions): UseLandm
     stop,
     restart,
     cameraOff,
-    resumeCapture,
-    drainPendingChunk,
-    getDroppedChunkCount
+    resumeCapture
   };
 }

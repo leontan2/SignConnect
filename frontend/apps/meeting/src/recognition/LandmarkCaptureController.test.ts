@@ -62,11 +62,8 @@ type ControllerConstructor = new (options: {
     handModelUrl: string;
     poseModelUrl: string;
   };
-  consumer: {
-    isUnderPressure(): boolean;
-    send(chunk: unknown): void;
-  };
   onStatus?(status: CaptureStatus): void;
+  onGestureCandidate?(candidate: Array<{ timestampMs: number; features: number[] }>): void;
   watchdogScheduler?: WatchdogScheduler;
   initializationTimeoutMs?: number;
   processingTimeoutMs?: number;
@@ -235,7 +232,6 @@ function controllerOptions(worker: FakeWorker, scheduler: ManualScheduler, now: 
     clock: { now: () => now.value },
     uuidFactory: () => "11111111-1111-4111-8111-111111111111",
     assets,
-    consumer: { isUnderPressure: () => false, send: vi.fn() },
     watchdogScheduler: new ManualWatchdogScheduler(),
     ...overrides
   };
@@ -246,6 +242,35 @@ function processMessages(worker: FakeWorker): Array<{ message: WorkerCommand; tr
 }
 
 describe("LandmarkCaptureController", () => {
+  it("forwards one completed 30-frame gesture candidate through the browser-local adapter", async () => {
+    const LandmarkCaptureController = controllerConstructorFor("gesture candidate adapter");
+    const worker = new FakeWorker();
+    const scheduler = new ManualScheduler();
+    const now = { value: 40 };
+    const onGestureCandidate = vi.fn();
+    const controller = new LandmarkCaptureController(controllerOptions(worker, scheduler, now, { onGestureCandidate }));
+
+    controller.start(readyVideo);
+    worker.emit({ type: "worker.ready" });
+    scheduler.step(40);
+    await flushCapture();
+    const pending = processMessages(worker)[0].message;
+    const candidate = Array.from({ length: 30 }, (_unused, index) => ({
+      timestampMs: 40 + index * 40,
+      features: [...activeChunkFixture.frames[0].features]
+    }));
+    worker.emit({
+      type: "frame.result",
+      requestId: pending.requestId,
+      timestampMs: pending.timestampMs,
+      result: { kind: "accepted", frameKind: "active", features: activeChunkFixture.frames[0].features },
+      gestureCandidate: candidate
+    });
+
+    expect(onGestureCandidate).toHaveBeenCalledOnce();
+    expect(onGestureCandidate).toHaveBeenCalledWith(candidate);
+  });
+
   it("waits for model and video readiness and permits only one frame in flight", async () => {
     const LandmarkCaptureController = controllerConstructorFor("readiness and one-frame backpressure");
     const worker = new FakeWorker();
@@ -298,18 +323,16 @@ describe("LandmarkCaptureController", () => {
     expect(statuses).toContain("no-hands");
   });
 
-  it("samples within the 20-30 FPS acceptance range at a 25 FPS target", async () => {
+  it("samples within the 20-30 FPS acceptance range without sending rolling frames", async () => {
     const LandmarkCaptureController = controllerConstructorFor("25 FPS scheduling");
     const worker = new FakeWorker();
     worker.autoRespond = true;
     const scheduler = new ManualScheduler();
     const now = { value: 0 };
     const frameFactory = vi.fn(() => fakeFrame(`frame-${now.value}`));
-    const send = vi.fn();
     const statuses: CaptureStatus[] = [];
     const controller = new LandmarkCaptureController(controllerOptions(worker, scheduler, now, {
       frameFactory,
-      consumer: { isUnderPressure: () => false, send },
       onStatus: (status: CaptureStatus) => statuses.push(status)
     }));
 
@@ -324,7 +347,6 @@ describe("LandmarkCaptureController", () => {
     expect(processMessages(worker).length).toBeGreaterThanOrEqual(20);
     expect(processMessages(worker).length).toBeLessThanOrEqual(30);
     expect(frameFactory).toHaveBeenCalledTimes(processMessages(worker).length);
-    expect(send).toHaveBeenCalledTimes(Math.floor(processMessages(worker).length / 5));
     expect(statuses.filter((status) => status === "no-hands")).toHaveLength(1);
     controller.stop();
   });
@@ -621,7 +643,6 @@ describe("useLandmarkCapture", () => {
       clock: { now: () => 0 },
       uuidFactory: () => "11111111-1111-4111-8111-111111111111",
       assets,
-      consumer: { isUnderPressure: () => false, send: vi.fn() }
     }));
     let streamId: string | null = "not-started";
 
@@ -739,6 +760,18 @@ describe("landmark worker", () => {
         kind: "accepted",
         frameKind: "active",
         features: activeChunkFixture.frames[0].features
+      },
+      browserLocal: {
+        trackingQuality: {
+          state: "ready",
+          personDetected: true,
+          upperBodyVisible: true,
+          leftHandVisible: true,
+          rightHandVisible: true,
+          handsInsideFrame: true
+        },
+        calibration: { state: "collecting", stableFrames: 1, requiredStableFrames: 8 },
+        gesturePhase: "idle"
       }
     });
     expect(JSON.stringify(emitted)).not.toContain("RAW_PIXEL_SENTINEL");

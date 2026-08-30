@@ -8,6 +8,14 @@ const secretPatterns = [
   ["Google API key", /\bAIza[A-Za-z0-9_-]{35}\b/],
   ["OpenAI API key", /\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b/],
 ];
+const allowedModelBinaries = new Set([
+  "backend/sign-inference-service/src/main/resources/models/deterministic-sign-v1.onnx",
+]);
+const privateTrainingPathPatterns = [
+  /^ml\/sign-recognition\/(?:data|captures|consent|runs|artifacts|checkpoints)\//i,
+  /^ml\/sign-recognition\/fixtures\/NON_PRODUCTION_SYNTHETIC\/generated\//i,
+];
+const generatedModelExtension = /\.(?:ckpt|npy|npz|onnx|pt|pth)$/i;
 
 function git(args, options = {}) {
   return execFileSync("git", args, { encoding: "utf8", ...options });
@@ -31,6 +39,15 @@ try {
 }
 
 for (const file of stagedFiles) {
+  if (privateTrainingPathPatterns.some((pattern) => pattern.test(file))) {
+    errors.push(`${file}: private training/capture artifacts must remain outside Git`);
+    continue;
+  }
+  if (generatedModelExtension.test(file) && !allowedModelBinaries.has(file)) {
+    errors.push(`${file}: generated model or tensor artifacts require an explicit reviewed allowlist entry`);
+    continue;
+  }
+
   let content;
 
   try {

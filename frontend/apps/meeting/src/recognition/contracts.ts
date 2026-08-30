@@ -99,6 +99,37 @@ export interface BrowserLocalGesturePrediction {
   consecutiveFrames: number;
 }
 
+export type BrowserLocalTrackingQualityState =
+  | "no-person"
+  | "upper-body-missing"
+  | "left-hand-missing"
+  | "right-hand-missing"
+  | "out-of-frame"
+  | "low-quality"
+  | "ready";
+
+export interface BrowserLocalTrackingQualityFacts {
+  state: BrowserLocalTrackingQualityState;
+  personDetected: boolean;
+  upperBodyVisible: boolean;
+  leftHandVisible: boolean;
+  rightHandVisible: boolean;
+  handsInsideFrame: boolean;
+}
+
+export interface BrowserLocalCalibrationState {
+  state: "collecting" | "ready";
+  stableFrames: number;
+  requiredStableFrames: number;
+}
+
+export type BrowserLocalGesturePhase =
+  | "idle"
+  | "starting"
+  | "active"
+  | "ending"
+  | "ready-for-inference";
+
 /**
  * Ephemeral browser-only presentation data. This snapshot travels only from
  * the vision worker to the React tree; the server consumer receives only the
@@ -110,6 +141,9 @@ export interface BrowserLocalVisionFrame {
   hands: BrowserLocalHandOverlay[];
   upperBody: BrowserLocalOverlayPoint[];
   gesture: BrowserLocalGesturePrediction | null;
+  trackingQuality: BrowserLocalTrackingQualityFacts;
+  calibration: BrowserLocalCalibrationState;
+  gesturePhase: BrowserLocalGesturePhase;
 }
 
 export type LandmarkFrameKind = "active" | "idle";
