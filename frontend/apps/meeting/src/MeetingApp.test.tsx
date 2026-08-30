@@ -546,6 +546,43 @@ describe("Meeting recognition product UX", () => {
     expect(start).toBeEnabled();
   });
 
+  it("keeps browser-local generic gesture labels out of the sign-recognition experience", async () => {
+    const harness = makeHarness();
+    expect(screen.queryByText(/generic gesture preview/i)).not.toBeInTheDocument();
+
+    await enableCamera(harness);
+    const socket = await connectSession(harness);
+    const worker = await startRecognition(harness, socket);
+    await emitAcceptedFrame(harness, worker, "active", {
+      timestampMs: harness.clock.value,
+      gestureModel: "ready",
+      hands: [],
+      upperBody: [],
+      gesture: {
+        source: "mediapipe-canned-gestures",
+        label: "Open_Palm",
+        displayName: "Open palm",
+        confidence: 0.99,
+        handedness: "Right",
+        stable: true,
+        consecutiveFrames: 4
+      },
+      trackingQuality: {
+        state: "ready",
+        personDetected: true,
+        upperBodyVisible: true,
+        leftHandVisible: true,
+        rightHandVisible: true,
+        handsInsideFrame: true
+      },
+      calibration: { state: "ready", stableFrames: 8, requiredStableFrames: 8 },
+      gesturePhase: "idle"
+    });
+
+    expect(screen.queryByText("Open palm")).not.toBeInTheDocument();
+    expect(within(screen.getByLabelText("Camera readiness")).getByText("Ready to sign")).toBeVisible();
+  });
+
   it("turns browser-local quality, calibration, and gesture phases into actionable readiness guidance", async () => {
     const harness = makeHarness();
     expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/camera off/i);
@@ -556,20 +593,18 @@ describe("Meeting recognition product UX", () => {
     expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/camera initializing/i);
 
     const states = [
-      ["no-person", "No person detected"],
-      ["upper-body-missing", "Upper body not fully visible"],
-      ["left-hand-missing", "Left hand missing"],
-      ["right-hand-missing", "Right hand missing"],
-      ["out-of-frame", "Hands too close to the frame edge"],
-      ["low-quality", "Lighting or tracking quality too poor"]
+      ["no-person", "No person detected", "Sit or stand naturally in the center of the camera guide."],
+      ["upper-body-missing", "Upper body not fully visible", "Move back until both shoulders are visible."],
+      ["left-hand-missing", "Left hand missing", "Bring your left hand into the camera guide."],
+      ["right-hand-missing", "Right hand missing", "Bring your right hand into the camera guide."],
+      ["out-of-frame", "Hands too close to the frame edge", "Move your signing hand or hands away from the edge of the guide."],
+      ["low-quality", "Lighting or tracking quality too poor", "Face the camera, improve lighting, and keep your upper body steady."]
     ] as const;
-    for (const [state, label] of states) {
+    for (const [state, label, message] of states) {
       await emitAcceptedFrame(harness, worker, state === "no-person" ? "idle" : "active", {
         timestampMs: harness.clock.value,
-        gestureModel: "unavailable",
         hands: [],
         upperBody: [],
-        gesture: null,
         trackingQuality: {
           state,
           personDetected: state !== "no-person",
@@ -582,14 +617,13 @@ describe("Meeting recognition product UX", () => {
         gesturePhase: "idle"
       });
       expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(label);
+      expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(message);
     }
 
     await emitAcceptedFrame(harness, worker, "active", {
       timestampMs: harness.clock.value,
-      gestureModel: "unavailable",
       hands: [],
       upperBody: [],
-      gesture: null,
       trackingQuality: {
         state: "ready",
         personDetected: true,
@@ -605,10 +639,8 @@ describe("Meeting recognition product UX", () => {
 
     await emitAcceptedFrame(harness, worker, "active", {
       timestampMs: harness.clock.value,
-      gestureModel: "unavailable",
       hands: [],
       upperBody: [],
-      gesture: null,
       trackingQuality: {
         state: "ready",
         personDetected: true,
@@ -624,10 +656,8 @@ describe("Meeting recognition product UX", () => {
 
     await emitAcceptedFrame(harness, worker, "active", {
       timestampMs: harness.clock.value,
-      gestureModel: "unavailable",
       hands: [],
       upperBody: [],
-      gesture: null,
       trackingQuality: {
         state: "ready",
         personDetected: true,
@@ -640,16 +670,17 @@ describe("Meeting recognition product UX", () => {
       gesturePhase: "ready-for-inference"
     });
     expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/^Ready to sign/);
+    expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(
+      "Both shoulders and at least one signing hand are visible and calibrated."
+    );
     await emitCompletedGesture(harness, worker);
     expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/^Processing/);
     expect(screen.queryAllByRole("article")).toHaveLength(0);
 
     await emitAcceptedFrame(harness, worker, "idle", {
       timestampMs: harness.clock.value,
-      gestureModel: "unavailable",
       hands: [],
       upperBody: [],
-      gesture: null,
       trackingQuality: {
         state: "ready",
         personDetected: true,
@@ -677,10 +708,8 @@ describe("Meeting recognition product UX", () => {
     const worker = await startRecognition(harness, socket);
     const readyFrame = {
       timestampMs: harness.clock.value,
-      gestureModel: "unavailable",
       hands: [],
       upperBody: [],
-      gesture: null,
       trackingQuality: {
         state: "ready",
         personDetected: true,
@@ -737,10 +766,8 @@ describe("Meeting recognition product UX", () => {
     const worker = await startRecognition(harness, socket);
     await emitAcceptedFrame(harness, worker, "idle", {
       timestampMs: harness.clock.value,
-      gestureModel: "unavailable",
       hands: [],
       upperBody: [],
-      gesture: null,
       trackingQuality: {
         state: "ready",
         personDetected: true,
@@ -779,10 +806,8 @@ describe("Meeting recognition product UX", () => {
     const worker = await startRecognition(harness, socket);
     await emitAcceptedFrame(harness, worker, "idle", {
       timestampMs: harness.clock.value,
-      gestureModel: "unavailable",
       hands: [],
       upperBody: [],
-      gesture: null,
       trackingQuality: {
         state: "ready",
         personDetected: true,
@@ -822,10 +847,8 @@ describe("Meeting recognition product UX", () => {
     const worker = await startRecognition(harness, socket);
     await emitAcceptedFrame(harness, worker, "idle", {
       timestampMs: harness.clock.value,
-      gestureModel: "unavailable",
       hands: [],
       upperBody: [],
-      gesture: null,
       trackingQuality: {
         state: "ready",
         personDetected: true,

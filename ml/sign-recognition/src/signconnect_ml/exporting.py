@@ -155,7 +155,22 @@ def _metadata_document(
         "generatedAt": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "mockModel": synthetic,
         "genuineSignLanguageData": genuine_sgsl,
-        "targetLanguage": "sg-SG",
+        "targetLanguage": manifest.target_language,
+        "vocabularyVersion": manifest.vocabulary_version,
+        "vocabularySha256": manifest.vocabulary_sha256,
+        "sourceProvenance": dict(
+            checkpoint.get("reproducibility", {}).get(
+                "sourceControl",
+                {
+                    "commit": None,
+                    "dirty": None,
+                    "trackedChangesSha256": None,
+                    "untrackedFileCount": None,
+                    "untrackedStateSha256": None,
+                    "untrackedContentSha256": None,
+                },
+            )
+        ),
         "architecture": {
             "family": architecture,
             "name": f"SignConnect {architecture} sequence classifier",
@@ -181,19 +196,7 @@ def _metadata_document(
             "semanticsVersion": "softmax-class-probabilities-v1",
         },
         "decision": {"minimumConfidence": checkpoint["minimum_confidence"]},
-        "labels": [
-            {
-                "index": index,
-                "id": label,
-                "captionText": (
-                    _caption(label)
-                    if manifest.label_outcome(label) == "SIGN"
-                    else None
-                ),
-                "outcome": manifest.label_outcome(label),
-            }
-            for index, label in enumerate(manifest.classes)
-        ],
+        "labels": [dict(label) for label in manifest.runtime_labels],
         "trainingDataset": {
             "datasetId": manifest.dataset_id,
             "datasetVersion": manifest.dataset_version,
@@ -248,11 +251,6 @@ def _metadata_document(
             "blockingReasons": blocking_reasons,
         },
     }
-
-
-def _caption(label_id: str) -> str:
-    return "No sign" if label_id == "NO_SIGN" else label_id.replace("_", " ").title()
-
 
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()

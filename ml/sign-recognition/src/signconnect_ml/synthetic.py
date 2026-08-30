@@ -75,13 +75,16 @@ def generate_non_production_synthetic(
                     "sampleId": sample_id,
                     "signerId": signer_id,
                     "labelId": label_id,
-                    "language": "sg-SG",
+                    "language": "sls",
                     "handedness": "NOT_APPLICABLE",
                     "captureCondition": {
                         "lighting": "INDOOR",
                         "background": "PLAIN",
                         "cameraPosition": "DESKTOP",
                         "occlusion": "NONE",
+                        "speed": "NATURAL",
+                        "distance": "NOMINAL",
+                        "scenario": "IDLE" if label_id == NO_SIGN else "ISOLATED_SIGN",
                     },
                     "captureTimestamp": FIXED_TIMESTAMP,
                     "landmarkArtifact": {
@@ -127,6 +130,23 @@ def generate_non_production_synthetic(
         "datasetId": "non-production-synthetic-pipeline-fixture",
         "datasetVersion": "1.0.0-synthetic",
         "createdAt": FIXED_TIMESTAMP,
+        "purposeVersion": "1.0.0-synthetic",
+        "consentNoticeVersion": "1.0.0-synthetic",
+        "vocabularyVersion": "1.0.0-synthetic",
+        "reviewRecordId": f"review_{_stable_hex(f'review:{seed}', 24)}",
+        "reviewedLabels": [
+            {
+                "labelId": "SYNTHETIC_A",
+                "gloss": "SYNTHETIC-A",
+                "captionText": "Synthetic A",
+            },
+            {
+                "labelId": "SYNTHETIC_B",
+                "gloss": "SYNTHETIC-B",
+                "captionText": "Synthetic B",
+            },
+        ],
+        "retentionExpiresAt": "2026-11-28T00:00:00Z",
         "provenance": {
             "kind": "NON_PRODUCTION_SYNTHETIC",
             "evidence": {
@@ -136,7 +156,7 @@ def generate_non_production_synthetic(
                 "seed": seed,
             },
         },
-        "targetLanguage": "sg-SG",
+        "targetLanguage": "sls",
         "featureLayoutVersion": FEATURE_CONTRACT,
         "preprocessingVersion": PREPROCESSING_VERSION,
         "datasetLicence": {

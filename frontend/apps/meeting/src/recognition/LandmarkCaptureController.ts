@@ -43,13 +43,11 @@ export interface LandmarkCaptureControllerOptions {
 const DEFAULT_WASM_ROOT_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm";
 const DEFAULT_HAND_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
 const DEFAULT_POSE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
-const DEFAULT_GESTURE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task";
 
 export const DEFAULT_VISION_ASSET_LOCATIONS: VisionAssetLocations = {
   wasmRootUrl: process.env.MEDIAPIPE_WASM_ROOT_URL || DEFAULT_WASM_ROOT_URL,
   handModelUrl: process.env.MEDIAPIPE_HAND_MODEL_URL || DEFAULT_HAND_MODEL_URL,
-  poseModelUrl: process.env.MEDIAPIPE_POSE_MODEL_URL || DEFAULT_POSE_MODEL_URL,
-  gestureModelUrl: DEFAULT_GESTURE_MODEL_URL
+  poseModelUrl: process.env.MEDIAPIPE_POSE_MODEL_URL || DEFAULT_POSE_MODEL_URL
 };
 
 const defaultScheduler: AnimationScheduler = {

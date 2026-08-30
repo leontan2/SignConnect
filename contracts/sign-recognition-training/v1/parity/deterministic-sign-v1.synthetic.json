@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "fixtureId": "deterministic-sign-v1-python-onnx-java",
+  "synthetic": true,
+  "artifactPath": "backend/sign-inference-service/src/main/resources/models/deterministic-sign-v1.onnx",
+  "artifactSha256": "fd2cf50b2bdbe8c7c6953e0f809b33df2012de2a476b09fcff0e6987e289c4a8",
+  "metadataPath": "backend/sign-inference-service/src/main/resources/models/deterministic-sign-v1-labels.json",
+  "modelVersion": "synthetic-v1",
+  "vocabularyVersion": "1.0.0-synthetic",
+  "vocabularySha256": "afd4bd331c9dd8ae99c8cd51b62be38ea3f46d18e48fb057e9337a066ab68c43",
+  "input": {
+    "shape": [1, 30, 224],
+    "frames": 30,
+    "featuresPerFrame": 224,
+    "handLandmarkCount": 42,
+    "presenceOffset": 3,
+    "landmarkStride": 4
+  },
+  "absoluteTolerance": 0.000001,
+  "vectors": [
+    {
+      "id": "pose-only-idle",
+      "activeHandLandmarksPerFrame": 0,
+      "expectedProbabilities": [1.0, 1.0530617466355953e-20],
+      "expectedDecision": {
+        "outcome": "NO_SIGN",
+        "wireLabelId": "NO_SIGN",
+        "wireCaptionText": null,
+        "confidence": 1.0
+      }
+    },
+    {
+      "id": "active-but-below-threshold",
+      "activeHandLandmarksPerFrame": 39,
+      "expectedProbabilities": [0.3100268542766571, 0.6899731755256653],
+      "expectedDecision": {
+        "outcome": "LOW_CONFIDENCE",
+        "wireLabelId": "NO_SIGN",
+        "wireCaptionText": null,
+        "confidence": 0.6899731755256653
+      }
+    },
+    {
+      "id": "fully-active-synthetic-gesture",
+      "activeHandLandmarksPerFrame": 42,
+      "expectedProbabilities": [0.012128558941185474, 0.9878714084625244],
+      "expectedDecision": {
+        "outcome": "RECOGNIZED",
+        "wireLabelId": "MOCK_ACTIVE",
+        "wireCaptionText": "Synthetic active gesture",
+        "confidence": 0.9878714084625244
+      }
+    }
+  ]
+}

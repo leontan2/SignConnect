@@ -338,6 +338,11 @@ class TrainingAndExportTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             manifest = generate_non_production_synthetic(root / "fixture", signer_count=6)
+            manifest_document = json.loads(manifest.read_text(encoding="utf-8"))
+            manifest_document["reviewedLabels"][0]["captionText"] = (
+                "Synthetic A, reviewed exactly."
+            )
+            manifest.write_text(json.dumps(manifest_document), encoding="utf-8")
             output = root / "run"
             checkpoint = train(
                 TrainConfig(
@@ -366,6 +371,11 @@ class TrainingAndExportTest(unittest.TestCase):
                     "hidden_size",
                     "dropout",
                     "false_final_threshold",
+                    "input_contract_version",
+                    "augmentation_policy",
+                    "optimizer_name",
+                    "learning_rate_schedule",
+                    "threshold_candidates",
                 },
                 set(saved_checkpoint["config"]),
             )
@@ -397,6 +407,16 @@ class TrainingAndExportTest(unittest.TestCase):
             self.assertTrue(onnx_path.is_file())
             self.assertFalse(stale_external_data.exists())
             validate_contract_document(metadata, "model-metadata.schema.json")
+            self.assertEqual("sls", metadata["targetLanguage"])
+            self.assertEqual("1.0.0-synthetic", metadata["vocabularyVersion"])
+            self.assertEqual(
+                "fb1df903c7679ff259cef4a9f531fd549bd7517a0a919f83e239b15b386f1c3b",
+                metadata["vocabularySha256"],
+            )
+            self.assertEqual(
+                saved_checkpoint["reproducibility"]["sourceControl"],
+                metadata["sourceProvenance"],
+            )
             self.assertEqual("BLOCKED", metadata["productionPromotion"]["status"])
             self.assertTrue(metadata["mockModel"])
             self.assertFalse(metadata["genuineSignLanguageData"])
@@ -407,6 +427,10 @@ class TrainingAndExportTest(unittest.TestCase):
             self.assertEqual("probabilities", metadata["output"]["name"])
             self.assertEqual("NO_SIGN", metadata["labels"][0]["id"])
             self.assertIsNone(metadata["labels"][0]["captionText"])
+            self.assertEqual(
+                "Synthetic A, reviewed exactly.",
+                metadata["labels"][1]["captionText"],
+            )
             self.assertNotIn("promotionEligible", metadata)
             runtime = ort.InferenceSession(onnx_path.read_bytes(), providers=["CPUExecutionProvider"])
             self.assertEqual("features", runtime.get_inputs()[0].name)
@@ -441,6 +465,11 @@ class TrainingAndExportTest(unittest.TestCase):
             for sample in manifest_document["samples"]:
                 if sample["labelId"] == "SYNTHETIC_B":
                     sample["labelId"] = "OUT_OF_VOCABULARY"
+            manifest_document["reviewedLabels"] = [
+                label
+                for label in manifest_document["reviewedLabels"]
+                if label["labelId"] != "SYNTHETIC_B"
+            ]
             manifest_path.write_text(json.dumps(manifest_document), encoding="utf-8")
 
             output = root / "run"

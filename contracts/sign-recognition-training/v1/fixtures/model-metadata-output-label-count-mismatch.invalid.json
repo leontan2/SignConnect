@@ -5,7 +5,10 @@
   "generatedAt": "2026-08-30T13:00:00Z",
   "mockModel": true,
   "genuineSignLanguageData": false,
-  "targetLanguage": "sg-SG",
+  "targetLanguage": "sls",
+  "vocabularyVersion": "1.0.0-synthetic",
+  "vocabularySha256": "78d9c7bafb7cb20a705b5e02ea84be0f8781496636eb69b3ffecbe37234f3690",
+  "sourceProvenance": {"commit": null, "dirty": null, "trackedChangesSha256": null, "untrackedFileCount": null, "untrackedStateSha256": null, "untrackedContentSha256": null},
   "architecture": {
     "family": "SYNTHETIC_FIXTURE",
     "name": "Deterministic integration fixture",

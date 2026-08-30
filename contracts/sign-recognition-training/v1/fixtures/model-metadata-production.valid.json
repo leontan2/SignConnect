@@ -5,7 +5,10 @@
   "generatedAt": "2026-08-30T13:00:00Z",
   "mockModel": false,
   "genuineSignLanguageData": true,
-  "targetLanguage": "sg-SG",
+  "targetLanguage": "sls",
+  "vocabularyVersion": "1.0.0",
+  "vocabularySha256": "bee237eb48aeb5d54320f75d821b9ed93de2d143a3a12c91776df4f3560a5b26",
+  "sourceProvenance": {"commit": "1111111111111111111111111111111111111111", "dirty": false, "trackedChangesSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "untrackedFileCount": 0, "untrackedStateSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "untrackedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
   "architecture": {
     "family": "TCN",
     "name": "SignConnect TCN contract fixture",
@@ -258,6 +261,26 @@
         "unknownRejectionRate": 0.96,
         "unknownFalseFinalCount": 1,
         "unknownFalseFinalRate": 0.04
+      },
+      "robustnessSlices": {
+        "lighting": [
+          { "value": "INDOOR", "support": 180, "accuracy": 0.8722222222222222, "macroF1": 0.8688925443885935, "falseFinalRate": 0.03333333333333333, "rejectionRate": 0.03333333333333333 }
+        ],
+        "cameraDistance": [
+          { "value": "NOMINAL", "support": 180, "accuracy": 0.8722222222222222, "macroF1": 0.8688925443885935, "falseFinalRate": 0.03333333333333333, "rejectionRate": 0.03333333333333333 }
+        ],
+        "signingSpeed": [
+          { "value": "NATURAL", "support": 180, "accuracy": 0.8722222222222222, "macroF1": 0.8688925443885935, "falseFinalRate": 0.03333333333333333, "rejectionRate": 0.03333333333333333 }
+        ],
+        "handedness": [
+          { "value": "RIGHT", "support": 180, "accuracy": 0.8722222222222222, "macroF1": 0.8688925443885935, "falseFinalRate": 0.03333333333333333, "rejectionRate": 0.03333333333333333 }
+        ],
+        "occlusion": [
+          { "value": "NONE", "support": 180, "accuracy": 0.8722222222222222, "macroF1": 0.8688925443885935, "falseFinalRate": 0.03333333333333333, "rejectionRate": 0.03333333333333333 }
+        ],
+        "behaviorScenario": [
+          { "value": "ISOLATED_SIGN", "support": 180, "accuracy": 0.8722222222222222, "macroF1": 0.8688925443885935, "falseFinalRate": 0.03333333333333333, "rejectionRate": 0.03333333333333333 }
+        ]
       }
     }
   },

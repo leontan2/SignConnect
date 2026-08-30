@@ -13,6 +13,9 @@
     "mockModel",
     "genuineSignLanguageData",
     "targetLanguage",
+    "vocabularyVersion",
+    "vocabularySha256",
+    "sourceProvenance",
     "architecture",
     "artifactSha256",
     "input",
@@ -37,7 +40,16 @@
     "generatedAt": { "$ref": "#/$defs/timestamp" },
     "mockModel": { "type": "boolean" },
     "genuineSignLanguageData": { "type": "boolean" },
-    "targetLanguage": { "const": "sg-SG" },
+    "targetLanguage": {
+      "const": "sls",
+      "description": "IANA-registered BCP 47 language tag for Singapore Sign Language."
+    },
+    "vocabularyVersion": { "$ref": "#/$defs/semanticVersion" },
+    "vocabularySha256": {
+      "$ref": "#/$defs/sha256",
+      "description": "SHA-256 of canonical JSON over targetLanguage, vocabularyVersion, and the complete ordered runtime labels array."
+    },
+    "sourceProvenance": { "$ref": "#/$defs/sourceProvenance" },
     "architecture": {
       "type": "object",
       "additionalProperties": false,
@@ -205,7 +217,8 @@
             },
             "confusionMatrix": { "$ref": "#/$defs/confusionMatrix" },
             "noSignBehavior": { "$ref": "#/$defs/noSignBehavior" },
-            "rejectionBehavior": { "$ref": "#/$defs/rejectionBehavior" }
+            "rejectionBehavior": { "$ref": "#/$defs/rejectionBehavior" },
+            "robustnessSlices": { "$ref": "#/$defs/robustnessSlices" }
           }
         }
       }
@@ -380,7 +393,7 @@
               },
               "metrics": {
                 "type": "object",
-                "required": ["perClass", "confusionMatrix", "noSignBehavior", "rejectionBehavior"],
+                "required": ["perClass", "confusionMatrix", "noSignBehavior", "rejectionBehavior", "robustnessSlices"],
                 "properties": {
                   "macroF1": { "type": "number", "minimum": 0.8 },
                   "falseFinalRate": { "type": "number", "maximum": 0.05 },
@@ -405,7 +418,8 @@
                       "unknownRejectionRate": { "type": "number", "minimum": 0.95 },
                       "unknownFalseFinalRate": { "type": "number", "maximum": 0.05 }
                     }
-                  }
+                  },
+                  "robustnessSlices": { "$ref": "#/$defs/robustnessSlices" }
                 }
               }
             }
@@ -458,6 +472,19 @@
     "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "nullableSha256": {
       "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+    },
+    "sourceProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "dirty", "trackedChangesSha256", "untrackedFileCount", "untrackedStateSha256", "untrackedContentSha256"],
+      "properties": {
+        "commit": { "oneOf": [{ "type": "string", "pattern": "^[a-f0-9]{40,64}$" }, { "type": "null" }] },
+        "dirty": { "type": ["boolean", "null"] },
+        "trackedChangesSha256": { "$ref": "#/$defs/nullableSha256" },
+        "untrackedFileCount": { "type": ["integer", "null"], "minimum": 0 },
+        "untrackedStateSha256": { "$ref": "#/$defs/nullableSha256" },
+        "untrackedContentSha256": { "$ref": "#/$defs/nullableSha256" }
+      }
     },
     "probability": { "type": "number", "minimum": 0, "maximum": 1 },
     "nullableProbability": {
@@ -536,6 +563,50 @@
         "unknownRejectionRate": { "$ref": "#/$defs/nullableProbability" },
         "unknownFalseFinalCount": { "type": "integer", "minimum": 0 },
         "unknownFalseFinalRate": { "$ref": "#/$defs/nullableProbability" }
+      }
+    },
+    "robustnessSliceItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "support", "accuracy", "macroF1", "falseFinalRate", "rejectionRate"],
+      "properties": {
+        "value": { "type": "string" },
+        "support": { "type": "integer", "minimum": 1 },
+        "accuracy": { "$ref": "#/$defs/probability" },
+        "macroF1": { "$ref": "#/$defs/probability" },
+        "falseFinalRate": { "$ref": "#/$defs/probability" },
+        "rejectionRate": { "$ref": "#/$defs/probability" }
+      }
+    },
+    "robustnessSlices": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lighting", "cameraDistance", "signingSpeed", "handedness", "occlusion", "behaviorScenario"],
+      "properties": {
+        "lighting": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "allOf": [{ "$ref": "#/$defs/robustnessSliceItem" }, { "type": "object", "properties": { "value": { "enum": ["LOW", "INDOOR", "DAYLIGHT", "MIXED"] } } }] }
+        },
+        "cameraDistance": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "allOf": [{ "$ref": "#/$defs/robustnessSliceItem" }, { "type": "object", "properties": { "value": { "enum": ["NEAR", "NOMINAL", "FAR"] } } }] }
+        },
+        "signingSpeed": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "allOf": [{ "$ref": "#/$defs/robustnessSliceItem" }, { "type": "object", "properties": { "value": { "enum": ["SLOW", "NATURAL", "FAST"] } } }] }
+        },
+        "handedness": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "allOf": [{ "$ref": "#/$defs/robustnessSliceItem" }, { "type": "object", "properties": { "value": { "enum": ["LEFT", "RIGHT", "TWO_HANDED", "NOT_APPLICABLE", "UNKNOWN"] } } }] }
+        },
+        "occlusion": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "allOf": [{ "$ref": "#/$defs/robustnessSliceItem" }, { "type": "object", "properties": { "value": { "enum": ["NONE", "PARTIAL"] } } }] }
+        },
+        "behaviorScenario": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "allOf": [{ "$ref": "#/$defs/robustnessSliceItem" }, { "type": "object", "properties": { "value": { "enum": ["ISOLATED_SIGN", "INCOMPLETE_GESTURE", "HELD_SIGN", "REPEATED_SIGN", "IDLE", "TRANSITION", "UNKNOWN_GESTURE", "NATURAL_MOVEMENT"] } } }] }
+        }
       }
     },
     "label": {

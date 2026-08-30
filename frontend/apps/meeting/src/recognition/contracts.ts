@@ -7,17 +7,6 @@ export const LANDMARK_FEATURE_COUNT = 224;
 export const FRAMES_PER_LANDMARK_CHUNK = 5;
 export const TARGET_CAPTURE_FPS = 25;
 export const CAPTURE_INTERVAL_MS = 1000 / TARGET_CAPTURE_FPS;
-export const BROWSER_LOCAL_GESTURE_SOURCE = "mediapipe-canned-gestures" as const;
-
-export const BROWSER_LOCAL_GESTURE_LABELS = [
-  "Closed_Fist",
-  "Open_Palm",
-  "Pointing_Up",
-  "Thumb_Down",
-  "Thumb_Up",
-  "Victory",
-  "ILoveYou"
-] as const;
 
 export const FEATURE_LAYOUT = {
   leftHand: { start: 0, end: 83, landmarkCount: HAND_LANDMARK_COUNT },
@@ -77,28 +66,6 @@ export interface BrowserLocalHandOverlay {
   points: BrowserLocalOverlayPoint[];
 }
 
-export type BrowserLocalGestureLabel = typeof BROWSER_LOCAL_GESTURE_LABELS[number];
-
-export const BROWSER_LOCAL_GESTURE_DISPLAY_NAMES: Record<BrowserLocalGestureLabel, string> = {
-  Closed_Fist: "Closed fist",
-  Open_Palm: "Open palm",
-  Pointing_Up: "Pointing up",
-  Thumb_Down: "Thumbs down",
-  Thumb_Up: "Thumbs up",
-  Victory: "Victory",
-  ILoveYou: "I love you gesture"
-};
-
-export interface BrowserLocalGesturePrediction {
-  source: typeof BROWSER_LOCAL_GESTURE_SOURCE;
-  label: BrowserLocalGestureLabel;
-  displayName: string;
-  confidence: number;
-  handedness: DetectedHand["handedness"] | null;
-  stable: boolean;
-  consecutiveFrames: number;
-}
-
 export type BrowserLocalTrackingQualityState =
   | "no-person"
   | "upper-body-missing"
@@ -137,10 +104,8 @@ export type BrowserLocalGesturePhase =
  */
 export interface BrowserLocalVisionFrame {
   timestampMs: number;
-  gestureModel: "ready" | "unavailable";
   hands: BrowserLocalHandOverlay[];
   upperBody: BrowserLocalOverlayPoint[];
-  gesture: BrowserLocalGesturePrediction | null;
   trackingQuality: BrowserLocalTrackingQualityFacts;
   calibration: BrowserLocalCalibrationState;
   gesturePhase: BrowserLocalGesturePhase;
@@ -180,8 +145,6 @@ export interface VisionAssetLocations {
   wasmRootUrl: string;
   handModelUrl: string;
   poseModelUrl: string;
-  /** Optional so deployments can retain landmark-only capture as a fallback. */
-  gestureModelUrl?: string;
 }
 
 export interface LandmarkChunkConsumer {

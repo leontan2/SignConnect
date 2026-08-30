@@ -34,6 +34,23 @@ class ModelContractTest {
     }
 
     @Test
+    void acceptsOnlyTheIanaSingaporeSignLanguageTag() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        ObjectNode metadata = authoritativeMetadata(
+                objectMapper, "model-metadata-blocked.valid.json");
+        metadata.put("targetLanguage", "sls");
+
+        ModelContract contract = ModelContract.read(
+                objectMapper,
+                new ByteArrayInputStream(objectMapper.writeValueAsBytes(metadata)));
+
+        assertThat(contract.targetLanguage()).isEqualTo("sls");
+
+        metadata.put("targetLanguage", "sg-SG");
+        assertInvalidMetadata(objectMapper, metadata);
+    }
+
+    @Test
     void readsTheAuthoritativeApprovedProductionDocument() throws Exception {
         ModelContract contract;
         try (InputStream input = Files.newInputStream(
@@ -42,6 +59,11 @@ class ModelContractTest {
         }
 
         assertThat(contract.modelVersion()).isEqualTo("1.0.0-fixture");
+        assertThat(contract.vocabularyVersion()).isEqualTo("1.0.0");
+        assertThat(contract.vocabularySha256())
+                .isEqualTo("bee237eb48aeb5d54320f75d821b9ed93de2d143a3a12c91776df4f3560a5b26");
+        assertThat(contract.sourceProvenance().dirty()).isFalse();
+        assertThat(contract.sourceProvenance().untrackedFileCount()).isZero();
         assertThat(contract.mockModel()).isFalse();
         assertThat(contract.evaluation().metrics().perClass()).hasSize(7);
         assertThat(contract.evaluation().metrics().confusionMatrix().labelOrder())
@@ -50,6 +72,64 @@ class ModelContractTest {
         assertThat(contract.evaluation().metrics().rejectionBehavior().unknownRejectionRate())
                 .isGreaterThanOrEqualTo(0.95);
         assertThat(contract.isProductionReady()).isTrue();
+    }
+
+    @ParameterizedTest(name = "rejects vocabulary binding mismatch: {0}")
+    @ValueSource(strings = {
+            "version",
+            "digest",
+            "caption",
+            "label-order",
+            "review-order"
+    })
+    void rejectsVocabularyBindingMismatch(String mismatch) throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        ObjectNode metadata = authoritativeMetadata(
+                objectMapper, "model-metadata-production.valid.json");
+        ArrayNode labels = metadata.withArray("labels");
+        ArrayNode reviewed = (ArrayNode) metadata.path("sgslReview").path("reviewedLabelIds");
+        switch (mismatch) {
+            case "version" -> metadata.put("vocabularyVersion", "1.0.1");
+            case "digest" -> metadata.put("vocabularySha256", "0".repeat(64));
+            case "caption" -> ((ObjectNode) labels.get(1)).put("captionText", "hello");
+            case "label-order" -> {
+                String firstId = labels.get(1).path("id").asText();
+                String firstCaption = labels.get(1).path("captionText").asText();
+                ((ObjectNode) labels.get(1))
+                        .put("id", labels.get(2).path("id").asText())
+                        .put("captionText", labels.get(2).path("captionText").asText());
+                ((ObjectNode) labels.get(2))
+                        .put("id", firstId)
+                        .put("captionText", firstCaption);
+            }
+            case "review-order" -> {
+                String first = reviewed.get(0).asText();
+                reviewed.set(0, reviewed.get(1));
+                reviewed.set(1, objectMapper.getNodeFactory().textNode(first));
+            }
+            default -> throw new IllegalArgumentException("Unknown vocabulary mismatch");
+        }
+
+        assertInvalidMetadata(objectMapper, metadata);
+    }
+
+    @ParameterizedTest(name = "rejects production source provenance: {0}")
+    @ValueSource(strings = {"missing", "dirty", "inconsistent"})
+    void rejectsProductionSourceProvenance(String mismatch) throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        ObjectNode metadata = authoritativeMetadata(
+                objectMapper, "model-metadata-production.valid.json");
+        ObjectNode source = (ObjectNode) metadata.path("sourceProvenance");
+        switch (mismatch) {
+            case "missing" -> metadata.remove("sourceProvenance");
+            case "dirty" -> {
+                source.put("dirty", true);
+                source.put("trackedChangesSha256", "a".repeat(64));
+            }
+            case "inconsistent" -> source.put("dirty", true);
+            default -> throw new IllegalArgumentException("Unknown source mismatch");
+        }
+        assertInvalidMetadata(objectMapper, metadata);
     }
 
     @ParameterizedTest(name = "rejects inconsistent rich evaluation evidence: {0}")
@@ -68,7 +148,9 @@ class ModelContractTest {
             "accepted-signs",
             "unknown-outcomes",
             "unknown-matrix-support",
-            "accepted-accuracy-nullability"
+            "accepted-accuracy-nullability",
+            "robustness-support",
+            "robustness-unknown-handedness"
     })
     void rejectsInconsistentRichEvaluationEvidence(String mismatch) throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -106,6 +188,10 @@ class ModelContractTest {
                 rejection.put("unknownFalseFinalRate", 0.02);
             }
             case "accepted-accuracy-nullability" -> rejection.putNull("acceptedSignAccuracy");
+            case "robustness-support" -> ((ObjectNode) metrics.path("robustnessSlices")
+                    .path("lighting").get(0)).put("support", 179);
+            case "robustness-unknown-handedness" -> ((ObjectNode) metrics.path("robustnessSlices")
+                    .path("handedness").get(0)).put("value", "UNKNOWN");
             default -> throw new IllegalArgumentException("Unknown evaluation mismatch");
         }
 

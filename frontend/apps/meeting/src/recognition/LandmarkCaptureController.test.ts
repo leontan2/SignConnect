@@ -727,6 +727,30 @@ describe("landmark worker", () => {
     expect(tasks).toEqual({ hand, pose });
   });
 
+  it("uses landmark extraction without loading the canned gesture classifier", async () => {
+    const { createMediaPipeTasks } = workerFunctionsFor("landmark-only browser vision");
+    const fileset = { id: "wasm" };
+    const hand = { close: vi.fn() };
+    const pose = { close: vi.fn() };
+    const gesture = { close: vi.fn() };
+    const bindings = {
+      FilesetResolver: { forVisionTasks: vi.fn(async () => fileset) },
+      HandLandmarker: { createFromOptions: vi.fn(async () => hand) },
+      PoseLandmarker: { createFromOptions: vi.fn(async () => pose) },
+      GestureRecognizer: { createFromOptions: vi.fn(async () => gesture) }
+    };
+    const legacyAssets = {
+      ...assets,
+      gestureModelUrl: "/assets/mediapipe/gesture_recognizer.task"
+    };
+
+    const tasks = await createMediaPipeTasks(legacyAssets, bindings);
+
+    expect(bindings.GestureRecognizer.createFromOptions).not.toHaveBeenCalled();
+    expect(bindings.HandLandmarker.createFromOptions).toHaveBeenCalledOnce();
+    expect(tasks).toEqual({ hand, pose });
+  });
+
   it("uses strictly increasing VIDEO timestamps, normalizes results, and closes every frame", async () => {
     const { createLandmarkWorkerProcessor } = workerFunctionsFor("VIDEO timestamp processing");
     const results = mediaPipeResults();

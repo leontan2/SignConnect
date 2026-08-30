@@ -32,15 +32,15 @@ For every work loop:
 | --- | --- |
 | Date/time | 2026-08-30; implementation and required verifier loop complete |
 | Branch | `codex/gesture-segmentation` |
-| Starting commit | `d062c83912f3acf2aa3502c8201812218e24286b` (`d062c83`) |
-| Ending implementation commit | `24f9b9ee930b8a9351c046ab6c4bbb8909e37da1` (`24f9b9e`) |
+| Starting commit | `7ec095d` (latest committed verification baseline before this resumed loop) |
+| Ending implementation commit | Pending current implementation commit |
 | Operator | Codex parallel-agent loop |
-| Phase/gate | G0-G4 implementation and evidence; G5-G8 tooling; G9 blocked |
+| Phase/gate | Resumed G3-G8 implementation and evidence; G5 and genuine G9 blocked |
 | Starting failure | Camera quality and gesture boundaries were not canonicalized end to end; the server still treated every five-frame chunk as a rolling stride; no authorized SGSL dataset or promoted genuine model existed. |
-| Change summary | Added MediaPipe-derived quality/calibration facts, one canonical 13-state mapper, bounded motion-compensated gesture segmentation and 30-frame resampling, browser one-in-flight result correlation, six ordered v1 chunks per completed gesture, default `SEGMENTED_GESTURES` server assembly, explicit reject/OOV metrics, model-state-bound locked-test evidence, TCN/GRU tooling, fail-closed Java model validation, and a safe evidence-preserving release runner. All model evidence remains explicitly synthetic. |
-| Commands and exit codes | Unified release verifier: exit `0`; backend Maven suites: `3 + 4 + 63 + 92 = 162` passed; meeting Vitest: `97` passed; ML pytest: `42` passed with warnings as errors; training-contract fixtures: `23` passed; typecheck and both production builds passed; self-contained synthetic TCN generate/train/export/parity: exit `0`, ONNX `255224` bytes; Java load/performance probe: exit `0`, `labels=3`, synthetic p50 `0.9825 ms`, p95 `1.7464 ms`, `20` samples; browser latency: 20 measured samples after one warm-up, p50 `25.8 ms`, p95 `47.9 ms`; bundled Chromium, Chrome, and Edge E2E: `16/16` each; development simulator gate: `1/1`; release-runner self-test: PASS; `git diff --check`: exit `0`. |
+| Change summary | Corrected the live readiness gate to require shoulders plus at least one signing hand, zero-filled absent optional landmarks while preserving `[1,30,224]`, added a stationary-sign hold path with bounded pre-roll and camera-gap grace, and bounded continuous/noisy gestures to one inference candidate at 90 source frames. Removed the browser's canned generic-gesture classifier, corrected the SGSL language tag to `sls`, and added governed vocabulary binding, consent/capture/review/retention schemas, lifecycle and duplicate audits, clean source provenance, reproducible training, robustness slices, exact-digest staged-data guards, repository-trusted evidence anchors, evidence-bound promotion/release, cross-runtime parity, Java benchmarks, and safe ML CLI entry points. All bundled model evidence remains explicitly synthetic. |
+| Commands and exit codes | Unified release verifier: exit `0`; backend Maven suites: `3 + 4 + 63 + 113 = 183` passed; meeting Vitest: `113` passed; ML pytest: `225` passed inside the verifier and `228` passed after the final trust-root review; training-contract fixtures: `23` passed; staged-file guard: `20` focused tests and the real `87`-file staged scan passed; typecheck and both production builds passed; browser latency: 20 measured samples after one warm-up, p50 `25.1 ms`, p95 `46.1 ms`, minimum `18.8 ms`, maximum `46.5 ms`; bundled Chromium, Chrome, and Edge E2E: `16/16` each; development simulator gate: `1/1`; release-runner self-test: PASS; `git diff --check`: exit `0`. |
 | Evidence paths | `docs/architecture/sign-recognition-pipeline.md`; `docs/research/sign-language-model-candidates.md`; `contracts/sign-recognition/v1/`; `contracts/sign-recognition-training/v1/`; `frontend/apps/meeting/src/recognition/`; `backend/realtime-service/src/test/java/com/signconnect/realtime/SegmentedGestureRecognitionSessionTest.java`; `backend/sign-inference-service/src/test/java/com/signconnect/inference/`; `ml/sign-recognition/tests/` |
-| Remaining failure or blocker | No Milestone 3 verifier failure remains. Genuine Milestone 4 remains blocked by approved consent/governance, an SGSL-fluent Deaf reviewer, licensed multi-signer SGSL recordings, and locked independent test signers. |
+| Remaining failure or blocker | The live one-hand/shoulder gate and camera presentation were exercised on Windows, but broader physical-device/signer acceptance remains open. Genuine Milestone 4 remains blocked by approved consent/governance, an SGSL-fluent Deaf reviewer, licensed multi-signer SGSL recordings, and locked independent test signers. |
 | Next loop action | Use `docs/research/sgsl-external-input-request.md` to obtain reviewer, consent, licence, and dataset evidence; then reopen G5 and run genuine signer-disjoint TCN/GRU training plus the fail-closed production promotion gates. |
 
 ## Non-negotiable invariants
@@ -70,11 +70,11 @@ Recheck these in every phase that touches the recognition path.
 | G1 Live pipeline and 224-feature audit | PASS | `docs/architecture/sign-recognition-pipeline.md` | Codex / 2026-08-30 |
 | G2 Model/dataset/licence decision | PASS | `docs/research/sign-language-model-candidates.md`; no external asset downloaded | Codex / 2026-08-30 |
 | G3 Compatibility and canonical contracts | PASS | `contracts/sign-recognition/v1/`; `contracts/sign-recognition-training/v1/`; canonical mapper/runtime tests | Codex / 2026-08-30 |
-| G4 Milestone 3 tracking and segmentation | PARTIAL | Engineering and fixture gates pass; supported-browser physical-camera acceptance remains open. This is not a genuine-model claim | Physical-camera acceptance required |
+| G4 Milestone 3 tracking and segmentation | PARTIAL | Engineering and fixture gates pass; a Windows physical-camera check confirmed the corrected one-hand/shoulder path, while broader device/signer acceptance remains open. This is not a genuine-model claim | Broader physical-camera acceptance required |
 | G5 Training-data authorization and dataset | BLOCKED | ADR-0003 defines the prerequisite boundary; `docs/research/sgsl-external-input-request.md` defines the evidence request; consent, reviewer, and real data are absent | Recheck only on new external evidence |
-| G6 Genuine model training, evaluation, and ONNX | PARTIAL | ML tooling and synthetic TCN parity pass; genuine SGSL run absent | Codex / 2026-08-30 |
-| G7 Java real-model integration | PARTIAL | Java contract/load/fail-closed tooling passes with synthetic artifact; no promoted real artifact | Codex / 2026-08-30 |
-| G8 Browser, privacy, accessibility, and performance | PARTIAL | Synthetic browser gate `16/16` and 20-sample latency gate pass; genuine-model journeys, CPU/memory/FPS, and physical-camera evidence remain open | Codex / 2026-08-30 |
+| G6 Genuine model training, evaluation, and ONNX | PARTIAL | Reproducible training, vocabulary binding, robustness, release, promotion, and synthetic parity tooling pass; genuine SGSL run absent | Codex / 2026-08-30 |
+| G7 Java real-model integration | PARTIAL | Java contract/load/fail-closed, cross-runtime parity, and benchmark-report tooling pass with the synthetic artifact; no promoted real artifact | Codex / 2026-08-30 |
+| G8 Browser, privacy, accessibility, and performance | PARTIAL | Synthetic browser gate `16/16` in all three browsers, 20-sample latency, and a bounded Windows physical-camera check pass; genuine-model journeys and promoted-artifact performance remain open | Codex / 2026-08-30 |
 | G9 Final genuine-SGSL promotion | BLOCKED | Open G5 data/reviewer blockers and incomplete G6-G8 genuine evidence | Recheck only after G5 clears |
 
 ## G0 — Baseline and prerequisite
@@ -214,7 +214,7 @@ git diff --check
 | Canonical-state fixture report | `frontend/apps/meeting/src/recognition/CanonicalStateMapper.test.ts`; meeting suite `97` passed, including Processing-to-result collision coverage |
 | Vocabulary/metadata path | `contracts/sign-recognition-training/v1/model-metadata.schema.json`; `backend/sign-inference-service/src/main/resources/models/deterministic-sign-v1-labels.json` (explicit synthetic fixture) |
 | Adapter spec/tests or “not required” | Not required: browser, training, ONNX, and Java retain `[1,30,224]`; strict fixtures validate the common contract |
-| Verifier exit code | Unified release verifier exit `0`: backend `162`, meeting `97`, ML `42`, training contracts `23`, typecheck, production builds, runner self-test, bundled Chromium `16/16`, installed Chrome `16/16`, installed Edge `16/16`, simulator `1/1`, and performance `1/1` |
+| Verifier exit code | Unified release verifier exit `0`: backend `183`, meeting `113`, ML `225`, training contracts `23`, typecheck, production builds, runner self-test, bundled Chromium `16/16`, installed Chrome `16/16`, installed Edge `16/16`, simulator `1/1`, and performance `1/1`; final post-review ML `228` and staged guard `20/20` plus the real `87`-file scan passed |
 
 **Gate pass:** frontend, realtime, inference, and ML code consume one compatible contract, all canonical collisions are deterministic, and strict fixtures pass.
 
@@ -227,7 +227,7 @@ git diff --check
 - [x] Real MediaPipe facts drive person/torso visibility, left/right hand presence, edge proximity, and tracking/lighting-quality guidance.
 - [x] Thresholds and hysteresis are configurable and covered by boundary tests.
 - [x] Camera initialization/off states come from the camera lifecycle, not the classifier.
-- [x] Session calibration requires eight quality-ready frames with both hands, shoulders, and stable shoulder scale; calibration data remains in memory for the active session only. Anatomical slots remain unmirrored and preview mirroring remains presentation-only.
+- [x] Session calibration requires eight quality-ready frames with both shoulders, at least one signing hand, and stable shoulder scale; a vocabulary-specific mode may require both hands. Calibration data remains in memory for the active session only. Anatomical slots remain unmirrored and preview mirroring remains presentation-only.
 - [x] The optional overlay uses existing design-system tokens and can be disabled without disabling recognition.
 - [x] The overlay and text guidance expose no unsupported accuracy claim and remain keyboard/screen-reader usable.
 
@@ -238,6 +238,7 @@ git diff --check
 - [x] Start and end hysteresis prevent camera adjustment and single-frame jitter from becoming gestures.
 - [x] Temporary occlusion has a bounded policy and cannot merge unrelated gestures indefinitely.
 - [x] Gesture end dispatches at most one inference window.
+- [x] A stationary supported-sign pose dispatches once after a bounded hold, while pre-roll and brief quality/camera-cadence gaps do not discard the candidate.
 - [x] A held sign cannot repeatedly dispatch or caption.
 - [x] Return to idle permits a genuine repeated sign after the cooldown.
 - [x] Fast/slow gestures resample consistently to 30 frames.
@@ -257,13 +258,13 @@ npm run verify:release
 
 | Field | Value |
 | --- | --- |
-| Quality-state unit report | `frontend/apps/meeting/src/recognition/trackingQuality.test.ts`, `CanonicalStateMapper.test.ts`, and MediaPipe-derived facts in `LandmarkCaptureController.test.ts`; included in `97` passing meeting tests |
+| Quality-state unit report | `frontend/apps/meeting/src/recognition/trackingQuality.test.ts`, `CanonicalStateMapper.test.ts`, and MediaPipe-derived facts in `LandmarkCaptureController.test.ts`; included in `113` passing meeting tests |
 | Segmentation/resampling unit report | `frontend/apps/meeting/src/recognition/LandmarkCaptureController.test.ts`; `backend/realtime-service/src/test/java/com/signconnect/realtime/SegmentedGestureRecognitionSessionTest.java`; exactly six five-frame chunks assemble one 30-frame candidate and one inference |
 | Recorded/synthetic fixture inventory | `frontend/apps/meeting/src/recognition/e2eFixtureCapture.ts` and `.test.ts`; `contractFixtures.test.ts`; synthetic browser fixture only, not SGSL accuracy evidence |
 | Accessibility review | `frontend/apps/meeting/src/MeetingApp.test.tsx`; `tests/e2e/sign-recognition-accessibility.spec.ts`; the full `16/16` Chromium gate passed with live-region, overlay state, 320-pixel completed-state reflow, reduced-motion, focus, contrast, and axe coverage |
-| Running-browser screenshots/trace | Bundled Chromium `16/16` passed. Fixture-backed evidence validates product mechanics only and is not genuine SGSL or physical-camera acceptance evidence. Physical-camera validation remains open in `docs/validation/sign-recognition-browser-matrix.md`. |
+| Running-browser screenshots/trace | Bundled Chromium `16/16` passed. A privacy-preserving Windows physical-camera check confirmed the contained 4:3 preview, one-hand tracking, and corrected readiness guidance without retaining a screenshot or landmark values. Neither fixture nor physical-camera evidence is genuine SGSL model evidence; see `docs/validation/sign-recognition-browser-matrix.md`. |
 
-**Engineering gate:** MediaPipe-derived facts produce actionable canonical guidance; adjustment fixtures do not start a gesture; held signs do not repeat; idle separates real repetitions; and all Milestone 3 fixtures plus the repository verifier pass. **Full Milestone 3 acceptance additionally requires the supported-browser physical-camera check.**
+**Engineering gate:** MediaPipe-derived facts produce actionable canonical guidance; stationary signs and dynamic gestures each produce one bounded candidate; adjustment fixtures do not start a gesture; held signs do not repeat; continuous/noisy motion does not remain stuck; deliberate movement or release separates repetitions; and all Milestone 3 fixtures plus the repository verifier pass. **Full Milestone 3 acceptance additionally requires broader supported-device and signer acceptance beyond the bounded Windows check.**
 
 **On failure:** tune only against versioned fixtures and record threshold changes. Never train the classifier to hide a deterministic tracking-state defect.
 
@@ -400,7 +401,7 @@ git diff --check
 | No-fallback test | `OnnxModelRuntimeTest.java` and `InferenceModelConfigurationTest.java` reject missing, invalid, mismatched, or relabelled artifacts without mock fallback |
 | Session lifecycle test | `OnnxModelRuntimeTest.java`; singleton lifecycle and repeated inference are covered |
 | Sensitive-log sentinel test | Inference/realtime privacy and sentinel assertions are included in backend suites; raw tensors/landmarks are not logged |
-| Repository verifier result | Backend suites `162` passed (`3 + 4 + 63 + 92`); Java synthetic probe p50 `0.9825 ms`, p95 `1.7464 ms`, `20` samples |
+| Repository verifier result | Backend suites `183` passed (`3 + 4 + 63 + 113`); Java contract, cross-runtime parity, and benchmark-report tests are included in the `113` inference-service tests |
 
 **Gate pass:** the exact promoted artifact runs locally in Java, agrees with frozen reference outputs, fails closed, preserves realtime behavior, and passes backend plus repository tests.
 
@@ -433,7 +434,7 @@ git diff --check
 
 - [ ] Report model size, warmed Java ONNX p50/p95, end-to-end p50/p95, CPU, memory, and processed FPS.
 - [x] Warmed Java ONNX p95 is below the existing `500 ms` live timeout for the explicitly synthetic artifact (`1.7464 ms`, 20-sample probe); genuine-artifact performance remains open.
-- [x] Synthetic end-to-end performance is measured from completed-gesture dispatch through final caption render: one warm-up, 20 measured cycles, nearest-rank p50 `25.8 ms`, p95 `47.9 ms`, and a `1000 ms` budget.
+- [x] Synthetic end-to-end performance is measured from completed-gesture dispatch through final caption render: one warm-up, 20 measured cycles, nearest-rank p50 `25.1 ms`, p95 `46.1 ms`, and a `1000 ms` budget.
 - [ ] Performance fixtures use real mode for Milestone 4 evidence; synthetic results are labelled separately.
 
 ### Commands
@@ -459,7 +460,7 @@ git diff --check
 | Privacy/network report | `docs/privacy/sign-recognition-data-boundary.md`; `tests/e2e/sign-recognition-privacy.spec.ts`; strict raw-media fixture rejection |
 | Accessibility report | `tests/e2e/sign-recognition-accessibility.spec.ts`; `frontend/apps/meeting/src/MeetingApp.test.tsx`; bundled Chromium `16/16` passed |
 | Chromium/Chrome/Edge results | Bundled Chromium `16/16`, installed Chrome `16/16`, and installed Edge `16/16` passed on Windows; see `docs/validation/sign-recognition-browser-matrix.md`. |
-| Performance report | Synthetic Java ONNX: artifact `255224` bytes, `labels=3`, p50 `0.9825 ms`, p95 `1.7464 ms`, `20` samples. Synthetic browser dispatch-to-render: one warm-up plus 20 measured samples, p50 `25.8 ms`, p95 `47.9 ms`, min `20.5 ms`, max `63.8 ms`, budget `1000 ms`. No genuine-model M4 performance claim. |
+| Performance report | Synthetic Java ONNX: artifact `255224` bytes, `labels=3`, p50 `0.9825 ms`, p95 `1.7464 ms`, `20` samples. Synthetic browser dispatch-to-render: one warm-up plus 20 measured samples, p50 `25.1 ms`, p95 `46.1 ms`, min `18.8 ms`, max `46.5 ms`, budget `1000 ms`. The Java benchmark/report path now also records CPU, heap, sustained FPS, and raw measured samples for a candidate artifact; no genuine-model M4 performance claim is made. |
 
 **Gate pass:** all journeys pass using the promoted real artifact, privacy and accessibility checks pass, Java p95 is below 500 ms, and synthetic-only evidence is separately labelled.
 

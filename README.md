@@ -37,6 +37,8 @@ Prerequisites: Node.js 20+, npm 10+, a compatible JDK 21, Python 3.10-3.12, and 
 
 Start each backend service in its own terminal:
 
+On managed Windows hosts where Java cannot establish its internal loopback socket under the default long temporary directory, create `C:\jtmp` once and set `$env:TEMP = 'C:\jtmp'` plus `$env:TMP = 'C:\jtmp'` in each backend terminal. If the failure persists when launching an executable jar directly, also pass `-Djdk.net.unixdomain.tmpdir=C:\jtmp -Djava.io.tmpdir=C:\jtmp` to `java`. These settings are process-local.
+
 ```powershell
 $env:JAVA_HOME = 'C:\path\to\compatible-jdk-21'
 $env:SERVER_ADDRESS = '127.0.0.1'

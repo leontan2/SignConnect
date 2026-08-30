@@ -484,7 +484,7 @@ The automated acceptance scenarios are implemented in the backend WebSocket and 
 
 ## Status
 
-- [-] In progress — engineering and fixture gates pass; supported-browser physical-camera acceptance remains open
+- [-] In progress — engineering and fixture gates pass; a Windows physical-camera check confirmed the corrected one-hand/shoulder readiness path, while full signer acceptance remains open
 
 ## Objective
 
@@ -525,7 +525,7 @@ The overlay should help with setup but remain optional during a conversation.
 After camera startup:
 
 1. Ask the user to sit or stand naturally.
-2. Confirm shoulders and both hands are visible.
+2. Confirm both shoulders and at least one signing hand are visible; require both hands only for vocabulary entries that need them.
 3. Measure approximate shoulder scale.
 4. Hold the ready setup for eight stable quality frames; preview mirroring remains presentation-only.
 5. Keep calibration data only for the active session.
@@ -578,6 +578,7 @@ Preserve the existing MediaPipe handedness correction and validate it with recor
 - [x] Add session calibration.
 - [x] Implement local activity detection.
 - [x] Implement gesture start/end hysteresis.
+- [x] Capture a stationary held sign once, with bounded pre-roll and brief tracking/camera-cadence grace.
 - [x] Resample bounded gestures into the model input window.
 - [x] Preserve missing-landmark masks.
 - [x] Create deterministic normalized landmark fixtures for segmentation and browser validation. These are synthetic fixtures, not SGSL recordings or accuracy evidence.
@@ -586,8 +587,8 @@ Preserve the existing MediaPipe handedness correction and validate it with recor
 ## Acceptance gate
 
 - [x] The interface explains why recognition is unavailable.
-- [-] Users can position themselves without guessing in fixture-backed browser coverage; physical-camera acceptance remains open.
-- [-] Camera/body adjustment is compensated and regression-tested; physical-camera acceptance remains open.
+- [-] Users can position themselves without guessing in fixture-backed browser coverage. A Windows physical-camera check confirmed that one tracked hand plus both shoulders no longer reports `Upper body not fully visible`; broader signer acceptance remains open.
+- [-] Camera/body adjustment is compensated and regression-tested. The physical-camera check reached the specific frame-edge warning instead of the former false upper-body warning; broader signer acceptance remains open.
 - [x] Held signs do not repeatedly emit captions.
 - [x] Returning to idle separates genuine repeated signs.
 - [x] Deterministic fixtures normalize consistently across distance, frame rate, missing-point masks, and dropped-frame gaps.
@@ -680,7 +681,7 @@ The model contract should include:
 ## Implementation checklist
 
 - [ ] Confirm five initial signs with an SGSL reviewer.
-- [ ] Add the development-only capture route only after separate collection consent, retention, deletion, reviewer, and governance approval. Live-recognition consent does not authorize training capture.
+- [-] A disabled-by-default offline capture workflow core now enforces separate collection consent, retention, deletion, reviewer, and governance inputs. Its camera/UI route stays disabled until those approvals exist; live-recognition consent does not authorize training capture.
 - [x] Define the strict dataset manifest format and signer-disjoint split contract.
 - [ ] Capture `NO_SIGN` and transition movement.
 - [ ] Collect the pipeline-proof dataset.
@@ -1144,21 +1145,21 @@ Copy this template when completing a milestone:
 ### Milestone 3 implementation record
 
 - Branch: `codex/gesture-segmentation`
-- Pull request or commit: `24f9b9ee930b8a9351c046ab6c4bbb8909e37da1`
+- Pull request or commit: Pending current implementation commit
 - Implementation date: 2026-08-30
-- Demonstration performed: The running fixture-backed app traversed actionable camera-quality, calibration, gesture, processing, recognized, and unknown states; the optional overlay remained keyboard-operable and the completed UI reflowed at 320 CSS pixels.
-- Automated checks run: Unified release verifier, 97 meeting tests, 162 backend tests, 42 ML tests, 23 training-contract fixtures, typecheck, production builds, release-runner self-test, 16/16 E2E tests in bundled Chromium, installed Chrome, and installed Edge, simulator 1/1, and performance 1/1. Performance evidence is recorded in the AI implementation checklist.
+- Demonstration performed: The running fixture-backed app traversed actionable camera-quality, calibration, stationary/dynamic gesture, processing, recognized, and unknown states; the optional overlay remained keyboard-operable and the completed UI reflowed at 320 CSS pixels. A privacy-preserving Windows physical-camera check confirmed the contained 4:3 preview, one-hand tracking, and corrected shoulder-plus-one-hand readiness path without retaining a screenshot or landmark values.
+- Automated checks run: Unified release verifier, 113 meeting tests, 183 backend tests, 225 ML tests inside the verifier plus 228 after the final trust-root review, 23 training-contract fixtures, 20 staged-file guard tests and the real staged scan, typecheck, production builds, release-runner self-test, 16/16 E2E tests in bundled Chromium, installed Chrome, and installed Edge, simulator 1/1, and performance 1/1. Performance evidence is recorded in the AI implementation checklist.
 - Known limitations: Browser fixtures use deterministic normalized landmarks and the bundled classifier is synthetic; this is not SGSL recognition evidence.
 - Follow-up work: Obtain approved training governance, an SGSL-fluent Deaf reviewer, and consented multi-signer SGSL data before genuine model training.
-- Acceptance gate: PARTIAL — automated engineering/browser gates pass; supported-browser physical-camera validation remains open
+- Acceptance gate: PARTIAL — automated engineering/browser gates and a bounded Windows physical-camera check pass; broader device and signer acceptance remains open
 
 ### Milestone 4 engineering-pipeline record
 
 - Branch: `codex/gesture-segmentation`
-- Pull request or commit: `24f9b9ee930b8a9351c046ab6c4bbb8909e37da1`
+- Pull request or commit: Pending current implementation commit
 - Implementation date: 2026-08-30
 - Demonstration performed: Reproducible synthetic TCN training/export/parity and explicit Java loading proved the mechanics without claiming SGSL quality.
-- Automated checks run: Strict contract fixtures, signer-leak and OOV/reject-accounting checks, model-state-bound locked-test evidence, TCN/GRU unit coverage, Python/ONNX parity, Java fail-closed model validation, full unified release verifier, three-browser E2E, and synthetic latency probes.
+- Automated checks run: Strict contract fixtures, consent/review/retention and exact-digest staged-file privacy guards, duplicate auditing, signer-leak and OOV/reject-accounting checks, clean reproducibility provenance, robustness slices, repository-trusted evidence anchors, evidence-bound promotion/release gates, Python/Java/ONNX parity, measured Java report validation, full unified release verifier, three-browser E2E, and synthetic latency probes.
 - Known limitations: No approved SGSL reviewer, collection consent, licensed multi-signer SGSL dataset, locked independent test signer, or promoted `mockModel: false` artifact exists.
 - Follow-up work: Clear the G5 external-input gate in `docs/ai-model-implementation-checklist.md`, then run identical signer-disjoint TCN/GRU evaluation and the genuine browser promotion gates.
 - Acceptance gate: BLOCKED — engineering groundwork is complete; genuine SGSL proof is not.

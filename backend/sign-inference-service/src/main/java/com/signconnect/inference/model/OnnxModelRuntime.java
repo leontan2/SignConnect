@@ -337,6 +337,15 @@ public class OnnxModelRuntime implements AutoCloseable {
         return predictionCount.get();
     }
 
+    boolean usesContract(ModelContract selectedContract) {
+        ModelContract activeContract = contract;
+        return ready && selectedContract != null && activeContract != null
+                && activeContract.artifactSha256().equals(selectedContract.artifactSha256())
+                && activeContract.vocabularySha256().equals(selectedContract.vocabularySha256())
+                && activeContract.modelId().equals(selectedContract.modelId())
+                && activeContract.modelVersion().equals(selectedContract.modelVersion());
+    }
+
     @PreDestroy
     @Override
     public void close() {

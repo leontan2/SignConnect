@@ -274,18 +274,18 @@ function cameraReadinessGuidance(
       return { title, message: cameraState === "requesting"
         ? "Approve camera access, then keep your upper body in view."
         : recognitionEnabled
-          ? "Keep your shoulders and both hands inside the guide while positioning completes."
+          ? "Keep both shoulders and your signing hand or hands inside the guide while positioning completes."
           : "Start recognition when you are ready to check positioning." };
     case "No person detected":
       return { title, message: "Sit or stand naturally in the center of the camera guide." };
     case "Upper body not fully visible":
-      return { title, message: "Move back until both shoulders, elbows, and wrists are visible." };
+      return { title, message: "Move back until both shoulders are visible." };
     case "Left hand missing":
       return { title, message: "Bring your left hand into the camera guide." };
     case "Right hand missing":
       return { title, message: "Bring your right hand into the camera guide." };
     case "Hands too close to the frame edge":
-      return { title, message: "Move both hands away from the edge of the guide." };
+      return { title, message: "Move your signing hand or hands away from the edge of the guide." };
     case "Lighting or tracking quality too poor":
       return { title, message: "Face the camera, improve lighting, and keep your upper body steady." };
     case "Gesture in progress":
@@ -295,9 +295,9 @@ function cameraReadinessGuidance(
     case "Sign recognized":
       return { title, message: "The latest completed gesture produced a final caption." };
     case "Sign not recognized":
-      return { title, message: "Try the gesture again with both hands clearly visible." };
+      return { title, message: "Try the gesture again with your signing hand or hands clearly visible." };
     default:
-      return { title, message: "Shoulders and both hands are visible and calibrated." };
+      return { title, message: "Both shoulders and at least one signing hand are visible and calibrated." };
   }
 }
 
@@ -366,12 +366,6 @@ const UPPER_BODY_CONNECTIONS: ReadonlyArray<readonly [number, number]> = [
   [11, 12], [11, 13], [13, 15], [12, 14], [14, 16],
   [11, 23], [12, 24], [23, 24]
 ];
-
-type DemoGesture = {
-  displayName: string;
-  confidence: number;
-  handedness: "Left" | "Right" | null;
-};
 
 function clearOverlay(canvas: HTMLCanvasElement | null): void {
   if (!canvas) return;
@@ -460,7 +454,6 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
     const [cameraState, setCameraState] = useState<CameraState>("off");
     const [trackingOverlayVisible, setTrackingOverlayVisible] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [demoGesture, setDemoGesture] = useState<DemoGesture | null>(null);
     const [signerOwnership, setSignerOwnership] = useState<SignerOwnershipState>(INITIAL_SIGNER_STATE);
     const [liveAnnouncement, setLiveAnnouncement] = useState("");
     const [product, dispatch] = useReducer(productReducer, INITIAL_PRODUCT_STATE);
@@ -488,7 +481,6 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
     const mountedRef = useRef(true);
     const cameraRequestGenerationRef = useRef(0);
     const meetingRequestGenerationRef = useRef(0);
-    const lastStableGestureTimestampRef = useRef(Number.NEGATIVE_INFINITY);
     const roomGenerationRef = useRef(0);
     const lastRoomSequenceRef = useRef(-1);
     const signerCommandGenerationRef = useRef(-1);
@@ -825,31 +817,11 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       const video = videoRef.current;
       if (!trackingOverlayVisible || !frame || !canvas || !video) {
         clearOverlay(canvas);
-        if (!recognition.enabledByUser) setDemoGesture(null);
         return;
       }
 
       drawBrowserLocalOverlay(canvas, video, frame);
-      const gesture = frame.gesture;
-      if (gesture?.stable) {
-        lastStableGestureTimestampRef.current = frame.timestampMs;
-        setDemoGesture((current) => {
-          if (current
-            && current.displayName === gesture.displayName
-            && current.handedness === gesture.handedness
-            && Math.abs(current.confidence - gesture.confidence) < 0.03) {
-            return current;
-          }
-          return {
-            displayName: gesture.displayName,
-            confidence: gesture.confidence,
-            handedness: gesture.handedness
-          };
-        });
-      } else if (frame.timestampMs - lastStableGestureTimestampRef.current > 700) {
-        setDemoGesture(null);
-      }
-    }, [recognition.browserLocalFrame, recognition.enabledByUser, trackingOverlayVisible]);
+    }, [recognition.browserLocalFrame, trackingOverlayVisible]);
 
     useEffect(() => {
       const canvas = overlayCanvasRef.current;
@@ -873,8 +845,6 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       stream?.getTracks().forEach((track) => track.stop());
       if (videoRef.current) videoRef.current.srcObject = null;
       clearOverlay(overlayCanvasRef.current);
-      lastStableGestureTimestampRef.current = Number.NEGATIVE_INFINITY;
-      setDemoGesture(null);
     }, []);
     stopMediaRef.current = stopMedia;
 
@@ -1126,13 +1096,13 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
     const trackedHandCount = browserLocalFrame?.hands.length ?? 0;
     const trackingLost = recognition.enabledByUser
       && (recognition.captureStatus === "no-hands" || recognition.captureStatus === "low-quality");
-    const localModelLabel = !recognition.enabledByUser
+    const landmarkExtractorLabel = !recognition.enabledByUser
       ? "Loads when recognition starts"
-      : browserLocalFrame?.gestureModel === "ready"
-        ? "Generic gesture model ready"
-        : browserLocalFrame?.gestureModel === "unavailable"
-          ? "Landmark-only fallback active"
-          : "Loading local gesture model";
+      : browserLocalFrame
+        ? "Hand and pose landmarks ready"
+        : recognition.captureStatus === "unavailable"
+          ? "Landmark models unavailable"
+          : "Loading landmark models";
     const previousReadinessTitleRef = useRef("");
     useEffect(() => {
       if (!recognition.enabledByUser || previousReadinessTitleRef.current === readinessGuidance.title) return;
@@ -1340,20 +1310,12 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
               </div>
 
               <div className="gesture-overlay">
-                <span>Local interpretation</span>
-                <strong>
-                  {demoGesture
-                    ? demoGesture.displayName
-                    : signerRequestPending
-                      ? "Waiting for signer access"
-                      : readinessGuidance.title}
-                </strong>
+                <span>Recognition readiness</span>
+                <strong>{signerRequestPending ? "Waiting for signer access" : readinessGuidance.title}</strong>
                 <p>
-                  {demoGesture
-                    ? `${Math.round(demoGesture.confidence * 100)}% confidence${demoGesture.handedness ? `, ${demoGesture.handedness} hand` : ""}`
-                    : signerRequestPending
-                      ? "The room must grant ownership before landmarks are transmitted."
-                      : readinessGuidance.message}
+                  {signerRequestPending
+                    ? "The room must grant ownership before landmarks are transmitted."
+                    : readinessGuidance.message}
                 </p>
               </div>
             </div>
@@ -1516,8 +1478,8 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
                   <dd>{captureHealthLabel(recognition.captureStatus)}</dd>
                 </div>
                 <div>
-                  <dt>Local model</dt>
-                  <dd>{localModelLabel}</dd>
+                  <dt>Browser vision</dt>
+                  <dd>{landmarkExtractorLabel}</dd>
                 </div>
                 <div>
                   <dt>Inference service</dt>
@@ -1534,10 +1496,6 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
                         : "Available"}</dd>
                 </div>
               </dl>
-              <div className="demo-disclosure">
-                <CircleAlert size={14} aria-hidden="true" />
-                <span><strong>Generic gesture preview.</strong> This is not validated SGSL recognition.</span>
-              </div>
               {product.recognitionFeedback && <div className="recognition-feedback">{product.recognitionFeedback}</div>}
               {product.protocolFeedback && <div className="protocol-feedback">{product.protocolFeedback}</div>}
             </section>

@@ -6,12 +6,17 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigInteger;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -28,6 +33,9 @@ public record ModelContract(
         Boolean mockModel,
         Boolean genuineSignLanguageData,
         String targetLanguage,
+        String vocabularyVersion,
+        String vocabularySha256,
+        SourceProvenanceMetadata sourceProvenance,
         ArchitectureMetadata architecture,
         String artifactSha256,
         InputMetadata input,
@@ -54,7 +62,7 @@ public record ModelContract(
     private static final String OUTPUT_NAME = "probabilities";
     private static final String TENSOR_TYPE = "FLOAT32";
     private static final String OUTPUT_SEMANTICS = "softmax-class-probabilities-v1";
-    private static final String TARGET_LANGUAGE = "sg-SG";
+    private static final String TARGET_LANGUAGE = "sls";
     private static final String RUNTIME_ENGINE = "ONNX_RUNTIME_JAVA";
     private static final String REVIEWER_ROLE = "SGSL_FLUENT_DEAF_REVIEWER";
     private static final Pattern LABEL_ID = Pattern.compile("^[A-Z][A-Z0-9_]{0,63}$");
@@ -64,6 +72,8 @@ public record ModelContract(
             "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[a-z0-9.-]+)?$");
     private static final Pattern RUNTIME_VERSION = Pattern.compile("^[0-9]+\\.[0-9]+\\.[0-9]+$");
     private static final Pattern SHA256 = Pattern.compile("^[0-9a-f]{64}$");
+    private static final String EMPTY_SHA256 =
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
     private static final Pattern TIMESTAMP = Pattern.compile(
             "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])"
                     + "T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]{1,6})?Z$");
@@ -90,6 +100,9 @@ public record ModelContract(
                 || !isTimestamp(generatedAt)
                 || mockModel == null || genuineSignLanguageData == null
                 || !TARGET_LANGUAGE.equals(targetLanguage)
+                || !matches(SEMANTIC_VERSION, vocabularyVersion)
+                || !matches(SHA256, vocabularySha256)
+                || sourceProvenance == null
                 || architecture == null
                 || !matches(SHA256, artifactSha256)
                 || input == null || output == null || decision == null
@@ -105,11 +118,15 @@ public record ModelContract(
         output.validate(labels.size());
         decision.validate();
         Map<String, Label> labelsById = validateLabels();
+        if (!vocabularySha256.equals(canonicalVocabularySha256())) {
+            throw invalidMetadata();
+        }
+        sourceProvenance.validate();
         trainingDataset.validate();
-        evaluation.validate(labels, decision.minimumConfidence());
+        evaluation.validate(labels, decision.minimumConfidence(), genuineSignLanguageData);
         onnx.validate();
         runtime.validate();
-        sgslReview.validate(labelsById);
+        sgslReview.validate(labels, labelsById);
         governance.validate();
         productionPromotion.validate(this);
     }
@@ -151,6 +168,29 @@ public record ModelContract(
             throw invalidMetadata();
         }
         return labels.stream().collect(Collectors.toUnmodifiableMap(Label::id, Function.identity()));
+    }
+
+    private String canonicalVocabularySha256() {
+        Map<String, Object> vocabulary = new TreeMap<>();
+        vocabulary.put("targetLanguage", targetLanguage);
+        vocabulary.put("vocabularyVersion", vocabularyVersion);
+        List<Map<String, Object>> canonicalLabels = new ArrayList<>();
+        for (Label label : labels) {
+            Map<String, Object> canonicalLabel = new TreeMap<>();
+            canonicalLabel.put("index", label.index());
+            canonicalLabel.put("id", label.id());
+            canonicalLabel.put("captionText", label.captionText());
+            canonicalLabel.put("outcome", label.outcome().name());
+            canonicalLabels.add(canonicalLabel);
+        }
+        vocabulary.put("labels", canonicalLabels);
+        try {
+            byte[] canonicalJson = new ObjectMapper().writeValueAsBytes(vocabulary);
+            return HexFormat.of().formatHex(
+                    MessageDigest.getInstance("SHA-256").digest(canonicalJson));
+        } catch (IOException | NoSuchAlgorithmException failure) {
+            throw invalidMetadata();
+        }
     }
 
     public Label labelAt(int index) {
@@ -219,6 +259,55 @@ public record ModelContract(
                     || parameterCount == null || parameterCount < 0) {
                 throw invalidMetadata();
             }
+        }
+    }
+
+    public record SourceProvenanceMetadata(
+            String commit,
+            Boolean dirty,
+            String trackedChangesSha256,
+            Integer untrackedFileCount,
+            String untrackedStateSha256,
+            String untrackedContentSha256) {
+
+        private void validate() {
+            if (commit == null) {
+                if (dirty != null
+                        || trackedChangesSha256 != null
+                        || untrackedFileCount != null
+                        || untrackedStateSha256 != null
+                        || untrackedContentSha256 != null) {
+                    throw invalidMetadata();
+                }
+                return;
+            }
+            if (!matches(SHA256, trackedChangesSha256)
+                    || !matches(SHA256, untrackedStateSha256)
+                    || !matches(SHA256, untrackedContentSha256)
+                    || !commit.matches("^[a-f0-9]{40,64}$")
+                    || dirty == null
+                    || untrackedFileCount == null
+                    || untrackedFileCount < 0) {
+                throw invalidMetadata();
+            }
+            boolean hasTracked = !EMPTY_SHA256.equals(trackedChangesSha256);
+            boolean hasUntracked = untrackedFileCount > 0;
+            if (dirty != (hasTracked || hasUntracked)
+                    || (!hasUntracked
+                    && (!EMPTY_SHA256.equals(untrackedStateSha256)
+                    || !EMPTY_SHA256.equals(untrackedContentSha256)))) {
+                throw invalidMetadata();
+            }
+        }
+
+        private boolean isClean() {
+            return commit != null
+                    && Boolean.FALSE.equals(dirty)
+                    && EMPTY_SHA256.equals(trackedChangesSha256)
+                    && untrackedFileCount != null
+                    && untrackedFileCount == 0
+                    && EMPTY_SHA256.equals(untrackedStateSha256)
+                    && EMPTY_SHA256.equals(untrackedContentSha256);
         }
     }
 
@@ -328,12 +417,15 @@ public record ModelContract(
             EvaluationProtocolMetadata protocol,
             EvaluationMetricsMetadata metrics) {
 
-        private void validate(List<Label> labels, Double minimumConfidence) {
+        private void validate(
+                List<Label> labels,
+                Double minimumConfidence,
+                Boolean genuineSignLanguageData) {
             if (protocol == null || metrics == null) {
                 throw invalidMetadata();
             }
             protocol.validate();
-            metrics.validate(labels, minimumConfidence);
+            metrics.validate(labels, minimumConfidence, genuineSignLanguageData);
         }
     }
 
@@ -366,9 +458,13 @@ public record ModelContract(
             List<ClassMetricMetadata> perClass,
             ConfusionMatrixMetadata confusionMatrix,
             NoSignBehaviorMetadata noSignBehavior,
-            RejectionBehaviorMetadata rejectionBehavior) {
+            RejectionBehaviorMetadata rejectionBehavior,
+            RobustnessSlicesMetadata robustnessSlices) {
 
-        private void validate(List<Label> labels, Double minimumConfidence) {
+        private void validate(
+                List<Label> labels,
+                Double minimumConfidence,
+                Boolean genuineSignLanguageData) {
             if (!isProbability(macroF1) || !isProbability(accuracy)
                     || !isProbability(falseFinalRate)
                     || sampleCount == null || sampleCount < 0) {
@@ -396,6 +492,9 @@ public record ModelContract(
             }
             if (rejectionBehavior != null) {
                 rejectionBehavior.validate(sampleCount, minimumConfidence);
+            }
+            if (robustnessSlices != null) {
+                robustnessSlices.validate(sampleCount, Boolean.TRUE.equals(genuineSignLanguageData));
             }
         }
 
@@ -481,6 +580,92 @@ public record ModelContract(
                 }
             }
             return total;
+        }
+    }
+
+    public record RobustnessSlicesMetadata(
+            List<RobustnessSliceMetric> lighting,
+            List<RobustnessSliceMetric> cameraDistance,
+            List<RobustnessSliceMetric> signingSpeed,
+            List<RobustnessSliceMetric> handedness,
+            List<RobustnessSliceMetric> occlusion,
+            List<RobustnessSliceMetric> behaviorScenario) {
+
+        private void validate(long sampleCount, boolean genuineSignLanguageData) {
+            validateDimension(lighting, List.of("LOW", "INDOOR", "DAYLIGHT", "MIXED"), sampleCount);
+            validateDimension(cameraDistance, List.of("NEAR", "NOMINAL", "FAR"), sampleCount);
+            validateDimension(signingSpeed, List.of("SLOW", "NATURAL", "FAST"), sampleCount);
+            validateDimension(
+                    handedness,
+                    List.of("LEFT", "RIGHT", "TWO_HANDED", "NOT_APPLICABLE", "UNKNOWN"),
+                    sampleCount);
+            validateDimension(occlusion, List.of("NONE", "PARTIAL"), sampleCount);
+            validateDimension(
+                    behaviorScenario,
+                    List.of(
+                            "ISOLATED_SIGN",
+                            "INCOMPLETE_GESTURE",
+                            "HELD_SIGN",
+                            "REPEATED_SIGN",
+                            "IDLE",
+                            "TRANSITION",
+                            "UNKNOWN_GESTURE",
+                            "NATURAL_MOVEMENT"),
+                    sampleCount);
+            if (genuineSignLanguageData
+                    && handedness.stream().anyMatch(item -> "UNKNOWN".equals(item.value()))) {
+                throw invalidMetadata();
+            }
+        }
+
+        private static void validateDimension(
+                List<RobustnessSliceMetric> items,
+                List<String> canonicalOrder,
+                long sampleCount) {
+            if (items == null || items.isEmpty()) {
+                throw invalidMetadata();
+            }
+            Set<String> values = new HashSet<>();
+            int previousIndex = -1;
+            long support = 0;
+            for (RobustnessSliceMetric item : items) {
+                if (item == null) {
+                    throw invalidMetadata();
+                }
+                item.validate();
+                int orderIndex = canonicalOrder.indexOf(item.value());
+                if (orderIndex < 0 || orderIndex <= previousIndex || !values.add(item.value())) {
+                    throw invalidMetadata();
+                }
+                previousIndex = orderIndex;
+                try {
+                    support = Math.addExact(support, item.support());
+                } catch (ArithmeticException overflow) {
+                    throw invalidMetadata();
+                }
+            }
+            if (support != sampleCount) {
+                throw invalidMetadata();
+            }
+        }
+    }
+
+    public record RobustnessSliceMetric(
+            String value,
+            Long support,
+            Double accuracy,
+            Double macroF1,
+            Double falseFinalRate,
+            Double rejectionRate) {
+
+        private void validate() {
+            if (value == null || support == null || support < 1
+                    || !isProbability(accuracy)
+                    || !isProbability(macroF1)
+                    || !isProbability(falseFinalRate)
+                    || !isProbability(rejectionRate)) {
+                throw invalidMetadata();
+            }
         }
     }
 
@@ -703,7 +888,7 @@ public record ModelContract(
             String reviewArtifactSha256,
             String reviewedAt) {
 
-        private void validate(Map<String, Label> labelsById) {
+        private void validate(List<Label> labels, Map<String, Label> labelsById) {
             if (status == null || !REVIEWER_ROLE.equals(reviewerRole)
                     || reviewedLabelIds == null
                     || reviewedLabelIds.size() != new HashSet<>(reviewedLabelIds).size()) {
@@ -717,7 +902,11 @@ public record ModelContract(
                 }
             }
             if (status == ReviewStatus.APPROVED) {
-                if (reviewedLabelIds.isEmpty()
+                List<String> orderedSignLabels = labels.stream()
+                        .filter(label -> label.outcome() == LabelOutcome.SIGN)
+                        .map(Label::id)
+                        .toList();
+                if (!reviewedLabelIds.equals(orderedSignLabels)
                         || !matches(SHA256, reviewArtifactSha256)
                         || !isTimestamp(reviewedAt)) {
                     throw invalidMetadata();
@@ -792,6 +981,8 @@ public record ModelContract(
                     || contract.evaluation().metrics().rejectionBehavior().unknownRejectionRate() < 0.95
                     || contract.evaluation().metrics().rejectionBehavior().unknownFalseFinalRate() == null
                     || contract.evaluation().metrics().rejectionBehavior().unknownFalseFinalRate() > 0.05
+                    || contract.evaluation().metrics().robustnessSlices() == null
+                    || !contract.sourceProvenance().isClean()
                     || !contract.onnx().parity().verified()
                     || contract.runtime().warmedP95LatencyMs() <= 0.0
                     || contract.runtime().warmedP95LatencyMs() > 500.0

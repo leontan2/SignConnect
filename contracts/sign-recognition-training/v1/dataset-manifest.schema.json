@@ -10,6 +10,12 @@
     "datasetId",
     "datasetVersion",
     "createdAt",
+    "purposeVersion",
+    "consentNoticeVersion",
+    "vocabularyVersion",
+    "reviewRecordId",
+    "reviewedLabels",
+    "retentionExpiresAt",
     "provenance",
     "targetLanguage",
     "featureLayoutVersion",
@@ -26,6 +32,40 @@
     },
     "datasetVersion": { "$ref": "#/$defs/version" },
     "createdAt": { "$ref": "#/$defs/timestamp" },
+    "purposeVersion": { "$ref": "#/$defs/version" },
+    "consentNoticeVersion": { "$ref": "#/$defs/version" },
+    "vocabularyVersion": { "$ref": "#/$defs/version" },
+    "reviewRecordId": {
+      "type": "string",
+      "pattern": "^review_[a-f0-9]{16,64}$"
+    },
+    "reviewedLabels": {
+      "description": "Canonical reviewed SIGN vocabulary order. NO_SIGN and reserved OUT_OF_VOCABULARY are not SGSL review entries.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["labelId", "gloss", "captionText"],
+        "properties": {
+          "labelId": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{1,63}$"
+          },
+          "gloss": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "captionText": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      }
+    },
+    "retentionExpiresAt": { "$ref": "#/$defs/timestamp" },
     "provenance": {
       "description": "Immutable dataset origin. Promotion logic must use this field, never datasetId naming conventions.",
       "oneOf": [
@@ -50,8 +90,8 @@
       ]
     },
     "targetLanguage": {
-      "const": "sg-SG",
-      "description": "BCP 47 language tag used by SignConnect for Singapore Sign Language."
+      "const": "sls",
+      "description": "IANA-registered BCP 47 language tag for Singapore Sign Language."
     },
     "featureLayoutVersion": { "const": "mediapipe-holistic-224-v1" },
     "preprocessingVersion": { "const": "shoulder-midpoint-shoulder-width-v1" },
@@ -164,19 +204,41 @@
           "type": "string",
           "pattern": "^[A-Z][A-Z0-9_]{1,63}$"
         },
-        "language": { "const": "sg-SG" },
+        "language": { "const": "sls" },
         "handedness": {
           "enum": ["LEFT", "RIGHT", "TWO_HANDED", "NOT_APPLICABLE", "UNKNOWN"]
         },
         "captureCondition": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["lighting", "background", "cameraPosition", "occlusion"],
+          "required": [
+            "lighting",
+            "background",
+            "cameraPosition",
+            "occlusion",
+            "speed",
+            "distance",
+            "scenario"
+          ],
           "properties": {
             "lighting": { "enum": ["LOW", "INDOOR", "DAYLIGHT", "MIXED"] },
             "background": { "enum": ["PLAIN", "CLUTTERED", "MIXED"] },
             "cameraPosition": { "enum": ["DESKTOP", "LAPTOP", "MOBILE", "OTHER"] },
-            "occlusion": { "enum": ["NONE", "PARTIAL"] }
+            "occlusion": { "enum": ["NONE", "PARTIAL"] },
+            "speed": { "enum": ["SLOW", "NATURAL", "FAST"] },
+            "distance": { "enum": ["NEAR", "NOMINAL", "FAR"] },
+            "scenario": {
+              "enum": [
+                "ISOLATED_SIGN",
+                "INCOMPLETE_GESTURE",
+                "HELD_SIGN",
+                "REPEATED_SIGN",
+                "IDLE",
+                "TRANSITION",
+                "UNKNOWN_GESTURE",
+                "NATURAL_MOVEMENT"
+              ]
+            }
           }
         },
         "captureTimestamp": { "$ref": "#/$defs/timestamp" },
@@ -216,7 +278,7 @@
                 { "contains": { "const": "MODEL_EVALUATION" } }
               ]
             },
-            "withdrawalStatus": { "const": "ACTIVE" }
+            "withdrawalStatus": { "enum": ["ACTIVE", "WITHDRAWN"] }
           }
         },
         "usageRightsAttestation": {

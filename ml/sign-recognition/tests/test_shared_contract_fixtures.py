@@ -202,6 +202,158 @@ class SharedContractFixtureTest(unittest.TestCase):
         with self.assertRaises(ContractError):
             validate_contract_document(document, "dataset-manifest.schema.json")
 
+    def test_model_vocabulary_digest_binds_version_order_and_exact_captions(self):
+        source = json.loads(
+            (contract_root() / "fixtures" / "model-metadata-production.valid.json")
+            .read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            "bee237eb48aeb5d54320f75d821b9ed93de2d143a3a12c91776df4f3560a5b26",
+            source["vocabularySha256"],
+        )
+        mutations = {
+            "version": lambda value: value.__setitem__("vocabularyVersion", "1.0.1"),
+            "digest": lambda value: value.__setitem__("vocabularySha256", "0" * 64),
+            "caption": lambda value: value["labels"][1].__setitem__(
+                "captionText", "hello"
+            ),
+            "label order": lambda value: (
+                value["labels"][1].update(
+                    id=value["labels"][2]["id"],
+                    captionText=value["labels"][2]["captionText"],
+                ),
+                value["labels"][2].update(id="HELLO", captionText="Hello"),
+            ),
+            "review order": lambda value: value["sgslReview"]["reviewedLabelIds"]
+            .__setitem__(slice(0, 2), list(reversed(value["sgslReview"]["reviewedLabelIds"][:2]))),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                document = json.loads(json.dumps(source))
+                mutate(document)
+                with self.assertRaises(ContractError):
+                    validate_contract_document(document, "model-metadata.schema.json")
+
+    def test_production_model_requires_complete_clean_source_provenance(self):
+        source = json.loads(
+            (contract_root() / "fixtures" / "model-metadata-production.valid.json")
+            .read_text(encoding="utf-8")
+        )
+        cases = {
+            "missing": lambda value: value.pop("sourceProvenance"),
+            "dirty": lambda value: value["sourceProvenance"].update(
+                dirty=True,
+                trackedChangesSha256="a" * 64,
+            ),
+            "inconsistent": lambda value: value["sourceProvenance"].update(
+                dirty=True,
+            ),
+        }
+        for name, mutate in cases.items():
+            with self.subTest(name=name):
+                document = json.loads(json.dumps(source))
+                mutate(document)
+                with self.assertRaises(ContractError):
+                    validate_contract_document(document, "model-metadata.schema.json")
+
+    def test_split_assignment_digest_is_recomputed_from_canonical_assignments(self):
+        document = json.loads(
+            (contract_root() / "fixtures" / "dataset-manifest.valid.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        document["splitPolicy"]["assignmentSha256"] = "0" * 64
+
+        with self.assertRaisesRegex(ContractError, "assignmentDigestMatch"):
+            validate_contract_document(document, "dataset-manifest.schema.json")
+
+    def test_consent_must_not_postdate_capture(self):
+        document = json.loads(
+            (contract_root() / "fixtures" / "dataset-manifest.valid.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        document["samples"][0]["consentAttestation"]["consentedAt"] = (
+            "2026-08-28T10:00:01Z"
+        )
+
+        with self.assertRaisesRegex(ContractError, "consentBeforeCapture"):
+            validate_contract_document(document, "dataset-manifest.schema.json")
+
+    def test_retention_must_expire_after_capture_and_within_ninety_days(self):
+        source = json.loads(
+            (contract_root() / "fixtures" / "dataset-manifest.valid.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        for retention_expires_at in (
+            "2026-11-26T10:00:01Z",
+            "2026-08-28T09:59:59Z",
+        ):
+            with self.subTest(retention_expires_at=retention_expires_at):
+                document = json.loads(json.dumps(source))
+                document["retentionExpiresAt"] = retention_expires_at
+                with self.assertRaisesRegex(ContractError, "retentionWindow"):
+                    validate_contract_document(document, "dataset-manifest.schema.json")
+
+    def test_sign_samples_must_bind_to_the_reviewed_vocabulary(self):
+        document = json.loads(
+            (contract_root() / "fixtures" / "dataset-manifest.valid.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        document["samples"][0]["labelId"] = "UNREVIEWED_SIGN"
+
+        with self.assertRaisesRegex(ContractError, "reviewedLabelReference"):
+            validate_contract_document(document, "dataset-manifest.schema.json")
+
+    def test_reviewed_vocabulary_contains_unique_sign_labels_only(self):
+        source = json.loads(
+            (contract_root() / "fixtures" / "dataset-manifest.valid.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        mutations = {
+            "duplicate": lambda labels: labels.append(dict(labels[0])),
+            "reserved": lambda labels: labels.append(
+                {"labelId": "NO_SIGN", "gloss": "NO-SIGN", "captionText": "No sign"}
+            ),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                document = json.loads(json.dumps(source))
+                mutate(document["reviewedLabels"])
+                with self.assertRaises(ContractError):
+                    validate_contract_document(document, "dataset-manifest.schema.json")
+
+    def test_every_reviewed_vocabulary_label_requires_training_evidence(self):
+        document = json.loads(
+            (contract_root() / "fixtures" / "dataset-manifest.valid.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        document["reviewedLabels"].append(
+            {
+                "labelId": "UNOBSERVED_SIGN",
+                "gloss": "UNOBSERVED-SIGN",
+                "captionText": "Reviewer-approved caption",
+            }
+        )
+
+        with self.assertRaisesRegex(ContractError, "completeReviewedVocabulary"):
+            validate_contract_document(document, "dataset-manifest.schema.json")
+
+    def test_withdrawn_samples_are_semantically_rejected(self):
+        document = json.loads(
+            (contract_root() / "fixtures" / "dataset-manifest.valid.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        document["samples"][0]["consentAttestation"]["withdrawalStatus"] = "WITHDRAWN"
+
+        with self.assertRaisesRegex(ContractError, "activeWithdrawal"):
+            validate_contract_document(document, "dataset-manifest.schema.json")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import re
 import struct
+import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
-from .config import TrainConfig
-from .constants import OUT_OF_VOCABULARY
+from .config import TrainConfig, config_sha256, training_config_document
+from .constants import FEATURE_CONTRACT, OUT_OF_VOCABULARY
 from .dataset import LandmarkDataset
 from .evaluation import evaluate_model, metrics_document, write_evaluation
 from .manifest import load_manifest, require_training_authorization
@@ -17,7 +20,7 @@ from .splits import create_signer_grouped_split, split_sha256, write_split
 
 
 _CHECKPOINT_ERROR = "checkpoint does not satisfy the SignConnect model contract"
-_CHECKPOINT_KEYS = {
+_CHECKPOINT_KEYS_V1 = {
     "schema_version",
     "state_dict",
     "architecture",
@@ -37,7 +40,11 @@ _CHECKPOINT_KEYS = {
     "minimum_confidence",
     "config",
 }
-_CONFIG_KEYS = {
+_CHECKPOINT_KEYS_V2 = _CHECKPOINT_KEYS_V1 | {
+    "reproducibility",
+    "threshold_selection",
+}
+_CONFIG_KEYS_V1 = {
     "seed",
     "model",
     "epochs",
@@ -47,9 +54,245 @@ _CONFIG_KEYS = {
     "dropout",
     "false_final_threshold",
 }
+_CONFIG_KEYS_V2 = _CONFIG_KEYS_V1 | {
+    "input_contract_version",
+    "augmentation_policy",
+    "optimizer_name",
+    "learning_rate_schedule",
+    "threshold_candidates",
+}
 _LABEL = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 _DATASET_ID = re.compile(r"^[a-z][a-z0-9-]{2,63}$")
 _SHA256 = re.compile(r"^[a-f0-9]{64}$")
+_EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+_ROBUSTNESS_SLICE_VALUES = {
+    "lighting": ("LOW", "INDOOR", "DAYLIGHT", "MIXED"),
+    "cameraDistance": ("NEAR", "NOMINAL", "FAR"),
+    "signingSpeed": ("SLOW", "NATURAL", "FAST"),
+    "handedness": ("LEFT", "RIGHT", "TWO_HANDED", "NOT_APPLICABLE", "UNKNOWN"),
+    "occlusion": ("NONE", "PARTIAL"),
+    "behaviorScenario": (
+        "ISOLATED_SIGN",
+        "INCOMPLETE_GESTURE",
+        "HELD_SIGN",
+        "REPEATED_SIGN",
+        "IDLE",
+        "TRANSITION",
+        "UNKNOWN_GESTURE",
+        "NATURAL_MOVEMENT",
+    ),
+}
+
+
+@dataclass(frozen=True)
+class ThresholdSelection:
+    selected_threshold: float
+    selected_metrics: object
+    evidence: dict
+
+
+def select_validation_threshold(
+    model,
+    validation_data: LandmarkDataset,
+    manifest,
+    batch_size: int,
+    candidates: tuple[float, ...],
+) -> ThresholdSelection:
+    if (
+        type(candidates) is not tuple
+        or not candidates
+        or tuple(sorted(set(candidates))) != candidates
+        or any(
+            type(value) is not float or not 0.0 <= value <= 1.0
+            for value in candidates
+        )
+    ):
+        raise ValueError("threshold candidates must be unique ascending floats in [0,1]")
+
+    evaluated = [
+        (
+            threshold,
+            evaluate_model(
+                model,
+                validation_data,
+                manifest,
+                batch_size,
+                threshold,
+            ),
+        )
+        for threshold in candidates
+    ]
+    selected_threshold, selected_metrics = min(
+        evaluated,
+        key=lambda item: (
+            item[1].false_final_rate,
+            item[1].rejection.rejection_rate,
+            item[0],
+        ),
+    )
+    evidence = {
+        "split": "validation",
+        "objective": "minimize_false_final_rate_then_rejection_rate",
+        "candidates": list(candidates),
+        "tieBreak": "lowest_threshold",
+        "selectedThreshold": selected_threshold,
+        "results": [
+            {
+                "threshold": threshold,
+                "falseFinalRate": metrics.false_final_rate,
+                "rejectionRate": metrics.rejection.rejection_rate,
+            }
+            for threshold, metrics in evaluated
+        ],
+    }
+    return ThresholdSelection(selected_threshold, selected_metrics, evidence)
+
+
+def build_reproducibility_evidence(
+    config: TrainConfig,
+    *,
+    package_root: Path | None = None,
+) -> dict:
+    package_root = (
+        Path(__file__).resolve().parents[2]
+        if package_root is None
+        else Path(package_root).resolve()
+    )
+    lockfile = package_root / "uv.lock"
+    if not lockfile.is_file():
+        raise RuntimeError("uv.lock is required to record training dependencies")
+    return {
+        "schemaVersion": 1,
+        "configSha256": config_sha256(config),
+        "dependencyLock": {
+            "file": "uv.lock",
+            "sha256": hashlib.sha256(lockfile.read_bytes()).hexdigest(),
+        },
+        "sourceControl": _source_control_provenance(package_root),
+    }
+
+
+def _source_control_provenance(package_root: Path) -> dict:
+    repository = next(
+        (
+            candidate
+            for candidate in (package_root, *package_root.parents)
+            if (candidate / ".git").exists()
+        ),
+        None,
+    )
+    if repository is None:
+        return _unavailable_source_control()
+    try:
+        scope = package_root.resolve().relative_to(repository.resolve()).as_posix()
+    except ValueError:
+        return _unavailable_source_control()
+    base_command = [
+        "git",
+        "-c",
+        f"safe.directory={repository.as_posix()}",
+        "-C",
+        str(repository),
+    ]
+    try:
+        commit = subprocess.run(
+            [*base_command, "rev-parse", "--verify", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout.strip().lower()
+        tracked_diff = subprocess.run(
+            [*base_command, "diff", "--binary", "--no-ext-diff", "HEAD", "--", scope],
+            check=True,
+            capture_output=True,
+            timeout=5,
+        ).stdout
+        untracked_output = subprocess.run(
+            [
+                *base_command,
+                "ls-files",
+                "--others",
+                "--exclude-standard",
+                "-z",
+                "--",
+                scope,
+            ],
+            check=True,
+            capture_output=True,
+            timeout=5,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return _unavailable_source_control()
+    if re.fullmatch(r"[a-f0-9]{40,64}", commit) is None:
+        return _unavailable_source_control()
+    try:
+        untracked_paths = tuple(
+            item.decode("utf-8")
+            for item in untracked_output.split(b"\0")
+            if item
+        )
+        untracked_state_sha256, untracked_content_sha256 = (
+            _untracked_source_digests(repository, package_root, untracked_paths)
+        )
+    except (OSError, UnicodeError, ValueError):
+        return _unavailable_source_control()
+    tracked_changes_sha256 = hashlib.sha256(tracked_diff).hexdigest()
+    dirty = bool(tracked_diff) or bool(untracked_paths)
+    return {
+        "commit": commit,
+        "dirty": dirty,
+        "trackedChangesSha256": tracked_changes_sha256,
+        "untrackedFileCount": len(untracked_paths),
+        "untrackedStateSha256": untracked_state_sha256,
+        "untrackedContentSha256": untracked_content_sha256,
+    }
+
+
+def _untracked_source_digests(
+    repository: Path,
+    package_root: Path,
+    relative_paths: tuple[str, ...],
+) -> tuple[str, str]:
+    content_digests: list[bytes] = []
+    state_records: list[bytes] = []
+    repository = repository.resolve()
+    package_root = package_root.resolve()
+    for relative_path in relative_paths:
+        candidate = repository / relative_path
+        resolved = candidate.resolve()
+        if not resolved.is_relative_to(package_root) or candidate.is_symlink():
+            raise ValueError("untracked source entry is not a local regular file")
+        stat = candidate.stat()
+        if not candidate.is_file():
+            raise ValueError("untracked source entry is not a local regular file")
+        digest = hashlib.sha256()
+        with candidate.open("rb") as handle:
+            for block in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(block)
+        content_digest = digest.digest()
+        content_digests.append(content_digest)
+        path_digest = hashlib.sha256(
+            relative_path.replace("\\", "/").encode("utf-8")
+        ).digest()
+        state_records.append(
+            path_digest + stat.st_size.to_bytes(16, byteorder="big") + content_digest
+        )
+    return (
+        hashlib.sha256(b"".join(sorted(state_records))).hexdigest(),
+        hashlib.sha256(b"".join(sorted(content_digests))).hexdigest(),
+    )
+
+
+def _unavailable_source_control() -> dict:
+    return {
+        "commit": None,
+        "dirty": None,
+        "trackedChangesSha256": None,
+        "untrackedFileCount": None,
+        "untrackedStateSha256": None,
+        "untrackedContentSha256": None,
+    }
 
 
 def train(config: TrainConfig) -> Path:
@@ -58,6 +301,18 @@ def train(config: TrainConfig) -> Path:
     set_global_determinism(config.seed)
     manifest = load_manifest(config.manifest)
     require_training_authorization(manifest)
+    if config.input_contract_version != manifest.feature_layout_version:
+        raise ValueError("training input contract differs from the dataset manifest")
+    if (
+        config.augmentation_policy != "none"
+        or config.optimizer_name != "adam"
+        or config.learning_rate_schedule != "constant"
+        or (
+            config.threshold_candidates
+            and config.false_final_threshold not in config.threshold_candidates
+        )
+    ):
+        raise ValueError("unsupported training reproducibility declaration")
     split = create_signer_grouped_split(manifest, config.seed)
     config.output_dir.mkdir(parents=True, exist_ok=True)
     split_path = config.output_dir / "split.json"
@@ -124,8 +379,16 @@ def train(config: TrainConfig) -> Path:
         raise RuntimeError("training did not produce a validation checkpoint")
     model.load_state_dict(best_state_dict, strict=True)
 
+    threshold_selection = select_validation_threshold(
+        model,
+        validation_data,
+        manifest,
+        config.batch_size,
+        config.threshold_candidates or (config.false_final_threshold,),
+    )
+
     selection_evaluation = _bind_evaluation_to_state(
-        metrics_document(best_validation, manifest, "validation"),
+        metrics_document(threshold_selection.selected_metrics, manifest, "validation"),
         model.state_dict(),
         torch,
     )
@@ -133,7 +396,7 @@ def train(config: TrainConfig) -> Path:
     checkpoint_path = config.output_dir / "checkpoint.pt"
     torch.save(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "state_dict": model.state_dict(),
             "architecture": config.model,
             "hidden_size": config.hidden_size,
@@ -149,17 +412,10 @@ def train(config: TrainConfig) -> Path:
             "evaluation": selection_evaluation,
             "split_sha256": split_sha256(split),
             "test_signer_count": manifest.test_signer_count,
-            "minimum_confidence": config.false_final_threshold,
-            "config": {
-                "seed": config.seed,
-                "model": config.model,
-                "epochs": config.epochs,
-                "batch_size": config.batch_size,
-                "learning_rate": config.learning_rate,
-                "hidden_size": config.hidden_size,
-                "dropout": config.dropout,
-                "false_final_threshold": config.false_final_threshold,
-            },
+            "minimum_confidence": threshold_selection.selected_threshold,
+            "config": training_config_document(config),
+            "reproducibility": build_reproducibility_evidence(config),
+            "threshold_selection": threshold_selection.evidence,
         },
         checkpoint_path,
     )
@@ -206,9 +462,18 @@ def load_checkpoint_model(
 
 
 def _valid_checkpoint(checkpoint, torch) -> bool:
-    if type(checkpoint) is not dict or set(checkpoint) != _CHECKPOINT_KEYS:
+    if type(checkpoint) is not dict:
         return False
-    if not _integer(checkpoint["schema_version"], 1, 1):
+    schema_version = checkpoint.get("schema_version")
+    if type(schema_version) is not int:
+        return False
+    if schema_version == 1:
+        expected_keys = _CHECKPOINT_KEYS_V1
+    elif schema_version == 2:
+        expected_keys = _CHECKPOINT_KEYS_V2
+    else:
+        return False
+    if set(checkpoint) != expected_keys:
         return False
     architecture = checkpoint["architecture"]
     if type(architecture) is not str or architecture not in {"tcn", "gru"}:
@@ -262,7 +527,13 @@ def _valid_checkpoint(checkpoint, torch) -> bool:
         return False
     if not _valid_evaluation(checkpoint, torch):
         return False
-    return _valid_config(checkpoint)
+    if not _valid_config(checkpoint):
+        return False
+    if schema_version == 1:
+        return True
+    return _valid_reproducibility(checkpoint) and _valid_threshold_selection(
+        checkpoint
+    )
 
 
 def _valid_state_dict(state_dict, torch) -> bool:
@@ -384,7 +655,7 @@ def _valid_rich_evaluation(evaluation, checkpoint) -> bool:
     ):
         return False
     metrics = evaluation["metrics"]
-    if type(metrics) is not dict or set(metrics) != {
+    required_metric_keys = {
         "macroF1",
         "accuracy",
         "falseFinalRate",
@@ -393,7 +664,25 @@ def _valid_rich_evaluation(evaluation, checkpoint) -> bool:
         "confusionMatrix",
         "noSignBehavior",
         "rejectionBehavior",
+    }
+    metric_keys = frozenset(metrics) if type(metrics) is dict else frozenset()
+    if metric_keys not in {
+        frozenset(required_metric_keys),
+        frozenset(required_metric_keys | {"robustnessSlices"}),
     }:
+        return False
+    robustness_slices = metrics.get("robustnessSlices")
+    if robustness_slices is not None and not _valid_robustness_slices(
+        robustness_slices,
+        metrics["sampleCount"],
+        evaluation["provenanceStatus"],
+    ):
+        return False
+    if (
+        checkpoint["evaluation_split"] == "test"
+        and checkpoint["provenance_status"] != "NON_PRODUCTION_SYNTHETIC"
+        and robustness_slices is None
+    ):
         return False
     if not all(
         _number(metrics[key], 0.0, 1.0)
@@ -503,6 +792,56 @@ def _valid_rich_evaluation(evaluation, checkpoint) -> bool:
     )
 
 
+def _valid_robustness_slices(slices, sample_count: int, provenance_status: str) -> bool:
+    if type(slices) is not dict or set(slices) != set(_ROBUSTNESS_SLICE_VALUES):
+        return False
+    expected_entry_keys = {
+        "value",
+        "support",
+        "accuracy",
+        "macroF1",
+        "falseFinalRate",
+        "rejectionRate",
+    }
+    for dimension, allowed_values in _ROBUSTNESS_SLICE_VALUES.items():
+        entries = slices[dimension]
+        if type(entries) is not list or not entries:
+            return False
+        observed_values = []
+        support_total = 0
+        for entry in entries:
+            if type(entry) is not dict or set(entry) != expected_entry_keys:
+                return False
+            value = entry["value"]
+            if value not in allowed_values or value in observed_values:
+                return False
+            if (
+                provenance_status != "NON_PRODUCTION_SYNTHETIC"
+                and dimension == "handedness"
+                and value == "UNKNOWN"
+            ):
+                return False
+            if not _integer(entry["support"], 1, sample_count):
+                return False
+            if not all(
+                _number(entry[key], 0.0, 1.0)
+                for key in (
+                    "accuracy",
+                    "macroF1",
+                    "falseFinalRate",
+                    "rejectionRate",
+                )
+            ):
+                return False
+            observed_values.append(value)
+            support_total += entry["support"]
+        if observed_values != [value for value in allowed_values if value in observed_values]:
+            return False
+        if support_total != sample_count:
+            return False
+    return True
+
+
 def _valid_rejection_behavior(
     behavior,
     sample_count: int,
@@ -594,11 +933,14 @@ def _best_validation_epoch(history) -> int:
 
 def _valid_config(checkpoint) -> bool:
     config = checkpoint["config"]
-    if type(config) is not dict or set(config) != _CONFIG_KEYS:
+    expected_keys = (
+        _CONFIG_KEYS_V1 if checkpoint["schema_version"] == 1 else _CONFIG_KEYS_V2
+    )
+    if type(config) is not dict or set(config) != expected_keys:
         return False
     if type(config["model"]) is not str:
         return False
-    return (
+    common_valid = (
         config["model"] == checkpoint["architecture"]
         and _integer(config["seed"], checkpoint["seed"], checkpoint["seed"])
         and _integer(
@@ -607,14 +949,147 @@ def _valid_config(checkpoint) -> bool:
             checkpoint["hidden_size"],
         )
         and _number(config["dropout"], checkpoint["dropout"], checkpoint["dropout"])
-        and _number(
+        and _number(config["false_final_threshold"], 0.0, 1.0)
+        and _integer(
+            config["epochs"], len(checkpoint["history"]), len(checkpoint["history"])
+        )
+        and _integer(config["batch_size"], 1, 10_000_000)
+        and _number(config["learning_rate"], 0.0, 1.0, minimum_inclusive=False)
+    )
+    if checkpoint["schema_version"] == 1:
+        return common_valid and _number(
             config["false_final_threshold"],
             checkpoint["minimum_confidence"],
             checkpoint["minimum_confidence"],
         )
-        and _integer(config["epochs"], len(checkpoint["history"]), len(checkpoint["history"]))
-        and _integer(config["batch_size"], 1, 10_000_000)
-        and _number(config["learning_rate"], 0.0, 1.0, minimum_inclusive=False)
+    candidates = config["threshold_candidates"]
+    return (
+        common_valid
+        and config["input_contract_version"] == FEATURE_CONTRACT
+        and config["augmentation_policy"] == "none"
+        and config["optimizer_name"] == "adam"
+        and config["learning_rate_schedule"] == "constant"
+        and type(candidates) is list
+        and bool(candidates)
+        and all(_number(value, 0.0, 1.0) for value in candidates)
+        and sorted(set(candidates)) == candidates
+        and config["false_final_threshold"] in candidates
+    )
+
+
+def _valid_reproducibility(checkpoint) -> bool:
+    evidence = checkpoint["reproducibility"]
+    if type(evidence) is not dict or set(evidence) != {
+        "schemaVersion",
+        "configSha256",
+        "dependencyLock",
+        "sourceControl",
+    }:
+        return False
+    encoded_config = json.dumps(
+        checkpoint["config"], sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    if (
+        not _integer(evidence["schemaVersion"], 1, 1)
+        or type(evidence["configSha256"]) is not str
+        or evidence["configSha256"] != hashlib.sha256(encoded_config).hexdigest()
+    ):
+        return False
+    dependency_lock = evidence["dependencyLock"]
+    if (
+        type(dependency_lock) is not dict
+        or set(dependency_lock) != {"file", "sha256"}
+        or dependency_lock["file"] != "uv.lock"
+        or type(dependency_lock["sha256"]) is not str
+        or _SHA256.fullmatch(dependency_lock["sha256"]) is None
+    ):
+        return False
+    source_control = evidence["sourceControl"]
+    if type(source_control) is not dict or set(source_control) != {
+        "commit",
+        "dirty",
+        "trackedChangesSha256",
+        "untrackedFileCount",
+        "untrackedStateSha256",
+        "untrackedContentSha256",
+    }:
+        return False
+    commit = source_control["commit"]
+    dirty = source_control["dirty"]
+    if commit is None:
+        return all(value is None for value in source_control.values())
+    tracked_changes_sha256 = source_control["trackedChangesSha256"]
+    untracked_file_count = source_control["untrackedFileCount"]
+    untracked_state_sha256 = source_control["untrackedStateSha256"]
+    untracked_content_sha256 = source_control["untrackedContentSha256"]
+    has_tracked_changes = tracked_changes_sha256 != _EMPTY_SHA256
+    has_untracked_changes = untracked_file_count > 0
+    return (
+        type(commit) is str
+        and re.fullmatch(r"[a-f0-9]{40,64}", commit) is not None
+        and type(dirty) is bool
+        and type(tracked_changes_sha256) is str
+        and _SHA256.fullmatch(tracked_changes_sha256) is not None
+        and type(untracked_file_count) is int
+        and untracked_file_count >= 0
+        and type(untracked_state_sha256) is str
+        and _SHA256.fullmatch(untracked_state_sha256) is not None
+        and type(untracked_content_sha256) is str
+        and _SHA256.fullmatch(untracked_content_sha256) is not None
+        and dirty == (has_tracked_changes or has_untracked_changes)
+        and (
+            untracked_file_count > 0
+            or (
+                untracked_state_sha256 == _EMPTY_SHA256
+                and untracked_content_sha256 == _EMPTY_SHA256
+            )
+        )
+    )
+
+
+def _valid_threshold_selection(checkpoint) -> bool:
+    selection = checkpoint["threshold_selection"]
+    if type(selection) is not dict or set(selection) != {
+        "split",
+        "objective",
+        "candidates",
+        "tieBreak",
+        "selectedThreshold",
+        "results",
+    }:
+        return False
+    candidates = selection["candidates"]
+    results = selection["results"]
+    if (
+        selection["split"] != "validation"
+        or selection["objective"]
+        != "minimize_false_final_rate_then_rejection_rate"
+        or selection["tieBreak"] != "lowest_threshold"
+        or candidates != checkpoint["config"]["threshold_candidates"]
+        or type(results) is not list
+        or len(results) != len(candidates)
+    ):
+        return False
+    for threshold, result in zip(candidates, results):
+        if (
+            type(result) is not dict
+            or set(result) != {"threshold", "falseFinalRate", "rejectionRate"}
+            or not _number(result["threshold"], threshold, threshold)
+            or not _number(result["falseFinalRate"], 0.0, 1.0)
+            or not _number(result["rejectionRate"], 0.0, 1.0)
+        ):
+            return False
+    selected = min(
+        results,
+        key=lambda result: (
+            result["falseFinalRate"],
+            result["rejectionRate"],
+            result["threshold"],
+        ),
+    )["threshold"]
+    return (
+        _number(selection["selectedThreshold"], selected, selected)
+        and _number(checkpoint["minimum_confidence"], selected, selected)
     )
 
 

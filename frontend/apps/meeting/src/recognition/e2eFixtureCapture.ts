@@ -41,10 +41,8 @@ function browserLocalFixtureFrame(
 
   return {
     timestampMs,
-    gestureModel: "ready",
     hands: [],
     upperBody: [],
-    gesture: null,
     trackingQuality: {
       state,
       personDetected,

@@ -10,7 +10,7 @@ import {
   type RawLandmark
 } from "./contracts";
 
-const UPPER_BODY_INDICES = [11, 12, 13, 14, 15, 16] as const;
+const SHOULDER_INDICES = [11, 12] as const;
 
 export interface TrackingQualityOptions {
   minimumPointVisibility: number;
@@ -19,6 +19,7 @@ export interface TrackingQualityOptions {
   minimumVisibleHandPoints: number;
   frameEdgeMargin: number;
   minimumShoulderScale: number;
+  requireBothHands: boolean;
 }
 
 export const DEFAULT_TRACKING_QUALITY_OPTIONS: TrackingQualityOptions = {
@@ -27,7 +28,8 @@ export const DEFAULT_TRACKING_QUALITY_OPTIONS: TrackingQualityOptions = {
   minimumStrongTrackingScore: 0.65,
   minimumVisibleHandPoints: 17,
   frameEdgeMargin: 0.08,
-  minimumShoulderScale: 0.02
+  minimumShoulderScale: 0.02,
+  requireBothHands: false
 };
 
 export interface TrackingQualityEvaluation {
@@ -76,12 +78,14 @@ function handTouchesEdge(hand: DetectedHand, margin: number): boolean {
 
 function trackingState(
   facts: Omit<BrowserLocalTrackingQualityFacts, "state">,
-  strongTracking: boolean
+  strongTracking: boolean,
+  requireBothHands: boolean
 ): BrowserLocalTrackingQualityFacts["state"] {
   if (!facts.personDetected) return "no-person";
   if (!facts.upperBodyVisible) return "upper-body-missing";
-  if (!facts.leftHandVisible) return "left-hand-missing";
-  if (!facts.rightHandVisible) return "right-hand-missing";
+  if (!facts.leftHandVisible && !facts.rightHandVisible) return "left-hand-missing";
+  if (requireBothHands && !facts.leftHandVisible) return "left-hand-missing";
+  if (requireBothHands && !facts.rightHandVisible) return "right-hand-missing";
   if (!facts.handsInsideFrame) return "out-of-frame";
   return strongTracking ? "ready" : "low-quality";
 }
@@ -100,7 +104,7 @@ export function evaluateTrackingQuality(
   const rightHandVisible = visibleHand(rightHand, options);
   const personDetected = detection.hands.some((hand) => hand.landmarks.some(isFinitePoint))
     || Boolean(pose?.some((point) => isVisiblePoint(point, options.minimumPointVisibility)));
-  const upperBodyVisible = UPPER_BODY_INDICES.every((index) => {
+  const upperBodyVisible = SHOULDER_INDICES.every((index) => {
     const point = pose?.[index];
     return isVisiblePoint(point, options.minimumPointVisibility)
       && point.x >= 0
@@ -114,7 +118,7 @@ export function evaluateTrackingQuality(
     : null;
   const handsInsideFrame = (!leftHandVisible || !handTouchesEdge(leftHand, options.frameEdgeMargin))
     && (!rightHandVisible || !handTouchesEdge(rightHand, options.frameEdgeMargin));
-  const upperBodyStrong = UPPER_BODY_INDICES.every((index) => (
+  const upperBodyStrong = SHOULDER_INDICES.every((index) => (
     isVisiblePoint(pose?.[index], options.minimumStrongTrackingScore)
   ));
   const handsStrong = (!leftHandVisible || leftHand.score >= options.minimumStrongTrackingScore)
@@ -132,7 +136,7 @@ export function evaluateTrackingQuality(
   };
 
   return {
-    facts: { state: trackingState(baseFacts, strongTracking), ...baseFacts },
+    facts: { state: trackingState(baseFacts, strongTracking, options.requireBothHands), ...baseFacts },
     shoulderScale
   };
 }
@@ -209,6 +213,11 @@ export interface GestureSegmenterOptions {
   referenceFrameMs: number;
   maximumFrameGapMs: number;
   maximumSourceFrames: number;
+  preRollFrames: number;
+  staticHoldMs: number;
+  staticHoldFrames: number;
+  qualityGapGraceMs: number;
+  releaseFrames: number;
 }
 
 const DEFAULT_SEGMENTER_OPTIONS: GestureSegmenterOptions = {
@@ -218,7 +227,12 @@ const DEFAULT_SEGMENTER_OPTIONS: GestureSegmenterOptions = {
   endFrames: 4,
   referenceFrameMs: 40,
   maximumFrameGapMs: 200,
-  maximumSourceFrames: 90
+  maximumSourceFrames: 90,
+  preRollFrames: 4,
+  staticHoldMs: 520,
+  staticHoldFrames: 6,
+  qualityGapGraceMs: 350,
+  releaseFrames: 3
 };
 
 export interface GestureCandidateFrame {
@@ -455,11 +469,33 @@ export class GestureSegmenter {
   private previousPoseWristPoints: PoseWristPoints = new Map();
   private previousTimestampMs: number | null = null;
   private candidateFrames: GestureCandidateFrame[] = [];
+  private staticFrames: GestureCandidateFrame[] = [];
+  private staticHoldStartedAtMs: number | null = null;
+  private awaitingRelease = false;
+  private releaseStreak = 0;
+  private qualityInterruptedAtMs: number | null = null;
+  private recentFrames: GestureCandidateFrame[] = [];
+  private dynamicSourceFrameCount = 0;
 
   constructor(overrides: Partial<GestureSegmenterOptions> = {}) {
     this.options = { ...DEFAULT_SEGMENTER_OPTIONS, ...overrides };
     if (this.options.endMotionThreshold >= this.options.startMotionThreshold) {
       throw new RangeError("endMotionThreshold must be lower than startMotionThreshold.");
+    }
+    if (!Number.isInteger(this.options.staticHoldFrames) || this.options.staticHoldFrames < 2) {
+      throw new RangeError("staticHoldFrames must be an integer of at least 2.");
+    }
+    if (!Number.isFinite(this.options.staticHoldMs) || this.options.staticHoldMs <= 0) {
+      throw new RangeError("staticHoldMs must be positive.");
+    }
+    if (!Number.isInteger(this.options.preRollFrames) || this.options.preRollFrames < 0) {
+      throw new RangeError("preRollFrames must be a non-negative integer.");
+    }
+    if (!Number.isFinite(this.options.qualityGapGraceMs) || this.options.qualityGapGraceMs < 0) {
+      throw new RangeError("qualityGapGraceMs must be finite and non-negative.");
+    }
+    if (!Number.isInteger(this.options.releaseFrames) || this.options.releaseFrames < 1) {
+      throw new RangeError("releaseFrames must be a positive integer.");
     }
   }
 
@@ -472,9 +508,76 @@ export class GestureSegmenter {
   ): GestureSegmentationSnapshot {
     const currentPoints = motionPoints(detection);
     const currentPoseWristPoints = poseWristPoints(detection);
+    const currentHasTrackableHand = currentPoints.size
+      >= DEFAULT_TRACKING_QUALITY_OPTIONS.minimumVisibleHandPoints;
+    const shoulderScale = evaluation.shoulderScale;
+    const qualityReady = evaluation.facts.state === "ready"
+      && shoulderScale !== null
+      && currentHasTrackableHand;
+
+    if (!calibrationReady) {
+      this.resetPhase();
+      this.candidateFrames = [];
+      this.dynamicSourceFrameCount = 0;
+      this.clearStaticHold();
+      this.previousPoints.clear();
+      this.previousPoseWristPoints.clear();
+      this.previousTimestampMs = null;
+      this.awaitingRelease = false;
+      this.releaseStreak = 0;
+      this.qualityInterruptedAtMs = null;
+      this.recentFrames = [];
+      return { phase: this.phase, completed: false, candidate: null };
+    }
+
+    if (!qualityReady) {
+      if (this.qualityInterruptedAtMs === null) this.qualityInterruptedAtMs = timestampMs;
+      if (this.awaitingRelease && !currentHasTrackableHand) {
+        this.releaseStreak += 1;
+        if (this.releaseStreak >= this.options.releaseFrames
+          && timestampMs - this.qualityInterruptedAtMs >= this.options.qualityGapGraceMs) {
+          this.awaitingRelease = false;
+          this.releaseStreak = 0;
+          this.resetPhase();
+          this.candidateFrames = [];
+          this.dynamicSourceFrameCount = 0;
+          this.clearStaticHold();
+          this.previousPoints.clear();
+          this.previousPoseWristPoints.clear();
+          this.previousTimestampMs = null;
+          this.qualityInterruptedAtMs = null;
+          this.recentFrames = [];
+          return { phase: this.phase, completed: false, candidate: null };
+        }
+      }
+      if (timestampMs - this.qualityInterruptedAtMs <= this.options.qualityGapGraceMs) {
+        return { phase: this.phase, completed: false, candidate: null };
+      }
+      this.resetPhase();
+      this.candidateFrames = [];
+      this.dynamicSourceFrameCount = 0;
+      this.clearStaticHold();
+      this.previousPoints.clear();
+      this.previousPoseWristPoints.clear();
+      this.previousTimestampMs = null;
+      this.recentFrames = [];
+      return { phase: this.phase, completed: false, candidate: null };
+    }
+
+    if (this.qualityInterruptedAtMs !== null
+      && timestampMs - this.qualityInterruptedAtMs > this.options.qualityGapGraceMs) {
+      this.resetPhase();
+      this.candidateFrames = [];
+      this.dynamicSourceFrameCount = 0;
+      this.clearStaticHold();
+      this.previousPoints.clear();
+      this.previousPoseWristPoints.clear();
+      this.previousTimestampMs = null;
+      this.recentFrames = [];
+    }
+    this.qualityInterruptedAtMs = null;
     const previousPoints = this.previousPoints;
     const previousPoseWristPoints = this.previousPoseWristPoints;
-    const segmentable = calibrationReady && evaluation.facts.state === "ready";
     const previousTimestampMs = this.previousTimestampMs;
     const elapsedMs = previousTimestampMs === null ? null : timestampMs - previousTimestampMs;
     const comparable = [...currentPoints.entries()].filter(([key]) => this.previousPoints.has(key));
@@ -482,15 +585,24 @@ export class GestureSegmenter {
     this.previousPoseWristPoints = currentPoseWristPoints;
     this.previousTimestampMs = timestampMs;
 
-    if (!segmentable
-      || evaluation.shoulderScale === null
-      || comparable.length < DEFAULT_TRACKING_QUALITY_OPTIONS.minimumVisibleHandPoints
-      || elapsedMs === null
-      || elapsedMs <= 0
-      || elapsedMs > this.options.maximumFrameGapMs) {
+    const hasComparableHand = comparable.length
+      >= DEFAULT_TRACKING_QUALITY_OPTIONS.minimumVisibleHandPoints;
+    if (elapsedMs === null || !hasComparableHand) {
+      const staticCandidate = this.observeStaticHold(frame, timestampMs);
+      this.rememberRecentFrame(frame);
+      return staticCandidate ?? { phase: this.phase, completed: false, candidate: null };
+    }
+
+    if (elapsedMs <= 0
+      || elapsedMs > this.options.maximumFrameGapMs + this.options.qualityGapGraceMs) {
       this.resetPhase();
       this.candidateFrames = [];
-      return { phase: this.phase, completed: false, candidate: null };
+      this.dynamicSourceFrameCount = 0;
+      this.clearStaticHold();
+      this.recentFrames = [];
+      const staticCandidate = this.observeStaticHold(frame, timestampMs);
+      this.rememberRecentFrame(frame);
+      return staticCandidate ?? { phase: this.phase, completed: false, candidate: null };
     }
 
     const distance = comparable.reduce((total, [key, point]) => {
@@ -504,7 +616,7 @@ export class GestureSegmenter {
         pose: total.pose + Math.hypot(point.poseX - previous.poseX, point.poseY - previous.poseY)
       };
     }, { screen: 0, pose: 0 });
-    const screenMotion = distance.screen / comparable.length / evaluation.shoulderScale;
+    const screenMotion = distance.screen / comparable.length / shoulderScale!;
     const poseMotion = distance.pose / comparable.length;
     const gestureRelativeMotion = relativeGestureMotion(currentPoints, previousPoints);
     const poseWristMotion = maximumPoseWristMotion(currentPoseWristPoints, previousPoseWristPoints);
@@ -514,23 +626,75 @@ export class GestureSegmenter {
       poseWristMotion
     )
       * (this.options.referenceFrameMs / elapsedMs);
+    if (this.awaitingRelease) {
+      if (this.phase === "ready-for-inference") this.phase = "idle";
+      if (normalizedMotion >= this.options.startMotionThreshold) {
+        this.releaseStreak += 1;
+        if (this.releaseStreak < this.options.releaseFrames) {
+          this.rememberRecentFrame(frame);
+          return { phase: this.phase, completed: false, candidate: null };
+        }
+        this.awaitingRelease = false;
+        this.releaseStreak = 0;
+        this.resetPhase();
+        this.clearStaticHold();
+      } else {
+        this.releaseStreak = 0;
+        return { phase: this.phase, completed: false, candidate: null };
+      }
+    }
+    if (this.phase === "idle" && normalizedMotion < this.options.startMotionThreshold) {
+      const staticCandidate = this.observeStaticHold(frame, timestampMs);
+      if (staticCandidate) return staticCandidate;
+    } else {
+      this.clearStaticHold();
+    }
     const previousPhase = this.phase;
     const transitioned = this.transition(normalizedMotion);
     const wasCapturing = previousPhase === "starting" || previousPhase === "active" || previousPhase === "ending";
     const isCapturing = transitioned.phase === "starting"
       || transitioned.phase === "active"
       || transitioned.phase === "ending";
-    if (!wasCapturing && isCapturing) this.candidateFrames = [];
+    if (!wasCapturing && isCapturing) {
+      this.dynamicSourceFrameCount = 0;
+      this.candidateFrames = this.recentFrames.map((recentFrame) => ({
+        timestampMs: recentFrame.timestampMs,
+        features: [...recentFrame.features]
+      }));
+    }
     if (frame && (isCapturing || transitioned.completed)) {
       assertCandidateFrame(frame);
+      this.dynamicSourceFrameCount += 1;
       this.candidateFrames.push({ timestampMs: frame.timestampMs, features: [...frame.features] });
-      if (this.candidateFrames.length > this.options.maximumSourceFrames) this.candidateFrames.shift();
+      if (this.candidateFrames.length > this.options.maximumSourceFrames) {
+        this.candidateFrames = this.candidateFrames.slice(-this.options.maximumSourceFrames);
+      }
     }
-    const candidate = transitioned.completed && this.candidateFrames.length > 0
+    const captureWindowFilled = isCapturing
+      && this.dynamicSourceFrameCount >= this.options.maximumSourceFrames;
+    if (captureWindowFilled) {
+      this.phase = "ready-for-inference";
+      this.startStreak = 0;
+      this.endStreak = 0;
+    }
+    const completed = transitioned.completed || captureWindowFilled;
+    const phase = captureWindowFilled ? this.phase : transitioned.phase;
+    const candidate = completed && this.candidateFrames.length > 0
       ? resampleGestureCandidateFrames(this.candidateFrames)
       : null;
-    if (transitioned.completed || transitioned.phase === "idle") this.candidateFrames = [];
-    return { ...transitioned, candidate };
+    if (completed && candidate) {
+      this.awaitingRelease = true;
+      this.releaseStreak = 0;
+      this.clearStaticHold();
+      this.recentFrames = [];
+    } else {
+      this.rememberRecentFrame(frame);
+    }
+    if (completed || phase === "idle") {
+      this.candidateFrames = [];
+      this.dynamicSourceFrameCount = 0;
+    }
+    return { phase, completed, candidate };
   }
 
   private transition(motion: number): Omit<GestureSegmentationSnapshot, "candidate"> {
@@ -576,11 +740,49 @@ export class GestureSegmenter {
     this.endStreak = 0;
   }
 
+  private observeStaticHold(
+    frame: GestureCandidateFrame | undefined,
+    timestampMs: number
+  ): GestureSegmentationSnapshot | null {
+    if (this.awaitingRelease || !frame) return null;
+    assertCandidateFrame(frame);
+    if (this.staticHoldStartedAtMs === null) this.staticHoldStartedAtMs = timestampMs;
+    this.staticFrames.push({ timestampMs: frame.timestampMs, features: [...frame.features] });
+    if (this.staticFrames.length > this.options.maximumSourceFrames) this.staticFrames.shift();
+    if (timestampMs - this.staticHoldStartedAtMs < this.options.staticHoldMs
+      || this.staticFrames.length < this.options.staticHoldFrames) return null;
+
+    const candidate = resampleGestureCandidateFrames(this.staticFrames);
+    this.clearStaticHold();
+    this.recentFrames = [];
+    this.awaitingRelease = true;
+    this.phase = "ready-for-inference";
+    return { phase: this.phase, completed: true, candidate };
+  }
+
+  private clearStaticHold(): void {
+    this.staticFrames = [];
+    this.staticHoldStartedAtMs = null;
+  }
+
+  private rememberRecentFrame(frame: GestureCandidateFrame | undefined): void {
+    if (!frame || this.options.preRollFrames === 0) return;
+    assertCandidateFrame(frame);
+    this.recentFrames.push({ timestampMs: frame.timestampMs, features: [...frame.features] });
+    if (this.recentFrames.length > this.options.preRollFrames) this.recentFrames.shift();
+  }
+
   reset(): void {
     this.resetPhase();
     this.previousPoints.clear();
     this.previousPoseWristPoints.clear();
     this.previousTimestampMs = null;
     this.candidateFrames = [];
+    this.dynamicSourceFrameCount = 0;
+    this.clearStaticHold();
+    this.awaitingRelease = false;
+    this.releaseStreak = 0;
+    this.qualityInterruptedAtMs = null;
+    this.recentFrames = [];
   }
 }

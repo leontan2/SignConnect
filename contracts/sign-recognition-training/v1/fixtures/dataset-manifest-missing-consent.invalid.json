@@ -3,6 +3,12 @@
   "datasetId": "signconnect-sgsl-five-sign-v1",
   "datasetVersion": "1.0.0",
   "createdAt": "2026-08-30T12:00:00Z",
+  "purposeVersion": "1.0.0",
+  "consentNoticeVersion": "1.0.0",
+  "vocabularyVersion": "1.0.0",
+  "reviewRecordId": "review_0000000000000001",
+  "reviewedLabels": [{"labelId": "HELLO", "gloss": "HELLO", "captionText": "Hello"}, {"labelId": "THANK_YOU", "gloss": "THANK-YOU", "captionText": "Thank you"}],
+  "retentionExpiresAt": "2026-11-26T10:00:00Z",
   "provenance": {
     "kind": "ATTESTED_SGSL_DATASET",
     "evidence": {
@@ -13,7 +19,7 @@
       "verifiedByRole": "PRIVACY_REVIEWER"
     }
   },
-  "targetLanguage": "sg-SG",
+  "targetLanguage": "sls",
   "featureLayoutVersion": "mediapipe-holistic-224-v1",
   "preprocessingVersion": "shoulder-midpoint-shoulder-width-v1",
   "datasetLicence": {
@@ -24,7 +30,7 @@
   "splitPolicy": {
     "strategy": "SIGNER_INDEPENDENT",
     "locked": true,
-    "assignmentSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "assignmentSha256": "5e07c9d8d45a5d393419f893f4665c71b6af6059f7250e5f476d0e7b50448152",
     "testSignerCount": 1
   },
   "samples": [
@@ -32,13 +38,16 @@
       "sampleId": "sample_0000000000000001",
       "signerId": "sgn_000000000001",
       "labelId": "HELLO",
-      "language": "sg-SG",
+      "language": "sls",
       "handedness": "RIGHT",
       "captureCondition": {
         "lighting": "INDOOR",
         "background": "PLAIN",
         "cameraPosition": "LAPTOP",
-        "occlusion": "NONE"
+        "occlusion": "NONE",
+        "speed": "NATURAL",
+        "distance": "NOMINAL",
+        "scenario": "ISOLATED_SIGN"
       },
       "captureTimestamp": "2026-08-28T10:00:00Z",
       "landmarkArtifact": {
@@ -65,13 +74,16 @@
       "sampleId": "sample_0000000000000002",
       "signerId": "sgn_000000000002",
       "labelId": "THANK_YOU",
-      "language": "sg-SG",
+      "language": "sls",
       "handedness": "TWO_HANDED",
       "captureCondition": {
         "lighting": "DAYLIGHT",
         "background": "CLUTTERED",
         "cameraPosition": "DESKTOP",
-        "occlusion": "NONE"
+        "occlusion": "NONE",
+        "speed": "SLOW",
+        "distance": "FAR",
+        "scenario": "ISOLATED_SIGN"
       },
       "captureTimestamp": "2026-08-28T11:00:00Z",
       "landmarkArtifact": {
@@ -106,13 +118,16 @@
       "sampleId": "sample_0000000000000003",
       "signerId": "sgn_000000000003",
       "labelId": "NO_SIGN",
-      "language": "sg-SG",
+      "language": "sls",
       "handedness": "NOT_APPLICABLE",
       "captureCondition": {
         "lighting": "MIXED",
         "background": "MIXED",
         "cameraPosition": "MOBILE",
-        "occlusion": "PARTIAL"
+        "occlusion": "PARTIAL",
+        "speed": "NATURAL",
+        "distance": "NEAR",
+        "scenario": "IDLE"
       },
       "captureTimestamp": "2026-08-28T12:00:00Z",
       "landmarkArtifact": {

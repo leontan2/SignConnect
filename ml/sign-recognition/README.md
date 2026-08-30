@@ -17,7 +17,10 @@ metadata with `mockModel: true`, `genuineSignLanguageData: false`, and a
 
 The authoritative schemas are
 `contracts/sign-recognition-training/v1/dataset-manifest.schema.json` and
-`model-metadata.schema.json`. An export can claim genuine SgSL data only from
+`model-metadata.schema.json`. Their strict `targetLanguage` and sample-language
+value is `sls`, the IANA language subtag for Singapore Sign Language. The old
+`sg-SG` value is rejected because `sg` identifies Sango; it is not a legacy
+alias for SgSL. An export can claim genuine SgSL data only from
 a non-synthetic manifest that passes that schema and its consent/usage-rights
 semantic gates. Production remains blocked until the separate SGSL-fluent Deaf
 review, evaluation, parity, governance, and measured warmed-Java latency gates

@@ -47,8 +47,7 @@ transferred `ImageBitmap` after processing (`frontend/apps/meeting/src/recogniti
 
 The worker runs these MediaPipe Tasks in `VIDEO` mode:
 
-- `GestureRecognizer`, when its model loads, with two hands and 0.5 detection, presence, and
-  tracking thresholds; otherwise `HandLandmarker` with the same thresholds.
+- `HandLandmarker` with up to two hands and 0.5 detection, presence, and tracking thresholds.
 - `PoseLandmarker` with one pose, 0.5 detection, presence, and tracking thresholds, and no
   segmentation mask.
 
@@ -64,18 +63,9 @@ vice versa (`frontend/apps/meeting/src/recognition/landmark.worker.ts:149-155`).
 classification, the whole frame is rejected as low quality rather than put into the wrong feature
 slot.
 
-### Browser-only canned gesture path
-
-When `GestureRecognizer` is available, the worker also selects the highest-scoring allowlisted
-canned gesture at confidence 0.6 or above. The allowlist is `Closed_Fist`, `Open_Palm`,
-`Pointing_Up`, `Thumb_Down`, `Thumb_Up`, `Victory`, and `ILoveYou`; the result becomes stable after
-four consecutive frames with the same label (`frontend/apps/meeting/src/recognition/contracts.ts:10-20`
-and `frontend/apps/meeting/src/recognition/landmark.worker.ts:228-250,296-315`).
-
-This path is presentation-only. Its label is never used as an ONNX label and never becomes a
-caption. The browser-local snapshot contains overlay x/y coordinates, confidence, handedness, and
-the canned-gesture result; it travels only from the worker to React
-(`frontend/apps/meeting/src/recognition/contracts.ts:63-147`).
+The browser does not run a second canned-gesture classifier. It extracts hand/pose landmarks,
+derives local readiness and gesture boundaries, and leaves all supported-sign classification to
+the server's explicitly configured ONNX model.
 
 ## 2. The 224-feature frame contract
 
@@ -126,7 +116,9 @@ The default quality thresholds are defined at
 
 - both shoulder anchors must be present at confidence/visibility 0.5 or above;
 - 2D shoulder width must be between 0.02 and 2.0;
-- at least 8 of the 14 selected pose points must be present;
+- normally at least 8 of the 14 selected pose points must be present; when a valid hand and both
+  shoulder anchors are available, absent optional arm/hip points are zero-filled instead of
+  rejecting an otherwise usable one-handed frame;
 - a selected hand must have handedness confidence 0.5 or above and at least 8 of its 21 points;
 - every raw x/y/z coordinate must be finite and have absolute value at most 4;
 - every normalized coordinate must be finite and have absolute value at most 20.
@@ -156,10 +148,10 @@ candidates, not the intervening idle stream.
 ### Browser-local quality, calibration, and segmentation
 
 Alongside normalization, the worker derives a browser-local tracking state with this strict
-precedence: `no-person`, `upper-body-missing`, `left-hand-missing`, `right-hand-missing`,
-`out-of-frame`, `low-quality`, then `ready`. It checks pose points 11 through 16, requires 17 of 21
-finite points for a visible hand, uses an 8% frame-edge margin, and distinguishes minimum tracking
-confidence 0.5 from strong tracking confidence 0.65
+precedence: `no-person`, `upper-body-missing`, missing-hand guidance, `out-of-frame`, `low-quality`,
+then `ready`. The default path requires both shoulder anchors plus at least one signing hand; a
+vocabulary-specific mode may require both hands. It requires 17 of 21 finite points for a visible
+hand, uses an 8% frame-edge margin, and distinguishes minimum tracking confidence 0.5 from strong tracking confidence 0.65
 (`frontend/apps/meeting/src/recognition/trackingQuality.ts:13-137`). These facts are presentation
 metadata; they do not add fields to a v1 landmark frame.
 
@@ -174,9 +166,12 @@ the conservative lower screen/pose displacement for common motion, while separat
 finger-within-hand, between-hand, and pose-wrist-relative motion. This compensates for common
 camera/body translation, rotation, and scale changes without cancelling a real one-hand or
 two-hand gesture moving against the torso. Three frames at normalized motion 0.08 or above start a
-gesture; four frames at 0.025 or below end it. A frame gap
-over 200 ms, lost quality, or insufficient comparable points resets the segment. It retains at most
-90 accepted source frames and resamples a completed segment to exactly `[30][224]`: coordinates are
+dynamic gesture; four frames at 0.025 or below end it. A stationary sign also completes after a
+bounded 520 ms hold with at least six valid frames. Four local pre-roll frames preserve the start,
+brief tracking dropouts and sparse camera cadence receive a 350 ms grace, and completion latches
+until the signer deliberately moves or removes the hand long enough to re-arm. Continuous motion
+is forced to one candidate at the 90-frame source limit instead of remaining stuck. Every completed
+segment is resampled to exactly `[30][224]`: coordinates are
 linearly interpolated only when both endpoint masks are present, otherwise the nearest whole
 landmark slot supplies coordinates and its binary mask
 (`frontend/apps/meeting/src/recognition/trackingQuality.ts:204-447`).
@@ -318,6 +313,12 @@ validates that same shape rather than relying on a second deployment-only label 
 includes unknown-field rejection, tensor/feature identity, ordered label outcomes, provenance,
 parity/runtime bounds, review/governance fields, and fail-closed promotion rules
 (`backend/sign-inference-service/src/main/java/com/signconnect/inference/model/ModelContract.java:23-153,277-510`).
+
+Dataset manifests, individual samples, and exported model metadata use `sls`, the IANA-registered
+BCP 47 language subtag for Singapore Sign Language. They reject the previous `sg-SG` value without
+an alias: IANA assigns `sg` to Sango, so adding the Singapore region subtag does not change that
+language into Singapore Sign Language. The registry entries are authoritative:
+https://www.iana.org/assignments/language-subtag-registry/language-subtag-registry.
 
 The transparent generator is preserved in
 `backend/sign-inference-service/src/main/resources/models/README.md:43-90`. It was generated with

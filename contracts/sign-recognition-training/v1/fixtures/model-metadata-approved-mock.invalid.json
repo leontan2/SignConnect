@@ -5,7 +5,10 @@
   "generatedAt": "2026-08-30T13:00:00Z",
   "mockModel": true,
   "genuineSignLanguageData": false,
-  "targetLanguage": "sg-SG",
+  "targetLanguage": "sls",
+  "vocabularyVersion": "1.0.0-synthetic",
+  "vocabularySha256": "c48ca330f06a4d1702e7caac228ac2d87ba4182dcb2e608e2d7946dcc701862a",
+  "sourceProvenance": {"commit": null, "dirty": null, "trackedChangesSha256": null, "untrackedFileCount": null, "untrackedStateSha256": null, "untrackedContentSha256": null},
   "architecture": {
     "family": "TCN",
     "name": "SignConnect TCN contract fixture",

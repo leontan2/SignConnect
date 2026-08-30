@@ -1,15 +1,56 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from jsonschema import Draft202012Validator
 
 
+_EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+_ROBUSTNESS_SLICE_ORDER = {
+    "lighting": ("LOW", "INDOOR", "DAYLIGHT", "MIXED"),
+    "cameraDistance": ("NEAR", "NOMINAL", "FAR"),
+    "signingSpeed": ("SLOW", "NATURAL", "FAST"),
+    "handedness": ("LEFT", "RIGHT", "TWO_HANDED", "NOT_APPLICABLE", "UNKNOWN"),
+    "occlusion": ("NONE", "PARTIAL"),
+    "behaviorScenario": (
+        "ISOLATED_SIGN",
+        "INCOMPLETE_GESTURE",
+        "HELD_SIGN",
+        "REPEATED_SIGN",
+        "IDLE",
+        "TRANSITION",
+        "UNKNOWN_GESTURE",
+        "NATURAL_MOVEMENT",
+    ),
+}
+
+
 class ContractError(ValueError):
     """Raised when a shared training-contract schema or semantic gate fails."""
+
+
+def canonical_vocabulary_sha256(
+    target_language: str,
+    vocabulary_version: str,
+    labels: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+) -> str:
+    """Bind the complete ordered runtime label map to its language and version."""
+    canonical = json.dumps(
+        {
+            "targetLanguage": target_language,
+            "vocabularyVersion": vocabulary_version,
+            "labels": labels,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def contract_root() -> Path:
@@ -63,6 +104,13 @@ def _dataset_semantic_errors(manifest: dict[str, Any]) -> list[str]:
     signer_splits: dict[str, str] = {}
     observed_splits: set[str] = set()
     test_signers: set[str] = set()
+    observed_sign_labels: set[str] = set()
+    reviewed_label_ids = [entry["labelId"] for entry in manifest.get("reviewedLabels", [])]
+    reviewed_labels = set(reviewed_label_ids)
+    if len(reviewed_labels) != len(reviewed_label_ids):
+        errors.append("/reviewedLabels [keyword=uniqueReviewedLabelId]")
+    if reviewed_labels & {"NO_SIGN", "OUT_OF_VOCABULARY"}:
+        errors.append("/reviewedLabels [keyword=signLabelsOnly]")
     for index, sample in enumerate(manifest.get("samples", [])):
         base = f"/samples/{index}"
         _unique(errors, sample_ids, sample["sampleId"], f"{base}/sampleId", "uniqueSampleId")
@@ -91,6 +139,42 @@ def _dataset_semantic_errors(manifest: dict[str, Any]) -> list[str]:
             errors.append(f"{base}/language [keyword=targetLanguageMatch]")
         if sample["featureLayoutVersion"] != manifest["featureLayoutVersion"]:
             errors.append(f"{base}/featureLayoutVersion [keyword=featureLayoutMatch]")
+        if (
+            sample["labelId"] not in {"NO_SIGN", "OUT_OF_VOCABULARY"}
+            and sample["labelId"] not in reviewed_labels
+        ):
+            errors.append(f"{base}/labelId [keyword=reviewedLabelReference]")
+        if sample["labelId"] not in {"NO_SIGN", "OUT_OF_VOCABULARY"}:
+            observed_sign_labels.add(sample["labelId"])
+        if sample["consentAttestation"]["withdrawalStatus"] != "ACTIVE":
+            errors.append(
+                f"{base}/consentAttestation/withdrawalStatus [keyword=activeWithdrawal]"
+            )
+        try:
+            consented_at = datetime.fromisoformat(
+                sample["consentAttestation"]["consentedAt"].replace("Z", "+00:00")
+            )
+            captured_at = datetime.fromisoformat(
+                sample["captureTimestamp"].replace("Z", "+00:00")
+            )
+        except ValueError:
+            errors.append(f"{base}/captureTimestamp [keyword=validCalendarTimestamp]")
+        else:
+            if consented_at > captured_at:
+                errors.append(
+                    f"{base}/consentAttestation/consentedAt [keyword=consentBeforeCapture]"
+                )
+            try:
+                retention_expires_at = datetime.fromisoformat(
+                    manifest["retentionExpiresAt"].replace("Z", "+00:00")
+                )
+            except ValueError:
+                errors.append("/retentionExpiresAt [keyword=validCalendarTimestamp]")
+            else:
+                if not (
+                    captured_at < retention_expires_at <= captured_at + timedelta(days=90)
+                ):
+                    errors.append("/retentionExpiresAt [keyword=retentionWindow]")
         signer = sample["signerId"]
         split = sample["splitAssignment"]
         if signer in signer_splits and signer_splits[signer] != split:
@@ -102,8 +186,23 @@ def _dataset_semantic_errors(manifest: dict[str, Any]) -> list[str]:
     for required in ("TRAIN", "VALIDATION", "TEST"):
         if required not in observed_splits:
             errors.append(f"/samples [keyword=required{required.title()}Split]")
+    if observed_sign_labels != reviewed_labels:
+        errors.append("/reviewedLabels [keyword=completeReviewedVocabulary]")
     if len(test_signers) != manifest["splitPolicy"]["testSignerCount"]:
         errors.append("/splitPolicy/testSignerCount [keyword=uniqueTestSignerCount]")
+    assignments = [
+        {
+            "sampleId": sample["sampleId"],
+            "signerId": sample["signerId"],
+            "splitAssignment": sample["splitAssignment"],
+        }
+        for sample in sorted(manifest.get("samples", []), key=lambda item: item["sampleId"])
+    ]
+    assignment_sha256 = hashlib.sha256(
+        json.dumps(assignments, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    if assignment_sha256 != manifest["splitPolicy"]["assignmentSha256"]:
+        errors.append("/splitPolicy/assignmentSha256 [keyword=assignmentDigestMatch]")
     return errors
 
 
@@ -118,24 +217,75 @@ def _model_semantic_errors(metadata: dict[str, Any]) -> list[str]:
         errors.append("/labels [keyword=contiguousLabelIndex]")
     if metadata.get("output", {}).get("shape", [None, None])[1] != len(labels):
         errors.append("/output/shape/1 [keyword=labelCountMatch]")
+    expected_vocabulary_sha256 = canonical_vocabulary_sha256(
+        metadata["targetLanguage"],
+        metadata["vocabularyVersion"],
+        label_entries,
+    )
+    if metadata["vocabularySha256"] != expected_vocabulary_sha256:
+        errors.append("/vocabularySha256 [keyword=canonicalVocabularyDigest]")
+    _source_provenance_errors(metadata, errors)
     _evaluation_metric_errors(metadata, label_entries, errors)
-    reviewable = {
+    reviewable = [
         label["id"] for label in label_entries if label["outcome"] == "SIGN"
-    }
-    reviewed = set(metadata.get("sgslReview", {}).get("reviewedLabelIds", []))
-    if not reviewed.issubset(reviewable):
+    ]
+    reviewed = metadata.get("sgslReview", {}).get("reviewedLabelIds", [])
+    if not set(reviewed).issubset(set(reviewable)):
         errors.append("/sgslReview/reviewedLabelIds [keyword=signLabelReference]")
+    if metadata.get("sgslReview", {}).get("status") == "APPROVED" and reviewed != reviewable:
+        errors.append("/sgslReview/reviewedLabelIds [keyword=orderedCompleteVocabularyReview]")
     parity = metadata.get("onnx", {}).get("parity", {})
     if parity.get("maxAbsoluteDifference", 0) > parity.get("absoluteTolerance", float("inf")):
         errors.append("/onnx/parity/maxAbsoluteDifference [keyword=absoluteTolerance]")
     if metadata.get("productionPromotion", {}).get("status") == "APPROVED":
-        if not reviewable.issubset(reviewed):
+        if reviewed != reviewable:
             errors.append("/sgslReview/reviewedLabelIds [keyword=completeProductionReview]")
         if metadata.get("architecture", {}).get("family") == "SYNTHETIC_FIXTURE":
             errors.append("/architecture/family [keyword=productionArchitecture]")
         if metadata.get("runtime", {}).get("warmedP95LatencyMs", 0) <= 0:
             errors.append("/runtime/warmedP95LatencyMs [keyword=measuredJavaLatency]")
     return errors
+
+
+def _source_provenance_errors(
+    metadata: dict[str, Any],
+    errors: list[str],
+) -> None:
+    source = metadata["sourceProvenance"]
+    commit = source["commit"]
+    remaining = (
+        source["dirty"],
+        source["trackedChangesSha256"],
+        source["untrackedFileCount"],
+        source["untrackedStateSha256"],
+        source["untrackedContentSha256"],
+    )
+    if commit is None:
+        valid = all(value is None for value in remaining)
+        clean = False
+    else:
+        dirty, tracked, count, state, content = remaining
+        has_tracked = tracked != _EMPTY_SHA256
+        has_untracked = count > 0
+        valid = (
+            dirty == (has_tracked or has_untracked)
+            and (
+                count > 0
+                or (state == _EMPTY_SHA256 and content == _EMPTY_SHA256)
+            )
+        )
+        clean = (
+            valid
+            and dirty is False
+            and tracked == _EMPTY_SHA256
+            and count == 0
+            and state == _EMPTY_SHA256
+            and content == _EMPTY_SHA256
+        )
+    if not valid:
+        errors.append("/sourceProvenance [keyword=internallyConsistentSourceState]")
+    if metadata.get("productionPromotion", {}).get("status") == "APPROVED" and not clean:
+        errors.append("/sourceProvenance [keyword=cleanProductionSource]")
 
 
 def _evaluation_metric_errors(
@@ -267,6 +417,30 @@ def _evaluation_metric_errors(
             errors.append(
                 "/evaluation/metrics/rejectionBehavior/acceptedSignAccuracy "
                 "[keyword=acceptedSampleAvailability]"
+            )
+
+    robustness = metrics.get("robustnessSlices")
+    if robustness is not None:
+        for dimension, canonical_order in _ROBUSTNESS_SLICE_ORDER.items():
+            items = robustness[dimension]
+            values = [item["value"] for item in items]
+            expected_order = sorted(values, key=canonical_order.index)
+            if len(values) != len(set(values)) or values != expected_order:
+                errors.append(
+                    f"/evaluation/metrics/robustnessSlices/{dimension} "
+                    "[keyword=uniqueCanonicalSliceOrder]"
+                )
+            if sum(item["support"] for item in items) != metrics["sampleCount"]:
+                errors.append(
+                    f"/evaluation/metrics/robustnessSlices/{dimension} "
+                    "[keyword=completeEvaluationSupport]"
+                )
+        if metadata.get("genuineSignLanguageData") and any(
+            item["value"] == "UNKNOWN" for item in robustness["handedness"]
+        ):
+            errors.append(
+                "/evaluation/metrics/robustnessSlices/handedness "
+                "[keyword=knownGenuineHandedness]"
             )
 
 

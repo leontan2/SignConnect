@@ -142,6 +142,33 @@ describe("normalizeLandmarks", () => {
     expect(result.features.slice(8 * 4, 8 * 4 + 4)).toEqual(expected.slice(8 * 4, 8 * 4 + 4));
   });
 
+  it("accepts one valid hand with only the two shoulder anchors and zero-fills unavailable landmarks", () => {
+    const normalizeLandmarks = normalizerFor("single-hand shoulder-anchored tracking");
+    const expected = activeChunkFixture.frames[0].features;
+    const detection = detectionFromCanonicalFeatures(expected);
+    detection.hands = detection.hands.filter((hand) => hand.handedness === "Left");
+    for (let poseIndex = 13; poseIndex <= 24; poseIndex += 1) {
+      detection.poseLandmarks![poseIndex] = {
+        x: 0,
+        y: 0,
+        z: 0,
+        presence: 0
+      };
+    }
+
+    const result = normalizeLandmarks(detection);
+
+    expect(result.kind).toBe("accepted");
+    if (result.kind !== "accepted") return;
+    expect(result.frameKind).toBe("active");
+    expect(result.features).toHaveLength(224);
+    expect(result.features.every(Number.isFinite)).toBe(true);
+    expect(result.features.slice(0, 84)).toEqual(expected.slice(0, 84));
+    expect(result.features.slice(84, 168)).toEqual(Array.from({ length: 84 }, () => 0));
+    expect(result.features.slice(168, 176)).toEqual(expected.slice(168, 176));
+    expect(result.features.slice(176)).toEqual(Array.from({ length: 48 }, () => 0));
+  });
+
   it("rejects a frame when either shoulder anchor is not adequately tracked", () => {
     const normalizeLandmarks = normalizerFor("anchor rejection");
     const detection = detectionFromCanonicalFeatures(activeChunkFixture.frames[0].features);

@@ -125,11 +125,19 @@ export function normalizeLandmarks(
     return { kind: "rejected", reason: "INADEQUATE_ANCHORS" };
   }
 
+  const leftHand = bestHand(detection.hands, "Left");
+  const rightHand = bestHand(detection.hands, "Right");
+  const selectedHands = [leftHand, rightHand];
+  const hasValidHand = selectedHands.some((hand) => hand
+    && hand.score >= options.minimumHandConfidence
+    && hand.landmarks.slice(0, HAND_LANDMARK_COUNT)
+      .filter((point) => isPresent(point, options.minimumPointConfidence, false)).length >= options.minimumHandPoints);
+
   const posePresenceCount = POSE_LANDMARK_INDICES.reduce(
     (count, index) => count + (isPresent(pose?.[index], options.minimumPointConfidence) ? 1 : 0),
     0
   );
-  if (posePresenceCount < options.minimumPosePoints) {
+  if (posePresenceCount < options.minimumPosePoints && !hasValidHand) {
     return { kind: "rejected", reason: "LOW_QUALITY" };
   }
 
@@ -138,10 +146,6 @@ export function normalizeLandmarks(
     y: (leftShoulder.y + rightShoulder.y) / 2,
     z: (leftShoulder.z + rightShoulder.z) / 2
   };
-  const leftHand = bestHand(detection.hands, "Left");
-  const rightHand = bestHand(detection.hands, "Right");
-  const selectedHands = [leftHand, rightHand];
-
   if (detection.hands.length > 0 && selectedHands.every((hand) => !hand || hand.score < options.minimumHandConfidence)) {
     return { kind: "rejected", reason: "LOW_QUALITY" };
   }

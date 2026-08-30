@@ -5,7 +5,8 @@ import {
   GestureSegmenter,
   SessionCalibrator,
   evaluateTrackingQuality,
-  resampleGestureCandidate
+  resampleGestureCandidate,
+  type TrackingQualityOptions
 } from "./trackingQuality";
 
 function point(x: number, y: number, visibility = 0.95): RawLandmark {
@@ -92,19 +93,35 @@ function poseAdjustedDetection(
 }
 
 describe("browser-local tracking quality", () => {
+  it("accepts tracked hands when both shoulder anchors are stable even if pose arms are low confidence", () => {
+    const pose = upperBody();
+    for (const index of [13, 14, 15, 16]) pose[index] = point(pose[index].x, pose[index].y, 0.1);
+
+    expect(evaluateTrackingQuality(detection({ pose })).facts.state).toBe("ready");
+  });
+
+  it("accepts a one-handed sign when one hand and both shoulder anchors are tracked", () => {
+    expect(evaluateTrackingQuality(detection({ rightX: null })).facts.state).toBe("ready");
+  });
+
+  it("does not become ready when shoulder anchors are present but no hands are tracked", () => {
+    expect(evaluateTrackingQuality(detection({ leftX: null, rightX: null })).facts.state)
+      .toBe("left-hand-missing");
+  });
+
   it("reports actionable categorical facts without exposing landmark values", () => {
-    const cases: Array<[LandmarkDetection, string]> = [
+    const cases: Array<[LandmarkDetection, string, Partial<TrackingQualityOptions>?]> = [
       [{ hands: [] }, "no-person"],
       [detection({ pose: Array.from({ length: 33 }, () => point(0, 0, 0)) }), "upper-body-missing"],
-      [detection({ leftX: null }), "left-hand-missing"],
-      [detection({ rightX: null }), "right-hand-missing"],
+      [detection({ leftX: null }), "left-hand-missing", { requireBothHands: true }],
+      [detection({ rightX: null }), "right-hand-missing", { requireBothHands: true }],
       [detection({ leftX: 0.015 }), "out-of-frame"],
       [detection({ score: 0.55 }), "low-quality"],
       [detection(), "ready"]
     ];
 
-    for (const [sample, state] of cases) {
-      const result = evaluateTrackingQuality(sample);
+    for (const [sample, state, overrides] of cases) {
+      const result = evaluateTrackingQuality(sample, overrides);
       expect(result.facts.state).toBe(state);
       expect(JSON.stringify(result.facts)).not.toMatch(/landmarks|coordinates|shoulderScale|confidence/i);
     }
@@ -131,6 +148,16 @@ describe("gesture segmentation", () => {
     endFrames: 2,
     referenceFrameMs: 40
   };
+
+  it("allows a well-tracked one-handed gesture to enter segmentation", () => {
+    const segmenter = new GestureSegmenter({ ...segmenterOptions, startFrames: 1 });
+    const baseline = detection({ rightX: null });
+    const moved = detection({ leftX: 0.47, rightX: null });
+
+    segmenter.observe(baseline, evaluateTrackingQuality(baseline), 0);
+
+    expect(segmenter.observe(moved, evaluateTrackingQuality(moved), 40).phase).toBe("active");
+  });
 
   it("uses start/end hysteresis and emits one local boundary for a held gesture", () => {
     const segmenter = new GestureSegmenter(segmenterOptions);
@@ -165,6 +192,242 @@ describe("gesture segmentation", () => {
     expect(candidates[0].every(({ features }) => features.length === 224 && features.every(Number.isFinite))).toBe(true);
     const timestamps = candidates[0].map(({ timestampMs }) => timestampMs);
     expect(timestamps.every((value, index) => index === 0 || value > timestamps[index - 1])).toBe(true);
+  });
+
+  it("captures a stationary held sign exactly once until the signer releases it", () => {
+    const segmenter = new GestureSegmenter({
+      ...segmenterOptions,
+      staticHoldMs: 120,
+      staticHoldFrames: 3,
+      releaseFrames: 2
+    });
+    const held = detection({ rightX: null });
+    const snapshots = [0, 40, 80, 120, 160, 200].map((timestampMs) => segmenter.observe(
+      held,
+      evaluateTrackingQuality(held),
+      timestampMs,
+      featureFrame(timestampMs, 0.5)
+    ));
+
+    expect(snapshots.filter(({ completed }) => completed)).toHaveLength(1);
+    expect(snapshots.flatMap(({ candidate }) => candidate ? [candidate] : [])).toHaveLength(1);
+    expect(snapshots.find(({ completed }) => completed)?.candidate).toHaveLength(30);
+    expect(snapshots.at(-1)?.phase).toBe("idle");
+  });
+
+  it("re-arms a stationary sign only after a bounded no-hand release", () => {
+    const segmenter = new GestureSegmenter({
+      ...segmenterOptions,
+      staticHoldMs: 80,
+      staticHoldFrames: 3,
+      releaseFrames: 2,
+      qualityGapGraceMs: 120
+    });
+    const held = detection({ rightX: null });
+    const absent = detection({ leftX: null, rightX: null });
+    const snapshots = [
+      ...[0, 40, 80].map((timestampMs) => [held, timestampMs] as const),
+      ...[120, 160, 240].map((timestampMs) => [absent, timestampMs] as const),
+      ...[280, 320, 360].map((timestampMs) => [held, timestampMs] as const)
+    ].map(([sample, timestampMs]) => segmenter.observe(
+      sample,
+      evaluateTrackingQuality(sample),
+      timestampMs,
+      featureFrame(timestampMs, 0.5)
+    ));
+
+    expect(snapshots.filter(({ completed }) => completed)).toHaveLength(2);
+    expect(snapshots[5].phase).toBe("idle");
+    expect(snapshots.at(-1)?.candidate).toHaveLength(30);
+  });
+
+  it("keeps an active gesture through a brief tracking-quality dropout", () => {
+    const segmenter = new GestureSegmenter({
+      ...segmenterOptions,
+      startFrames: 1,
+      qualityGapGraceMs: 120
+    });
+    const baseline = detection();
+    const moved = detection({ leftX: 0.47, rightX: 0.63 });
+    const absent = detection({ leftX: null, rightX: null });
+
+    segmenter.observe(baseline, evaluateTrackingQuality(baseline), 0, featureFrame(0, 0));
+    expect(segmenter.observe(
+      moved,
+      evaluateTrackingQuality(moved),
+      40,
+      featureFrame(40, 0.25)
+    ).phase).toBe("active");
+    expect(segmenter.observe(absent, evaluateTrackingQuality(absent), 80).phase).toBe("active");
+    expect(segmenter.observe(
+      moved,
+      evaluateTrackingQuality(moved),
+      120,
+      featureFrame(120, 0.5)
+    ).phase).toBe("ending");
+    const completed = segmenter.observe(
+      moved,
+      evaluateTrackingQuality(moved),
+      160,
+      featureFrame(160, 0.75)
+    );
+
+    expect(completed.completed).toBe(true);
+    expect(completed.candidate).toHaveLength(30);
+  });
+
+  it("captures a held sign from sparse but bounded physical-camera cadence", () => {
+    const segmenter = new GestureSegmenter({
+      ...segmenterOptions,
+      maximumFrameGapMs: 200,
+      qualityGapGraceMs: 120,
+      staticHoldMs: 500,
+      staticHoldFrames: 3
+    });
+    const held = detection({ rightX: null });
+    const snapshots = [0, 250, 500].map((timestampMs) => segmenter.observe(
+      held,
+      evaluateTrackingQuality(held),
+      timestampMs,
+      featureFrame(timestampMs, 0.5)
+    ));
+
+    expect(snapshots.at(-1)?.completed).toBe(true);
+    expect(snapshots.at(-1)?.candidate).toHaveLength(30);
+  });
+
+  it("never creates a gesture candidate when no hand is tracked", () => {
+    const segmenter = new GestureSegmenter({
+      ...segmenterOptions,
+      staticHoldMs: 80,
+      staticHoldFrames: 2
+    });
+    const absent = detection({ leftX: null, rightX: null });
+    const snapshots = [0, 40, 80, 120, 500].map((timestampMs) => segmenter.observe(
+      absent,
+      evaluateTrackingQuality(absent),
+      timestampMs,
+      featureFrame(timestampMs, 0)
+    ));
+
+    expect(snapshots.every(({ phase }) => phase === "idle")).toBe(true);
+    expect(snapshots.some(({ completed, candidate }) => completed || candidate !== null)).toBe(false);
+  });
+
+  it("includes a small bounded pre-roll when motion starts a dynamic gesture", () => {
+    const segmenter = new GestureSegmenter({
+      ...segmenterOptions,
+      startFrames: 1,
+      preRollFrames: 2
+    });
+    const baseline = detection();
+    const moved = detection({ leftX: 0.47, rightX: 0.63 });
+
+    segmenter.observe(baseline, evaluateTrackingQuality(baseline), 0, featureFrame(0, 0));
+    segmenter.observe(baseline, evaluateTrackingQuality(baseline), 40, featureFrame(40, 0.1));
+    segmenter.observe(moved, evaluateTrackingQuality(moved), 80, featureFrame(80, 0.5));
+    segmenter.observe(moved, evaluateTrackingQuality(moved), 120, featureFrame(120, 0.75));
+    const completed = segmenter.observe(
+      moved,
+      evaluateTrackingQuality(moved),
+      160,
+      featureFrame(160, 1)
+    );
+
+    expect(completed.candidate).toHaveLength(30);
+    expect(completed.candidate?.[0].features[0]).toBe(0);
+  });
+
+  it("does not re-caption a dynamic gesture while its final pose remains held", () => {
+    const segmenter = new GestureSegmenter({
+      ...segmenterOptions,
+      startFrames: 1,
+      staticHoldMs: 80,
+      staticHoldFrames: 3
+    });
+    const baseline = detection();
+    const moved = detection({ leftX: 0.47, rightX: 0.63 });
+    const samples = [
+      [baseline, 0],
+      [moved, 40],
+      [moved, 80],
+      [moved, 120],
+      [moved, 160],
+      [moved, 200],
+      [moved, 240],
+      [moved, 280]
+    ] as const;
+    const snapshots = samples.map(([sample, timestampMs]) => segmenter.observe(
+      sample,
+      evaluateTrackingQuality(sample),
+      timestampMs,
+      featureFrame(timestampMs, timestampMs / 1000)
+    ));
+
+    expect(snapshots.filter(({ completed }) => completed)).toHaveLength(1);
+    expect(snapshots.at(-1)?.phase).toBe("idle");
+  });
+
+  it("re-arms for the next gesture after deliberate motion without requiring hands to disappear", () => {
+    const segmenter = new GestureSegmenter({
+      ...segmenterOptions,
+      startFrames: 1,
+      staticHoldMs: 80,
+      staticHoldFrames: 3,
+      releaseFrames: 2
+    });
+    const held = detection({ leftX: 0.42, rightX: null });
+    const moving = detection({ leftX: 0.57, rightX: null });
+    const moved = detection({ leftX: 0.72, rightX: null });
+    const samples = [
+      [held, 0],
+      [held, 40],
+      [held, 80],
+      [moving, 120],
+      [moved, 160],
+      [moved, 200],
+      [moved, 240]
+    ] as const;
+    const snapshots = samples.map(([sample, timestampMs]) => segmenter.observe(
+      sample,
+      evaluateTrackingQuality(sample),
+      timestampMs,
+      featureFrame(timestampMs, timestampMs / 1000)
+    ));
+
+    expect(snapshots.filter(({ completed }) => completed)).toHaveLength(2);
+    expect(snapshots.at(-1)?.candidate).toHaveLength(30);
+  });
+
+  it("completes a continuously moving one-hand gesture when the bounded capture window fills", () => {
+    const segmenter = new GestureSegmenter({
+      ...segmenterOptions,
+      startFrames: 1,
+      maximumSourceFrames: 5
+    });
+    const baseline = detection({ rightX: null });
+    segmenter.observe(
+      baseline,
+      evaluateTrackingQuality(baseline),
+      0,
+      featureFrame(0, 0)
+    );
+
+    const snapshots = Array.from({ length: 5 }, (_unused, index) => {
+      const timestampMs = (index + 1) * 40;
+      const sample = detection({ leftX: 0.42 + (index + 1) * 0.05, rightX: null });
+      return segmenter.observe(
+        sample,
+        evaluateTrackingQuality(sample),
+        timestampMs,
+        featureFrame(timestampMs, (index + 1) / 10)
+      );
+    });
+
+    expect(snapshots.at(-1)?.phase).toBe("ready-for-inference");
+    expect(snapshots.at(-1)?.completed).toBe(true);
+    expect(snapshots.at(-1)?.candidate).toHaveLength(30);
+    expect(snapshots.slice(0, -1).every(({ candidate }) => candidate === null)).toBe(true);
   });
 
   it("rejects a single motion spike and resumes active when motion returns during ending", () => {
@@ -304,7 +567,7 @@ describe("gesture segmentation", () => {
     ]).toEqual(["active", "active"]);
   });
 
-  it("resets on a missing-hand state, an incomplete calibration, or a dropped-frame gap", () => {
+  it("resets after the missing-hand grace, an incomplete calibration, or an excessive frame gap", () => {
     const segmenter = new GestureSegmenter({ ...segmenterOptions, startFrames: 1 });
     const baseline = detection();
     const moved = detection({ leftX: 0.47, rightX: 0.63 });
@@ -312,23 +575,32 @@ describe("gesture segmentation", () => {
 
     segmenter.observe(baseline, evaluateTrackingQuality(baseline), 0);
     expect(segmenter.observe(moved, evaluateTrackingQuality(moved), 40).phase).toBe("active");
-    expect(segmenter.observe(oneHand, evaluateTrackingQuality(oneHand), 80)).toEqual({
+    expect(segmenter.observe(
+      oneHand,
+      evaluateTrackingQuality(oneHand, { requireBothHands: true }),
+      80
+    ).phase).toBe("active");
+    expect(segmenter.observe(
+      oneHand,
+      evaluateTrackingQuality(oneHand, { requireBothHands: true }),
+      440
+    )).toEqual({
       phase: "idle",
       completed: false,
       candidate: null
     });
 
-    segmenter.observe(baseline, evaluateTrackingQuality(baseline), 120);
-    expect(segmenter.observe(moved, evaluateTrackingQuality(moved), 160).phase).toBe("active");
-    expect(segmenter.observe(moved, evaluateTrackingQuality(moved), 200, featureFrame(200, 1), false)).toEqual({
+    segmenter.observe(baseline, evaluateTrackingQuality(baseline), 480);
+    expect(segmenter.observe(moved, evaluateTrackingQuality(moved), 520).phase).toBe("active");
+    expect(segmenter.observe(moved, evaluateTrackingQuality(moved), 560, featureFrame(560, 1), false)).toEqual({
       phase: "idle",
       completed: false,
       candidate: null
     });
 
-    segmenter.observe(baseline, evaluateTrackingQuality(baseline), 240);
-    expect(segmenter.observe(moved, evaluateTrackingQuality(moved), 280).phase).toBe("active");
-    expect(segmenter.observe(moved, evaluateTrackingQuality(moved), 600)).toEqual({
+    segmenter.observe(baseline, evaluateTrackingQuality(baseline), 600);
+    expect(segmenter.observe(moved, evaluateTrackingQuality(moved), 640).phase).toBe("active");
+    expect(segmenter.observe(moved, evaluateTrackingQuality(moved), 1200)).toEqual({
       phase: "idle",
       completed: false,
       candidate: null
