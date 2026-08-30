@@ -33,7 +33,7 @@ For every work loop:
 | Date/time | 2026-08-30; implementation and required verifier loop complete |
 | Branch | `codex/gesture-segmentation` |
 | Starting commit | `d062c83912f3acf2aa3502c8201812218e24286b` (`d062c83`) |
-| Ending commit | `ab31ce88559093e0069d0664c1f1f0d149382dbf` (`ab31ce8`) |
+| Ending implementation commit | `24f9b9ee930b8a9351c046ab6c4bbb8909e37da1` (`24f9b9e`) |
 | Operator | Codex parallel-agent loop |
 | Phase/gate | G0-G4 implementation and evidence; G5-G8 tooling; G9 blocked |
 | Starting failure | Camera quality and gesture boundaries were not canonicalized end to end; the server still treated every five-frame chunk as a rolling stride; no authorized SGSL dataset or promoted genuine model existed. |

@@ -1144,7 +1144,7 @@ Copy this template when completing a milestone:
 ### Milestone 3 implementation record
 
 - Branch: `codex/gesture-segmentation`
-- Pull request or commit: `ab31ce88559093e0069d0664c1f1f0d149382dbf`
+- Pull request or commit: `24f9b9ee930b8a9351c046ab6c4bbb8909e37da1`
 - Implementation date: 2026-08-30
 - Demonstration performed: The running fixture-backed app traversed actionable camera-quality, calibration, gesture, processing, recognized, and unknown states; the optional overlay remained keyboard-operable and the completed UI reflowed at 320 CSS pixels.
 - Automated checks run: Unified release verifier, 97 meeting tests, 162 backend tests, 42 ML tests, 23 training-contract fixtures, typecheck, production builds, release-runner self-test, 16/16 E2E tests in bundled Chromium, installed Chrome, and installed Edge, simulator 1/1, and performance 1/1. Performance evidence is recorded in the AI implementation checklist.
@@ -1155,7 +1155,7 @@ Copy this template when completing a milestone:
 ### Milestone 4 engineering-pipeline record
 
 - Branch: `codex/gesture-segmentation`
-- Pull request or commit: `ab31ce88559093e0069d0664c1f1f0d149382dbf`
+- Pull request or commit: `24f9b9ee930b8a9351c046ab6c4bbb8909e37da1`
 - Implementation date: 2026-08-30
 - Demonstration performed: Reproducible synthetic TCN training/export/parity and explicit Java loading proved the mechanics without claiming SGSL quality.
 - Automated checks run: Strict contract fixtures, signer-leak and OOV/reject-accounting checks, model-state-bound locked-test evidence, TCN/GRU unit coverage, Python/ONNX parity, Java fail-closed model validation, full unified release verifier, three-browser E2E, and synthetic latency probes.
