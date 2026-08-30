@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .constants import NO_SIGN
+from .constants import NO_SIGN, OUT_OF_VOCABULARY
 from .contracts import ContractError, validate_contract_document
 
 
@@ -50,6 +50,21 @@ class DatasetManifest:
     @property
     def no_sign_index(self) -> int:
         return self.classes.index(NO_SIGN)
+
+    @property
+    def reject_indices(self) -> tuple[int, ...]:
+        return tuple(
+            index
+            for index, label_id in enumerate(self.classes)
+            if label_id == OUT_OF_VOCABULARY
+        )
+
+    def label_outcome(self, label_id: str) -> str:
+        if label_id == NO_SIGN:
+            return "NO_SIGN"
+        if label_id == OUT_OF_VOCABULARY:
+            return "REJECT"
+        return "SIGN"
 
     @property
     def synthetic(self) -> bool:

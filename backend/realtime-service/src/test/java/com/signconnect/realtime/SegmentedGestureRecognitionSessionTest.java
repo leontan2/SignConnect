@@ -65,23 +65,26 @@ class SegmentedGestureRecognitionSessionTest {
     }
 
     @Test
-    void noSignAndLowConfidenceCompletedGesturesReturnPrivateUnknownWithoutCaptions() throws Exception {
+    void modelTerminalDecisionsRemainPrivateEvenAboveTheRealtimeThreshold() throws Exception {
         try (Harness harness = new Harness()) {
             AtomicInteger calls = new AtomicInteger();
             when(harness.inferenceClient.predict(any(), any())).thenAnswer(invocation -> {
                 UUID streamId = invocation.getArgument(0);
                 RollingLandmarkWindow.Window window = invocation.getArgument(1);
-                return calls.getAndIncrement() == 0
-                        ? Mono.just(prediction(streamId, window, "NO_SIGN", null, 0.99))
-                        : Mono.just(prediction(streamId, window, "MOCK_ACTIVE", "Rejected", 0.79));
+                double confidence = switch (calls.getAndIncrement()) {
+                    case 0 -> 0.99; // model-declared NO_SIGN
+                    case 1 -> 0.93; // model-declared REJECT, collapsed by the inference wire boundary
+                    default -> 0.85; // model-declared LOW_CONFIDENCE at a stricter model threshold
+                };
+                return Mono.just(prediction(streamId, window, "NO_SIGN", null, confidence));
             });
 
             harness.start(FIRST_STREAM);
-            harness.sendChunks(0, 12, true, FIRST_STREAM);
+            harness.sendChunks(0, 18, true, FIRST_STREAM);
 
-            assertThat(calls).hasValue(2);
+            assertThat(calls).hasValue(3);
             assertThat(harness.eventsOfType("recognition.unknown"))
-                    .hasSize(2)
+                    .hasSize(3)
                     .allSatisfy(event -> assertThat(event.path("payload").path("reason").asText())
                             .isEqualTo("LOW_CONFIDENCE"));
             assertThat(harness.eventsOfType("caption.final")).isEmpty();

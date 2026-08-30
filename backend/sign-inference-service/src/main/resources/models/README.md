@@ -23,11 +23,11 @@ missing, or inconsistent fields fail readiness closed. This synthetic document i
 explicitly `BLOCKED` from production promotion. Deployment configuration must also
 select the same model version with `SIGN_MODEL_EXPECTED_VERSION`.
 
-The frozen v1 inference response has no outcome discriminator. Internally, a sign
-below the metadata threshold remains a sign candidate with its classifier confidence
-so the realtime stabilizer can report low confidence. `NO_SIGN` and explicit
-`REJECT` outcomes both cross v1 safely as `labelId: "NO_SIGN"` with
-`captionText: null`; neither is a caption candidate. Model-unavailable state returns
+The frozen v1 inference response has no outcome discriminator. To keep that wire shape
+fail-closed, every non-recognized internal outcome—including a `SIGN` below the model
+metadata threshold, `NO_SIGN`, and explicit `REJECT`—crosses v1 as
+`labelId: "NO_SIGN"` with `captionText: null`; none is a caption candidate. The
+realtime service reports that result privately as not recognized. Model-unavailable state returns
 the existing privacy-safe 503 and no prediction body.
 
 ## Service resource bounds

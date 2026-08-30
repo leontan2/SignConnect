@@ -134,6 +134,20 @@ def _metadata_document(
     if not parity_verified:
         blocking_reasons.append("PyTorch to ONNX Runtime parity has not been verified.")
     evaluation = checkpoint["evaluation"]
+    if "modelStateSha256" not in evaluation:
+        blocking_reasons.append(
+            "Legacy evaluation evidence is not bound to the exported model weights."
+        )
+    evaluation_metrics = (
+        evaluation["metrics"]
+        if "metrics" in evaluation
+        else {
+            "macroF1": evaluation["macro_f1"],
+            "accuracy": evaluation["accuracy"],
+            "falseFinalRate": evaluation["false_final_rate"],
+            "sampleCount": evaluation["sample_count"],
+        }
+    )
     return {
         "schemaVersion": 1,
         "modelId": f"signconnect-{checkpoint['architecture']}-candidate",
@@ -171,8 +185,12 @@ def _metadata_document(
             {
                 "index": index,
                 "id": label,
-                "captionText": None if label == "NO_SIGN" else _caption(label),
-                "outcome": "NO_SIGN" if label == "NO_SIGN" else "SIGN",
+                "captionText": (
+                    _caption(label)
+                    if manifest.label_outcome(label) == "SIGN"
+                    else None
+                ),
+                "outcome": manifest.label_outcome(label),
             }
             for index, label in enumerate(manifest.classes)
         ],
@@ -190,12 +208,7 @@ def _metadata_document(
                 "signerOverlapCount": 0,
                 "testSignerCount": manifest.test_signer_count,
             },
-            "metrics": {
-                "macroF1": evaluation["macro_f1"],
-                "accuracy": evaluation["accuracy"],
-                "falseFinalRate": evaluation["false_final_rate"],
-                "sampleCount": evaluation["sample_count"],
-            },
+            "metrics": evaluation_metrics,
         },
         "onnx": {
             "artifactPath": f"models/{target.name}",

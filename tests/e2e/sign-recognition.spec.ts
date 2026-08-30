@@ -235,9 +235,10 @@ test.describe("sign-recognition full-stack milestone", () => {
       },
       occurredAt: new Date().toISOString()
     });
-    await expect(page.locator(".recognition-feedback")).toContainText(
-      /not recognized with enough confidence/i
-    );
+    // The frozen v1 result identifies only the stream. Once the dispatched
+    // gesture has settled, a later unmatched local result must be ignored
+    // rather than being attributed to a gesture that was never sent.
+    await expect(page.locator(".recognition-feedback")).toHaveCount(0);
     await expect(transcript.getByRole("article")).toHaveCount(1);
   });
 

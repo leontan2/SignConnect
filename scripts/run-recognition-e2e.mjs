@@ -702,6 +702,15 @@ function playwrightSelection(options) {
   };
 }
 
+export function playwrightJsonReportPath(options, root = repositoryRoot) {
+  const reportName = options.performance
+    ? "performance"
+    : options.simulator
+      ? `simulator-${options.project}`
+      : options.project;
+  return path.join(root, "test-results", "playwright", `${reportName}.json`);
+}
+
 async function runPlaywright(options, control) {
   lifecycle.assertOpen();
   for (const name of ["meeting-frontend", "shell-frontend"]) {
@@ -720,6 +729,7 @@ async function runPlaywright(options, control) {
     cwd: repositoryRoot,
     env: sanitizedEnvironment({
       PLAYWRIGHT_HTML_OPEN: "never",
+      PLAYWRIGHT_JSON_OUTPUT_FILE: playwrightJsonReportPath(options),
       SIGNCONNECT_E2E_BASE_URL: "http://127.0.0.1:3000",
       SIGNCONNECT_E2E_CONTROL_URL: control.url,
       SIGNCONNECT_E2E_CONTROL_TOKEN: control.token,
@@ -968,6 +978,21 @@ async function runLifecycleSelfTest() {
         grep: null
       },
       "the production stack must retain the complete correctness suite, including simulator absence coverage"
+    );
+    assert.equal(
+      playwrightJsonReportPath({ performance: false, project: "chrome", simulator: false }),
+      path.join(repositoryRoot, "test-results", "playwright", "chrome.json"),
+      "each installed-browser correctness run must retain its own JSON result"
+    );
+    assert.equal(
+      playwrightJsonReportPath({ performance: false, project: "chromium", simulator: true }),
+      path.join(repositoryRoot, "test-results", "playwright", "simulator-chromium.json"),
+      "the simulator result must not overwrite bundled-Chromium correctness evidence"
+    );
+    assert.equal(
+      playwrightJsonReportPath({ performance: true, project: "chromium", simulator: false }),
+      path.join(repositoryRoot, "test-results", "playwright", "performance.json"),
+      "the performance result must have a dedicated machine-readable artifact"
     );
   };
 

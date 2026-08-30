@@ -8,6 +8,11 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="signconnect-ml")
     commands = root.add_subparsers(dest="command", required=True)
 
+    preprocessing = commands.add_parser("preprocess")
+    preprocessing.add_argument("--input", required=True, type=Path)
+    preprocessing.add_argument("--output", required=True, type=Path)
+    preprocessing.add_argument("--maximum-frame-gap-ms", type=float, default=200.0)
+
     synthetic = commands.add_parser("generate-synthetic")
     synthetic.add_argument("--output", required=True, type=Path)
     synthetic.add_argument("--seed", type=int, default=20260830)
@@ -36,6 +41,17 @@ def parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
+    if args.command == "preprocess":
+        from .preprocessing import preprocess_file
+
+        print(
+            preprocess_file(
+                args.input,
+                args.output,
+                maximum_frame_gap_ms=args.maximum_frame_gap_ms,
+            )
+        )
+        return 0
     if args.command == "generate-synthetic":
         from .synthetic import generate_non_production_synthetic
 

@@ -76,6 +76,101 @@ class SharedContractFixtureTest(unittest.TestCase):
         with self.assertRaises(ContractError):
             validate_contract_document(document, "model-metadata.schema.json")
 
+    def test_approved_metadata_requires_detailed_class_and_rejection_evidence(self):
+        source = json.loads(
+            (contract_root() / "fixtures" / "model-metadata-production.valid.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        for missing in ("perClass", "confusionMatrix", "noSignBehavior", "rejectionBehavior"):
+            with self.subTest(missing=missing):
+                document = json.loads(json.dumps(source))
+                del document["evaluation"]["metrics"][missing]
+                with self.assertRaises(ContractError):
+                    validate_contract_document(document, "model-metadata.schema.json")
+
+    def test_approved_metadata_requires_measured_unknown_rejection_behavior(self):
+        document = json.loads(
+            (contract_root() / "fixtures" / "model-metadata-production.valid.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        behavior = document["evaluation"]["metrics"]["rejectionBehavior"]
+        behavior["unknownSampleCount"] = 0
+        behavior["unknownRejectedCount"] = 0
+        behavior["unknownFalseFinalCount"] = 0
+        behavior["unknownRejectionRate"] = None
+        behavior["unknownFalseFinalRate"] = None
+
+        with self.assertRaises(ContractError):
+            validate_contract_document(document, "model-metadata.schema.json")
+
+    def test_rich_metrics_must_be_derived_from_the_confusion_matrix(self):
+        source = json.loads(
+            (contract_root() / "fixtures" / "model-metadata-production.valid.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        mutations = {
+            "accuracy": lambda metrics: metrics.__setitem__("accuracy", 0.81),
+            "macro f1": lambda metrics: metrics.__setitem__("macroF1", 0.81),
+            "class precision": lambda metrics: metrics["perClass"][1].__setitem__(
+                "precision", 0.81
+            ),
+            "class recall": lambda metrics: metrics["perClass"][1].__setitem__(
+                "recall", 0.81
+            ),
+            "class f1": lambda metrics: metrics["perClass"][1].__setitem__("f1", 0.81),
+            "class support": lambda metrics: metrics["perClass"][1].__setitem__(
+                "support", 24
+            ),
+            "no-sign false finals": lambda metrics: metrics["noSignBehavior"].__setitem__(
+                "falseFinalCount", 0
+            ),
+            "accepted signs": lambda metrics: metrics["rejectionBehavior"].__setitem__(
+                "acceptedSignCount", 138
+            ),
+            "unknown rejection": lambda metrics: metrics["rejectionBehavior"].__setitem__(
+                "unknownRejectedCount", 23
+            ),
+        }
+
+        for name, mutate in mutations.items():
+            with self.subTest(metric=name):
+                document = json.loads(json.dumps(source))
+                mutate(document["evaluation"]["metrics"])
+                with self.assertRaises(ContractError):
+                    validate_contract_document(document, "model-metadata.schema.json")
+
+    def test_thresholded_counts_are_not_inferred_from_argmax_matrix_columns(self):
+        document = json.loads(
+            (contract_root() / "fixtures" / "model-metadata-production.valid.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        behavior = document["evaluation"]["metrics"]["rejectionBehavior"]
+        behavior["acceptedSignCount"] = 138
+        behavior["lowConfidenceRejectionCount"] = 7
+        behavior["rejectionRate"] = 7 / 180
+
+        validate_contract_document(document, "model-metadata.schema.json")
+
+    def test_unknown_sample_count_must_equal_reject_label_support(self):
+        document = json.loads(
+            (contract_root() / "fixtures" / "model-metadata-production.valid.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        behavior = document["evaluation"]["metrics"]["rejectionBehavior"]
+        behavior["unknownSampleCount"] = 50
+        behavior["unknownRejectedCount"] = 49
+        behavior["unknownRejectionRate"] = 0.98
+        behavior["unknownFalseFinalCount"] = 1
+        behavior["unknownFalseFinalRate"] = 0.02
+
+        with self.assertRaises(ContractError):
+            validate_contract_document(document, "model-metadata.schema.json")
+
     def test_reviewed_label_ids_must_all_resolve_to_sign_outcomes(self):
         source = json.loads(
             (contract_root() / "fixtures" / "model-metadata-production.valid.json").read_text(

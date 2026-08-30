@@ -38,6 +38,28 @@ PIPELINE_AVAILABLE = all(
 
 @unittest.skipUnless(PIPELINE_AVAILABLE, "PyTorch, ONNX, and ONNX Runtime are required")
 class TrainingAndExportTest(unittest.TestCase):
+    def test_model_state_digest_is_canonical_across_mapping_order(self):
+        import torch
+
+        from signconnect_ml.models import build_model
+        from signconnect_ml.training import _state_dict_sha256
+
+        model = build_model("tcn", class_count=2, hidden_size=8, dropout=0.1)
+        state = model.state_dict()
+        reversed_state = dict(reversed(list(state.items())))
+
+        self.assertEqual(
+            _state_dict_sha256(state, torch),
+            _state_dict_sha256(reversed_state, torch),
+        )
+        changed = dict(state)
+        first_name = next(iter(changed))
+        changed[first_name] = changed[first_name] + 0.25
+        self.assertNotEqual(
+            _state_dict_sha256(state, torch),
+            _state_dict_sha256(changed, torch),
+        )
+
     def test_checkpoint_loader_blocks_pickle_code_execution(self):
         import torch
 
@@ -80,6 +102,8 @@ class TrainingAndExportTest(unittest.TestCase):
                     "validationFalseFinalRate": 0.0,
                 }
             ],
+            "selected_epoch": 1,
+            "evaluation_split": "test",
             "evaluation": {
                 "macro_f1": 0.5,
                 "accuracy": 0.5,
@@ -143,6 +167,161 @@ class TrainingAndExportTest(unittest.TestCase):
                         str(raised.exception),
                     )
 
+    def test_training_restores_the_earliest_best_validation_checkpoint(self):
+        import torch
+
+        from signconnect_ml.config import TrainConfig
+        from signconnect_ml.synthetic import generate_non_production_synthetic
+        from signconnect_ml.training import train
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = generate_non_production_synthetic(root / "fixture", signer_count=6)
+
+            def run(output: Path, epochs: int) -> dict:
+                checkpoint = train(
+                    TrainConfig(
+                        seed=7,
+                        model="tcn",
+                        manifest=manifest,
+                        output_dir=output,
+                        epochs=epochs,
+                        batch_size=6,
+                        learning_rate=0.02,
+                        hidden_size=8,
+                        dropout=0.0,
+                        false_final_threshold=0.8,
+                    )
+                )
+                return torch.load(checkpoint, map_location="cpu", weights_only=True)
+
+            first_epoch = run(root / "one-epoch", 1)
+            selected = run(root / "four-epochs", 4)
+
+            self.assertEqual(
+                [first_epoch["history"][0]["validationMacroF1"]] * 4,
+                [entry["validationMacroF1"] for entry in selected["history"]],
+            )
+            self.assertEqual(1, selected["selected_epoch"])
+            for name, expected in first_epoch["state_dict"].items():
+                self.assertTrue(torch.equal(expected, selected["state_dict"][name]), name)
+
+    def test_locked_final_test_evaluation_is_explicit_and_one_shot(self):
+        import torch
+
+        from signconnect_ml.config import TrainConfig
+        from signconnect_ml.synthetic import generate_non_production_synthetic
+        from signconnect_ml.training import evaluate_checkpoint, load_checkpoint_model, train
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = generate_non_production_synthetic(root / "fixture", signer_count=6)
+            output = root / "run"
+            checkpoint = train(
+                TrainConfig(
+                    seed=7,
+                    model="tcn",
+                    manifest=manifest,
+                    output_dir=output,
+                    epochs=1,
+                    batch_size=6,
+                    learning_rate=0.002,
+                    hidden_size=8,
+                    dropout=0.0,
+                    false_final_threshold=0.8,
+                )
+            )
+
+            candidate = torch.load(checkpoint, map_location="cpu", weights_only=True)
+            self.assertEqual("validation", candidate["evaluation_split"])
+            with self.assertRaisesRegex(ValueError, "final-test evaluation has not been completed"):
+                load_checkpoint_model(checkpoint)
+
+            final_report = output / "final-test.json"
+            self.assertEqual(
+                final_report,
+                evaluate_checkpoint(
+                    checkpoint,
+                    manifest,
+                    output / "split.json",
+                    final_report,
+                    split_name="test",
+                    batch_size=6,
+                    false_final_threshold=0.8,
+                ),
+            )
+            self.assertEqual(
+                "test",
+                json.loads(final_report.read_text(encoding="utf-8"))["split"],
+            )
+            finalized = torch.load(checkpoint, map_location="cpu", weights_only=True)
+            self.assertEqual("test", finalized["evaluation_split"])
+            load_checkpoint_model(checkpoint)
+
+            second_report = output / "must-not-exist.json"
+            with self.assertRaisesRegex(ValueError, "already been evaluated"):
+                evaluate_checkpoint(
+                    checkpoint,
+                    manifest,
+                    output / "split.json",
+                    second_report,
+                    split_name="test",
+                    batch_size=6,
+                    false_final_threshold=0.8,
+                )
+            self.assertFalse(second_report.exists())
+
+    def test_final_test_uses_the_checkpoint_split_and_confidence_threshold(self):
+        from signconnect_ml.config import TrainConfig
+        from signconnect_ml.synthetic import generate_non_production_synthetic
+        from signconnect_ml.training import evaluate_checkpoint, train
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = generate_non_production_synthetic(root / "fixture", signer_count=6)
+            output = root / "run"
+            checkpoint = train(
+                TrainConfig(
+                    seed=7,
+                    model="tcn",
+                    manifest=manifest,
+                    output_dir=output,
+                    epochs=1,
+                    batch_size=6,
+                    learning_rate=0.002,
+                    hidden_size=8,
+                    dropout=0.0,
+                    false_final_threshold=0.8,
+                )
+            )
+
+            locked_split = output / "split.json"
+            changed_split = output / "changed-split.json"
+            changed_document = json.loads(locked_split.read_text(encoding="utf-8"))
+            changed_document["seed"] = 8
+            changed_split.write_text(json.dumps(changed_document), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "locked checkpoint split"):
+                evaluate_checkpoint(
+                    checkpoint,
+                    manifest,
+                    changed_split,
+                    output / "changed-split-result.json",
+                    split_name="test",
+                    batch_size=6,
+                    false_final_threshold=0.8,
+                )
+            with self.assertRaisesRegex(ValueError, "locked confidence threshold"):
+                evaluate_checkpoint(
+                    checkpoint,
+                    manifest,
+                    locked_split,
+                    output / "changed-threshold-result.json",
+                    split_name="test",
+                    batch_size=6,
+                    false_final_threshold=0.7,
+                )
+
     def test_tiny_training_export_is_non_production_and_has_runtime_parity(self):
         import numpy as np
         import onnxruntime as ort
@@ -154,7 +333,7 @@ class TrainingAndExportTest(unittest.TestCase):
         from signconnect_ml.manifest import ManifestError, load_manifest
         from signconnect_ml.splits import load_split, split_sha256
         from signconnect_ml.synthetic import generate_non_production_synthetic
-        from signconnect_ml.training import train
+        from signconnect_ml.training import evaluate_checkpoint, train
 
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -194,6 +373,15 @@ class TrainingAndExportTest(unittest.TestCase):
             self.assertEqual(loaded_manifest.sha256, saved_checkpoint["manifest_sha256"])
             self.assertEqual(split_sha256(loaded_split), saved_checkpoint["split_sha256"])
             self.assertNotIn(str(root.resolve()), set(_string_values(saved_checkpoint)))
+            evaluate_checkpoint(
+                checkpoint,
+                manifest,
+                output / "split.json",
+                output / "final-test.json",
+                split_name="test",
+                batch_size=6,
+                false_final_threshold=0.8,
+            )
             requested_onnx = root / "artifact" / "sign-smoke.onnx"
             stale_external_data = requested_onnx.with_name(f"{requested_onnx.name}.data")
             stale_external_data.parent.mkdir(parents=True, exist_ok=True)
@@ -237,6 +425,119 @@ class TrainingAndExportTest(unittest.TestCase):
                     root / "must-not-exist.onnx",
                     claim_genuine_sgsl=True,
                 )
+
+    def test_finalized_oov_evidence_is_bound_to_checkpoint_and_exported_fail_closed(self):
+        import torch
+
+        from signconnect_ml.config import TrainConfig
+        from signconnect_ml.exporting import export_onnx
+        from signconnect_ml.synthetic import generate_non_production_synthetic
+        from signconnect_ml.training import evaluate_checkpoint, load_checkpoint_model, train
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest_path = generate_non_production_synthetic(root / "fixture", signer_count=6)
+            manifest_document = json.loads(manifest_path.read_text(encoding="utf-8"))
+            for sample in manifest_document["samples"]:
+                if sample["labelId"] == "SYNTHETIC_B":
+                    sample["labelId"] = "OUT_OF_VOCABULARY"
+            manifest_path.write_text(json.dumps(manifest_document), encoding="utf-8")
+
+            output = root / "run"
+            checkpoint_path = train(
+                TrainConfig(
+                    seed=7,
+                    model="tcn",
+                    manifest=manifest_path,
+                    output_dir=output,
+                    epochs=1,
+                    batch_size=6,
+                    learning_rate=0.002,
+                    hidden_size=8,
+                    dropout=0.0,
+                    false_final_threshold=0.8,
+                )
+            )
+            report_path = evaluate_checkpoint(
+                checkpoint_path,
+                manifest_path,
+                output / "split.json",
+                output / "final-test.json",
+                split_name="test",
+                batch_size=6,
+                false_final_threshold=0.8,
+            )
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+
+            self.assertEqual(report, checkpoint["evaluation"])
+            self.assertRegex(report["modelStateSha256"], r"^[a-f0-9]{64}$")
+            self.assertEqual(1, report["metrics"]["rejectionBehavior"]["unknownSampleCount"])
+            self.assertIsNotNone(
+                report["metrics"]["rejectionBehavior"]["unknownRejectionRate"]
+            )
+
+            _, metadata_path = export_onnx(
+                checkpoint_path,
+                manifest_path,
+                root / "artifact" / "oov.onnx",
+            )
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            oov = next(label for label in metadata["labels"] if label["id"] == "OUT_OF_VOCABULARY")
+            self.assertEqual("REJECT", oov["outcome"])
+            self.assertIsNone(oov["captionText"])
+            self.assertEqual(report["metrics"], metadata["evaluation"]["metrics"])
+
+            tampered = copy.deepcopy(checkpoint)
+            tampered["evaluation"]["manifestSha256"] = "f" * 64
+            tampered_path = root / "tampered-evidence.pt"
+            torch.save(tampered, tampered_path)
+            with self.assertRaisesRegex(ValueError, "model contract"):
+                load_checkpoint_model(tampered_path)
+
+            swapped = copy.deepcopy(checkpoint)
+            tensor_name = next(iter(swapped["state_dict"]))
+            swapped["state_dict"][tensor_name] = (
+                swapped["state_dict"][tensor_name] + 0.25
+            )
+            swapped_path = root / "swapped-state.pt"
+            torch.save(swapped, swapped_path)
+            with self.assertRaisesRegex(ValueError, "model contract"):
+                load_checkpoint_model(swapped_path)
+            with self.assertRaisesRegex(ValueError, "model contract"):
+                export_onnx(swapped_path, manifest_path, root / "must-not-export.onnx")
+
+            metric_mutations = {
+                "accuracy": lambda metrics: metrics.__setitem__("accuracy", 0.123),
+                "macro f1": lambda metrics: metrics.__setitem__("macroF1", 0.123),
+                "class precision": lambda metrics: metrics["perClass"][0].__setitem__(
+                    "precision", 0.123
+                ),
+                "class recall": lambda metrics: metrics["perClass"][0].__setitem__(
+                    "recall", 0.123
+                ),
+                "class f1": lambda metrics: metrics["perClass"][0].__setitem__("f1", 0.123),
+            }
+            for name, mutate in metric_mutations.items():
+                with self.subTest(metric=name):
+                    tampered = copy.deepcopy(checkpoint)
+                    mutate(tampered["evaluation"]["metrics"])
+                    tampered_path = root / f"tampered-{name.replace(' ', '-')}.pt"
+                    torch.save(tampered, tampered_path)
+                    with self.assertRaisesRegex(ValueError, "model contract"):
+                        load_checkpoint_model(tampered_path)
+
+            tampered = copy.deepcopy(checkpoint)
+            behavior = tampered["evaluation"]["metrics"]["rejectionBehavior"]
+            behavior["unknownSampleCount"] = 2
+            behavior["unknownRejectedCount"] = 2
+            behavior["unknownRejectionRate"] = 1.0
+            behavior["unknownFalseFinalCount"] = 0
+            behavior["unknownFalseFinalRate"] = 0.0
+            tampered_path = root / "tampered-oov-support.pt"
+            torch.save(tampered, tampered_path)
+            with self.assertRaisesRegex(ValueError, "model contract"):
+                load_checkpoint_model(tampered_path)
 
 
 if __name__ == "__main__":

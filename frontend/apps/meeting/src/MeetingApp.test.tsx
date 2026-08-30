@@ -639,6 +639,8 @@ describe("Meeting recognition product UX", () => {
       calibration: { state: "ready", stableFrames: 8, requiredStableFrames: 8 },
       gesturePhase: "ready-for-inference"
     });
+    expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/^Ready to sign/);
+    await emitCompletedGesture(harness, worker);
     expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/^Processing/);
     expect(screen.queryAllByRole("article")).toHaveLength(0);
 
@@ -661,9 +663,203 @@ describe("Meeting recognition product UX", () => {
     });
     act(() => socket.message(unknownFixture));
     expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/sign not recognized/i);
+    await emitCompletedGesture(harness, worker);
+    expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/^Processing/);
     act(() => socket.message(captionFixture));
     expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/sign recognized/i);
     expect(screen.queryAllByRole("article")).toHaveLength(1);
+  });
+
+  it("keeps a dispatched gesture processing until its result settles, then returns to ready", async () => {
+    const harness = makeHarness();
+    await enableCamera(harness);
+    const socket = await connectSession(harness);
+    const worker = await startRecognition(harness, socket);
+    const readyFrame = {
+      timestampMs: harness.clock.value,
+      gestureModel: "unavailable",
+      hands: [],
+      upperBody: [],
+      gesture: null,
+      trackingQuality: {
+        state: "ready",
+        personDetected: true,
+        upperBodyVisible: true,
+        leftHandVisible: true,
+        rightHandVisible: true,
+        handsInsideFrame: true
+      },
+      calibration: { state: "ready", stableFrames: 8, requiredStableFrames: 8 },
+      gesturePhase: "idle"
+    };
+
+    await emitAcceptedFrame(harness, worker, "idle", readyFrame);
+    expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/^Ready to sign/);
+
+    await emitCompletedGesture(harness, worker);
+    expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/^Processing/);
+
+    await emitAcceptedFrame(harness, worker, "idle", {
+      ...readyFrame,
+      timestampMs: harness.clock.value
+    });
+    expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/^Processing/);
+
+    act(() => socket.message({
+      ...captionFixture,
+      streamId: "33333333-3333-4333-8333-333333333333",
+      participantId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      captionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      sequence: ++harness.roomSequence.value,
+      payload: { ...captionFixture.payload, sourceDisplayName: "Ari" }
+    }));
+    expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/^Processing/);
+
+    vi.useFakeTimers();
+    try {
+      act(() => socket.message(captionFixture));
+      expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/^Sign recognized/);
+
+      act(() => vi.advanceTimersByTime(1_999));
+      expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/^Sign recognized/);
+
+      act(() => vi.advanceTimersByTime(1));
+      expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/^Ready to sign/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("serializes completed gestures until the frozen v1 result settles", async () => {
+    const harness = makeHarness();
+    await enableCamera(harness);
+    const socket = await connectSession(harness);
+    const worker = await startRecognition(harness, socket);
+    await emitAcceptedFrame(harness, worker, "idle", {
+      timestampMs: harness.clock.value,
+      gestureModel: "unavailable",
+      hands: [],
+      upperBody: [],
+      gesture: null,
+      trackingQuality: {
+        state: "ready",
+        personDetected: true,
+        upperBodyVisible: true,
+        leftHandVisible: true,
+        rightHandVisible: true,
+        handsInsideFrame: true
+      },
+      calibration: { state: "ready", stableFrames: 8, requiredStableFrames: 8 },
+      gesturePhase: "idle"
+    });
+
+    await emitCompletedGesture(harness, worker);
+    expect(socket.parsedSent().filter((event) => event.type === "landmark.chunk")).toHaveLength(6);
+    expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/^Processing/);
+
+    await emitCompletedGesture(harness, worker);
+    expect(socket.parsedSent().filter((event) => event.type === "landmark.chunk")).toHaveLength(6);
+    expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/^Processing/);
+
+    act(() => socket.message(unknownFixture));
+    expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/^Sign not recognized/);
+    act(() => socket.message(captionFixture));
+    expect(screen.queryAllByRole("article")).toHaveLength(0);
+
+    await emitCompletedGesture(harness, worker);
+    expect(socket.parsedSent().filter((event) => event.type === "landmark.chunk")).toHaveLength(12);
+    expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/^Processing/);
+    expect(document.querySelector(".recognition-feedback")).not.toBeInTheDocument();
+  });
+
+  it("expires unknown feedback before the next gesture is dispatched", async () => {
+    const harness = makeHarness();
+    await enableCamera(harness);
+    const socket = await connectSession(harness);
+    const worker = await startRecognition(harness, socket);
+    await emitAcceptedFrame(harness, worker, "idle", {
+      timestampMs: harness.clock.value,
+      gestureModel: "unavailable",
+      hands: [],
+      upperBody: [],
+      gesture: null,
+      trackingQuality: {
+        state: "ready",
+        personDetected: true,
+        upperBodyVisible: true,
+        leftHandVisible: true,
+        rightHandVisible: true,
+        handsInsideFrame: true
+      },
+      calibration: { state: "ready", stableFrames: 8, requiredStableFrames: 8 },
+      gesturePhase: "idle"
+    });
+    await emitCompletedGesture(harness, worker);
+
+    vi.useFakeTimers();
+    try {
+      act(() => socket.message(unknownFixture));
+      expect(document.querySelector(".recognition-feedback")).toHaveTextContent(
+        /sign was not recognized with enough confidence/i
+      );
+
+      act(() => vi.advanceTimersByTime(2_000));
+      expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/^Ready to sign/);
+      expect(document.querySelector(".recognition-feedback")).not.toBeInTheDocument();
+
+      await emitCompletedGesture(harness, worker);
+      expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/^Processing/);
+      expect(document.querySelector(".recognition-feedback")).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels a settled result when a new gesture starts and clears processing on failure or stop", async () => {
+    const harness = makeHarness();
+    await enableCamera(harness);
+    const socket = await connectSession(harness);
+    const worker = await startRecognition(harness, socket);
+    await emitAcceptedFrame(harness, worker, "idle", {
+      timestampMs: harness.clock.value,
+      gestureModel: "unavailable",
+      hands: [],
+      upperBody: [],
+      gesture: null,
+      trackingQuality: {
+        state: "ready",
+        personDetected: true,
+        upperBodyVisible: true,
+        leftHandVisible: true,
+        rightHandVisible: true,
+        handsInsideFrame: true
+      },
+      calibration: { state: "ready", stableFrames: 8, requiredStableFrames: 8 },
+      gesturePhase: "idle"
+    });
+    await emitCompletedGesture(harness, worker);
+
+    vi.useFakeTimers();
+    try {
+      act(() => socket.message(unknownFixture));
+      expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/^Sign not recognized/);
+      act(() => vi.advanceTimersByTime(1_000));
+
+      await emitCompletedGesture(harness, worker);
+      expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/^Processing/);
+      act(() => vi.advanceTimersByTime(1_000));
+      expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/^Processing/);
+
+      act(() => socket.message(unavailableFixture));
+      expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/^Ready to sign/);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    await emitCompletedGesture(harness, worker);
+    expect(screen.getByLabelText("Camera readiness")).toHaveTextContent(/^Processing/);
+    await harness.user.click(screen.getByRole("button", { name: "Stop recognition" }));
+    expect(screen.getByLabelText("Camera readiness")).not.toHaveTextContent(/^Processing/);
   });
 
   it("releases signer ownership when tracking initialization fails after a grant", async () => {
@@ -975,11 +1171,16 @@ describe("Meeting recognition product UX", () => {
     const harness = makeHarness();
     await enableCamera(harness);
     const socket = await connectSession(harness);
-    await startRecognition(harness, socket);
+    const worker = await startRecognition(harness, socket);
+
+    await emitCompletedGesture(harness, worker);
+    act(() => socket.message(unknownFixture));
+    expect(document.querySelector(".recognition-feedback")).toHaveTextContent(/sign was not recognized/i);
+
+    await emitCompletedGesture(harness, worker);
 
     act(() => {
       socket.message(captionFixture);
-      socket.message(unknownFixture);
       socket.message(readyFixture);
       socket.message({ ...captionFixture, type: "caption.partial" });
       socket.messageRaw("{malformed");
@@ -990,7 +1191,6 @@ describe("Meeting recognition product UX", () => {
     expect(within(transcript).getAllByRole("article")).toHaveLength(1);
     expect(within(transcript).getByText(/synthetic-v1/i)).toBeVisible();
     expect(within(transcript).getByRole("note")).toHaveTextContent(/mock integration model/i);
-    expect(screen.getByText(/sign was not recognized/i)).toBeVisible();
     expect(screen.getByText(/unsupported realtime event was ignored/i)).toBeVisible();
   });
 
@@ -1036,6 +1236,7 @@ describe("Meeting recognition product UX", () => {
     const worker = await startRecognition(harness, socket);
 
     await emitCompletedGesture(harness, worker);
+    act(() => socket.message(unknownFixture));
     await emitCompletedGesture(harness, worker);
 
     const chunks = socket.parsedSent().filter((event) => event.type === "landmark.chunk");

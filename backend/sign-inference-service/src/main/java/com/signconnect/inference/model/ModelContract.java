@@ -106,7 +106,7 @@ public record ModelContract(
         decision.validate();
         Map<String, Label> labelsById = validateLabels();
         trainingDataset.validate();
-        evaluation.validate();
+        evaluation.validate(labels, decision.minimumConfidence());
         onnx.validate();
         runtime.validate();
         sgslReview.validate(labelsById);
@@ -184,6 +184,16 @@ public record ModelContract(
 
     private static boolean isProbability(Double value) {
         return isFinite(value) && value >= 0.0 && value <= 1.0;
+    }
+
+    private static boolean sameRate(Double actual, double expected) {
+        return isFinite(actual) && Double.isFinite(expected)
+                && Math.abs(actual - expected) <= 1e-12;
+    }
+
+    private static boolean sameNullableRate(Double actual, Double expected) {
+        return actual == null && expected == null
+                || actual != null && expected != null && sameRate(actual, expected);
     }
 
     private static boolean isFinite(Double value) {
@@ -318,12 +328,12 @@ public record ModelContract(
             EvaluationProtocolMetadata protocol,
             EvaluationMetricsMetadata metrics) {
 
-        private void validate() {
+        private void validate(List<Label> labels, Double minimumConfidence) {
             if (protocol == null || metrics == null) {
                 throw invalidMetadata();
             }
             protocol.validate();
-            metrics.validate();
+            metrics.validate(labels, minimumConfidence);
         }
     }
 
@@ -352,12 +362,267 @@ public record ModelContract(
             Double macroF1,
             Double accuracy,
             Double falseFinalRate,
-            Long sampleCount) {
+            Long sampleCount,
+            List<ClassMetricMetadata> perClass,
+            ConfusionMatrixMetadata confusionMatrix,
+            NoSignBehaviorMetadata noSignBehavior,
+            RejectionBehaviorMetadata rejectionBehavior) {
 
-        private void validate() {
+        private void validate(List<Label> labels, Double minimumConfidence) {
             if (!isProbability(macroF1) || !isProbability(accuracy)
                     || !isProbability(falseFinalRate)
                     || sampleCount == null || sampleCount < 0) {
+                throw invalidMetadata();
+            }
+
+            if (perClass != null) {
+                if (perClass.size() != labels.size()) {
+                    throw invalidMetadata();
+                }
+                for (int position = 0; position < perClass.size(); position++) {
+                    ClassMetricMetadata metric = perClass.get(position);
+                    if (metric == null) {
+                        throw invalidMetadata();
+                    }
+                    metric.validate(position, labels.get(position).id());
+                }
+            }
+            if (confusionMatrix != null) {
+                confusionMatrix.validate(labels, sampleCount, perClass);
+                validateMatrixDerivedMetrics(labels);
+            }
+            if (noSignBehavior != null) {
+                noSignBehavior.validate(falseFinalRate);
+            }
+            if (rejectionBehavior != null) {
+                rejectionBehavior.validate(sampleCount, minimumConfidence);
+            }
+        }
+
+        /**
+         * Binds argmax classification summaries to the confusion matrix.
+         * Thresholded rejection outcomes are intentionally validated separately:
+         * confidence values are not encoded in an argmax confusion matrix.
+         */
+        private void validateMatrixDerivedMetrics(List<Label> labels) {
+            List<List<Long>> rows = confusionMatrix.rows();
+            long diagonal = 0;
+            long rejectSupport = 0;
+            double macroF1Total = 0.0;
+            for (int index = 0; index < labels.size(); index++) {
+                long truePositive = rows.get(index).get(index);
+                long support = sumExact(rows.get(index));
+                long predicted = 0;
+                for (List<Long> row : rows) {
+                    try {
+                        predicted = Math.addExact(predicted, row.get(index));
+                    } catch (ArithmeticException overflow) {
+                        throw invalidMetadata();
+                    }
+                }
+                try {
+                    diagonal = Math.addExact(diagonal, truePositive);
+                } catch (ArithmeticException overflow) {
+                    throw invalidMetadata();
+                }
+
+                double expectedPrecision = predicted == 0
+                        ? 0.0 : (double) truePositive / predicted;
+                double expectedRecall = support == 0
+                        ? 0.0 : (double) truePositive / support;
+                double falsePositive = (double) predicted - truePositive;
+                double falseNegative = (double) support - truePositive;
+                double f1Denominator = 2.0 * truePositive + falsePositive + falseNegative;
+                double expectedF1 = f1Denominator == 0.0
+                        ? 0.0 : 2.0 * truePositive / f1Denominator;
+                macroF1Total += expectedF1;
+                if (labels.get(index).outcome() == LabelOutcome.REJECT) {
+                    try {
+                        rejectSupport = Math.addExact(rejectSupport, support);
+                    } catch (ArithmeticException overflow) {
+                        throw invalidMetadata();
+                    }
+                }
+
+                if (perClass != null) {
+                    ClassMetricMetadata reported = perClass.get(index);
+                    if (reported.support() != support
+                            || !sameRate(reported.precision(), expectedPrecision)
+                            || !sameRate(reported.recall(), expectedRecall)
+                            || !sameRate(reported.f1(), expectedF1)) {
+                        throw invalidMetadata();
+                    }
+                }
+                if (labels.get(index).outcome() == LabelOutcome.NO_SIGN
+                        && noSignBehavior != null
+                        && noSignBehavior.sampleCount() != support) {
+                    throw invalidMetadata();
+                }
+            }
+
+            double expectedAccuracy = sampleCount == 0
+                    ? 0.0 : (double) diagonal / sampleCount;
+            double expectedMacroF1 = macroF1Total / labels.size();
+            if (!sameRate(accuracy, expectedAccuracy)
+                    || !sameRate(macroF1, expectedMacroF1)
+                    || rejectionBehavior != null
+                    && rejectionBehavior.unknownSampleCount() != rejectSupport) {
+                throw invalidMetadata();
+            }
+        }
+
+        private static long sumExact(List<Long> values) {
+            long total = 0;
+            for (Long value : values) {
+                try {
+                    total = Math.addExact(total, value);
+                } catch (ArithmeticException overflow) {
+                    throw invalidMetadata();
+                }
+            }
+            return total;
+        }
+    }
+
+    public record ClassMetricMetadata(
+            Integer index,
+            String labelId,
+            Double precision,
+            Double recall,
+            Double f1,
+            Long support) {
+
+        private void validate(int expectedIndex, String expectedLabelId) {
+            if (index == null || index != expectedIndex
+                    || !expectedLabelId.equals(labelId)
+                    || !isProbability(precision) || !isProbability(recall)
+                    || !isProbability(f1) || support == null || support < 0) {
+                throw invalidMetadata();
+            }
+        }
+    }
+
+    public record ConfusionMatrixMetadata(
+            List<String> labelOrder,
+            List<List<Long>> rows) {
+
+        private void validate(
+                List<Label> labels,
+                long sampleCount,
+                List<ClassMetricMetadata> perClass) {
+            List<String> expectedLabelOrder = labels.stream().map(Label::id).toList();
+            if (!expectedLabelOrder.equals(labelOrder)
+                    || rows == null || rows.size() != labels.size()) {
+                throw invalidMetadata();
+            }
+
+            long total = 0;
+            for (int rowIndex = 0; rowIndex < rows.size(); rowIndex++) {
+                List<Long> row = rows.get(rowIndex);
+                if (row == null || row.size() != labels.size()) {
+                    throw invalidMetadata();
+                }
+                long support = 0;
+                for (Long value : row) {
+                    if (value == null || value < 0) {
+                        throw invalidMetadata();
+                    }
+                    try {
+                        support = Math.addExact(support, value);
+                        total = Math.addExact(total, value);
+                    } catch (ArithmeticException overflow) {
+                        throw invalidMetadata();
+                    }
+                }
+                if (perClass != null && support != perClass.get(rowIndex).support()) {
+                    throw invalidMetadata();
+                }
+            }
+            if (total != sampleCount) {
+                throw invalidMetadata();
+            }
+        }
+    }
+
+    public record NoSignBehaviorMetadata(
+            Long sampleCount,
+            Long falseFinalCount,
+            Double falseFinalRate) {
+
+        private void validate(Double summaryFalseFinalRate) {
+            if (sampleCount == null || sampleCount < 0
+                    || falseFinalCount == null || falseFinalCount < 0
+                    || falseFinalCount > sampleCount
+                    || !isProbability(falseFinalRate)) {
+                throw invalidMetadata();
+            }
+            double expectedRate = sampleCount == 0
+                    ? 0.0
+                    : (double) falseFinalCount / sampleCount;
+            if (!sameRate(falseFinalRate, expectedRate)
+                    || !sameRate(summaryFalseFinalRate, falseFinalRate)) {
+                throw invalidMetadata();
+            }
+        }
+    }
+
+    public record RejectionBehaviorMetadata(
+            Double minimumConfidence,
+            Long acceptedSignCount,
+            Long lowConfidenceRejectionCount,
+            Long noSignDecisionCount,
+            Double rejectionRate,
+            Double acceptedSignAccuracy,
+            Long unknownSampleCount,
+            Long unknownRejectedCount,
+            Double unknownRejectionRate,
+            Long unknownFalseFinalCount,
+            Double unknownFalseFinalRate) {
+
+        private void validate(long evaluationSampleCount, Double runtimeMinimumConfidence) {
+            if (!isFinite(minimumConfidence)
+                    || minimumConfidence <= 0.0 || minimumConfidence > 1.0
+                    || acceptedSignCount == null || acceptedSignCount < 0
+                    || lowConfidenceRejectionCount == null || lowConfidenceRejectionCount < 0
+                    || noSignDecisionCount == null || noSignDecisionCount < 0
+                    || !isProbability(rejectionRate)
+                    || acceptedSignAccuracy != null && !isProbability(acceptedSignAccuracy)
+                    || unknownSampleCount == null || unknownSampleCount < 0
+                    || unknownSampleCount > evaluationSampleCount
+                    || unknownRejectedCount == null || unknownRejectedCount < 0
+                    || unknownRejectionRate != null && !isProbability(unknownRejectionRate)
+                    || unknownFalseFinalCount == null || unknownFalseFinalCount < 0
+                    || unknownFalseFinalRate != null && !isProbability(unknownFalseFinalRate)) {
+                throw invalidMetadata();
+            }
+
+            long outcomeTotal;
+            long unknownOutcomeTotal;
+            try {
+                outcomeTotal = Math.addExact(
+                        Math.addExact(acceptedSignCount, lowConfidenceRejectionCount),
+                        noSignDecisionCount);
+                unknownOutcomeTotal = Math.addExact(unknownRejectedCount, unknownFalseFinalCount);
+            } catch (ArithmeticException overflow) {
+                throw invalidMetadata();
+            }
+            Double expectedUnknownRejection = unknownSampleCount == 0
+                    ? null
+                    : (double) unknownRejectedCount / unknownSampleCount;
+            Double expectedUnknownFalseFinal = unknownSampleCount == 0
+                    ? null
+                    : (double) unknownFalseFinalCount / unknownSampleCount;
+            double expectedRejectionRate = evaluationSampleCount == 0
+                    ? 0.0
+                    : (double) lowConfidenceRejectionCount / evaluationSampleCount;
+
+            if (outcomeTotal != evaluationSampleCount
+                    || !sameRate(minimumConfidence, runtimeMinimumConfidence)
+                    || !sameRate(rejectionRate, expectedRejectionRate)
+                    || unknownOutcomeTotal != unknownSampleCount
+                    || !sameNullableRate(unknownRejectionRate, expectedUnknownRejection)
+                    || !sameNullableRate(unknownFalseFinalRate, expectedUnknownFalseFinal)
+                    || (acceptedSignCount == 0) != (acceptedSignAccuracy == null)) {
                 throw invalidMetadata();
             }
         }
@@ -516,6 +781,17 @@ public record ModelContract(
                     || contract.evaluation().metrics().macroF1() < 0.8
                     || contract.evaluation().metrics().falseFinalRate() > 0.05
                     || contract.evaluation().metrics().sampleCount() < 1
+                    || contract.evaluation().metrics().perClass() == null
+                    || contract.evaluation().metrics().confusionMatrix() == null
+                    || contract.evaluation().metrics().noSignBehavior() == null
+                    || contract.evaluation().metrics().noSignBehavior().sampleCount() < 1
+                    || contract.evaluation().metrics().noSignBehavior().falseFinalRate() > 0.05
+                    || contract.evaluation().metrics().rejectionBehavior() == null
+                    || contract.evaluation().metrics().rejectionBehavior().unknownSampleCount() < 1
+                    || contract.evaluation().metrics().rejectionBehavior().unknownRejectionRate() == null
+                    || contract.evaluation().metrics().rejectionBehavior().unknownRejectionRate() < 0.95
+                    || contract.evaluation().metrics().rejectionBehavior().unknownFalseFinalRate() == null
+                    || contract.evaluation().metrics().rejectionBehavior().unknownFalseFinalRate() > 0.05
                     || !contract.onnx().parity().verified()
                     || contract.runtime().warmedP95LatencyMs() <= 0.0
                     || contract.runtime().warmedP95LatencyMs() > 500.0

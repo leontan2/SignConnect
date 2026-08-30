@@ -57,6 +57,40 @@ function featureFrame(timestampMs: number, coordinate: number, firstPointPresent
   return { timestampMs, features };
 }
 
+function poseAdjustedDetection(
+  sample: LandmarkDetection,
+  handTranslationX = 0,
+  fingerArticulationX = 0
+): LandmarkDetection {
+  const angle = 0.05;
+  const scale = 1.04;
+  const cosine = Math.cos(angle);
+  const sine = Math.sin(angle);
+  const transform = (landmark: RawLandmark): RawLandmark => {
+    const centeredX = landmark.x - 0.5;
+    const centeredY = landmark.y - 0.5;
+    return {
+      ...landmark,
+      x: 0.5 + centeredX * scale * cosine - centeredY * scale * sine + 0.05,
+      y: 0.5 + centeredX * scale * sine + centeredY * scale * cosine + 0.015
+    };
+  };
+
+  return {
+    hands: sample.hands.map((detectedHand) => ({
+      ...detectedHand,
+      landmarks: detectedHand.landmarks.map((landmark, index) => {
+        const adjusted = transform(landmark);
+        return {
+          ...adjusted,
+          x: adjusted.x + handTranslationX + (index === 0 ? 0 : fingerArticulationX)
+        };
+      })
+    })),
+    poseLandmarks: sample.poseLandmarks?.map(transform)
+  };
+}
+
 describe("browser-local tracking quality", () => {
   it("reports actionable categorical facts without exposing landmark values", () => {
     const cases: Array<[LandmarkDetection, string]> = [
@@ -190,6 +224,84 @@ describe("gesture segmentation", () => {
     expect(observePhase(40, 0.3, 0.04)).toBe("active");
     expect(observePhase(80, 0.3, 0.08)).toBe("active");
     expect(observePhase(40, 0.6, 0.08)).toBe("active");
+  });
+
+  it("ignores common camera and pose motion while preserving hand and finger motion", () => {
+    const baseline = detection();
+    const phaseAfter = (sample: LandmarkDetection) => {
+      const segmenter = new GestureSegmenter({ ...segmenterOptions, startFrames: 1 });
+      segmenter.observe(baseline, evaluateTrackingQuality(baseline), 0);
+      return segmenter.observe(sample, evaluateTrackingQuality(sample), 40).phase;
+    };
+
+    expect([
+      phaseAfter(poseAdjustedDetection(baseline)),
+      phaseAfter({ ...poseAdjustedDetection(baseline), hands: baseline.hands }),
+      phaseAfter(poseAdjustedDetection(baseline, 0.04)),
+      phaseAfter(poseAdjustedDetection(baseline, 0, 0.04))
+    ]).toEqual(["idle", "idle", "active", "active"]);
+  });
+
+  it("preserves finger motion when simultaneous body motion cancels its screen displacement", () => {
+    const baseline = detection();
+    const bodyTranslationX = 0.04;
+    const translatedPose = baseline.poseLandmarks?.map((landmark) => ({
+      ...landmark,
+      x: landmark.x + bodyTranslationX
+    }));
+    const counterMovedFingers: LandmarkDetection = {
+      hands: baseline.hands.map((detectedHand) => ({
+        ...detectedHand,
+        landmarks: detectedHand.landmarks.map((landmark, index) => ({
+          ...landmark,
+          x: index === 0 ? landmark.x + bodyTranslationX : landmark.x
+        }))
+      })),
+      poseLandmarks: translatedPose
+    };
+    const segmenter = new GestureSegmenter({ ...segmenterOptions, startFrames: 1 });
+
+    segmenter.observe(baseline, evaluateTrackingQuality(baseline), 0);
+
+    expect(segmenter.observe(
+      counterMovedFingers,
+      evaluateTrackingQuality(counterMovedFingers),
+      40
+    ).phase).toBe("active");
+  });
+
+  it("preserves whole-hand motion when opposite body motion cancels wrist screen displacement", () => {
+    const baseline = detection();
+    const bodyTranslationX = 0.04;
+    const counterMovedHands = (handedness: DetectedHand["handedness"] | "Both"): LandmarkDetection => ({
+      hands: baseline.hands.map((detectedHand) => ({
+        ...detectedHand,
+        landmarks: detectedHand.landmarks.map((landmark) => ({
+          ...landmark,
+          x: handedness === "Both" || handedness === detectedHand.handedness
+            ? landmark.x
+            : landmark.x + bodyTranslationX
+        }))
+      })),
+      poseLandmarks: baseline.poseLandmarks?.map((landmark, index) => ({
+        ...landmark,
+        x: (handedness === "Both" && (index === 15 || index === 16))
+          || (handedness === "Left" && index === 15)
+          || (handedness === "Right" && index === 16)
+          ? landmark.x
+          : landmark.x + bodyTranslationX
+      }))
+    });
+    const phaseAfter = (sample: LandmarkDetection) => {
+      const segmenter = new GestureSegmenter({ ...segmenterOptions, startFrames: 1 });
+      segmenter.observe(baseline, evaluateTrackingQuality(baseline), 0);
+      return segmenter.observe(sample, evaluateTrackingQuality(sample), 40).phase;
+    };
+
+    expect([
+      phaseAfter(counterMovedHands("Left")),
+      phaseAfter(counterMovedHands("Both"))
+    ]).toEqual(["active", "active"]);
   });
 
   it("resets on a missing-hand state, an incomplete calibration, or a dropped-frame gap", () => {

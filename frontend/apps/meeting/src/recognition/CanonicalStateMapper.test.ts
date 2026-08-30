@@ -13,6 +13,7 @@ const ready: CanonicalStateInput = {
   trackingQuality: "ready",
   calibrationReady: true,
   gesturePhase: "idle",
+  recognitionPending: false,
   recognitionOutcome: null
 };
 
@@ -29,7 +30,7 @@ describe("CanonicalStateMapper", () => {
       [{ trackingQuality: "low-quality" }, "Lighting or tracking quality too poor"],
       [{}, "Ready to sign"],
       [{ gesturePhase: "active" }, "Gesture in progress"],
-      [{ gesturePhase: "ready-for-inference" }, "Processing"],
+      [{ recognitionPending: true }, "Processing"],
       [{ recognitionOutcome: "recognized" }, "Sign recognized"],
       [{ recognitionOutcome: "not-recognized" }, "Sign not recognized"]
     ];
@@ -64,12 +65,12 @@ describe("CanonicalStateMapper", () => {
     })).toBe("Camera initializing");
     expect(mapCanonicalApplicationState({
       ...ready,
-      gesturePhase: "ready-for-inference",
+      recognitionPending: true,
       recognitionOutcome: "recognized"
     })).toBe("Sign recognized");
     expect(mapCanonicalApplicationState({
       ...ready,
-      gesturePhase: "ready-for-inference",
+      recognitionPending: true,
       recognitionOutcome: "not-recognized"
     })).toBe("Sign not recognized");
   });

@@ -50,6 +50,7 @@ export interface UseSignRecognitionResult {
   streamId: string | null;
   browserLocalFrame: BrowserLocalVisionFrame | null;
   trackingAnnouncement: string;
+  settleGesture(streamId: string): void;
   start(): boolean;
   stop(): void;
   revoke(): void;
@@ -138,6 +139,7 @@ export function useSignRecognition(options: UseSignRecognitionOptions): UseSignR
   const activeStreamRef = useRef<string | null>(null);
   const serverStartedStreamRef = useRef<string | null>(null);
   const gestureTransportRef = useRef<GestureTransportState | null>(null);
+  const gestureInFlightStreamRef = useRef<string | null>(null);
   const failGestureTransportRef = useRef<() => void>(() => undefined);
   const lastControlTimestampRef = useRef(Number.NEGATIVE_INFINITY);
   const [enabledByUser, setEnabledByUser] = useState(false);
@@ -153,6 +155,7 @@ export function useSignRecognition(options: UseSignRecognitionOptions): UseSignR
         || !streamId
         || serverStartedStreamRef.current !== streamId
         || transport?.streamId !== streamId
+        || gestureInFlightStreamRef.current === streamId
         || optionsRef.current.signerGranted === false) {
         return;
       }
@@ -170,6 +173,10 @@ export function useSignRecognition(options: UseSignRecognitionOptions): UseSignR
         return;
       }
 
+      // v1 terminal events identify only the stream, not an individual gesture.
+      // Keep exactly one completed gesture in flight so a result cannot be
+      // attributed to a newer gesture on the same stream.
+      gestureInFlightStreamRef.current = streamId;
       for (const chunk of chunks) {
         if (optionsRef.current.isUnderPressure() || !optionsRef.current.send(chunk)) {
           failGestureTransportRef.current();
@@ -193,9 +200,16 @@ export function useSignRecognition(options: UseSignRecognitionOptions): UseSignR
     if (streamId === null) {
       serverStartedStreamRef.current = null;
       gestureTransportRef.current = null;
+      gestureInFlightStreamRef.current = null;
     }
     setActiveStreamId(streamId);
     optionsRef.current.onStreamChange?.(streamId);
+  }, []);
+
+  const settleGesture = useCallback((streamId: string) => {
+    if (gestureInFlightStreamRef.current === streamId) {
+      gestureInFlightStreamRef.current = null;
+    }
   }, []);
 
   const timestamp = useCallback(() => {
@@ -380,6 +394,7 @@ export function useSignRecognition(options: UseSignRecognitionOptions): UseSignR
     activeStreamRef.current = null;
     serverStartedStreamRef.current = null;
     gestureTransportRef.current = null;
+    gestureInFlightStreamRef.current = null;
     stopCapture();
   }, [stopCapture, timestamp]);
 
@@ -390,6 +405,7 @@ export function useSignRecognition(options: UseSignRecognitionOptions): UseSignR
     streamId: activeStreamId,
     browserLocalFrame: capture.browserLocalFrame,
     trackingAnnouncement,
+    settleGesture,
     start,
     stop,
     revoke,

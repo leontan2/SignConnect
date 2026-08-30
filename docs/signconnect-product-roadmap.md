@@ -43,7 +43,7 @@ SignConnect already contains a meaningful recognition pipeline:
 - MediaPipe hand and upper-body landmark extraction runs in a browser worker.
 - Capture targets approximately 25 processed frames per second.
 - A completed browser-local gesture is resampled to 30 frames and sent as six ordered five-frame `landmark.chunk` messages.
-- The realtime service assembles one `[1, 30, 224]` candidate per completed gesture; at most one inference is in flight and newer completed work may replace an older pending candidate. Rolling windows remain an explicit legacy mode only.
+- The browser serializes completed gestures because v1 results identify only the stream. The realtime service assembles one `[1, 30, 224]` candidate per dispatched gesture; at most one inference is in flight and latest-pending replacement remains a defensive fallback for legacy or non-browser clients. Rolling windows remain an explicit legacy mode only.
 - Spring Boot calls the inference service over HTTP.
 - ONNX Runtime Java executes the configured model locally.
 - The realtime service returns immediate final/unknown decisions in default segmented mode and handles occurrence separation, backpressure, timeouts, and reconnect resets; temporal voting, idle finalization, cooldown, and duplicate suppression belong to explicit legacy rolling mode.
@@ -419,7 +419,7 @@ Recommended events:
 
 Treat event categories differently:
 
-- Completed landmark candidates: one inference may be in flight; a newer complete candidate may replace older pending work without mixing gesture frames.
+- Completed landmark candidates: the browser waits for the current stream-only result before another dispatch; the server still permits one inference in flight and may replace older pending work from a legacy/non-browser client without mixing gesture frames.
 - Control and signer-ownership events: ordered and never silently dropped.
 - Final captions: ordered, idempotent, and never replaced by a newer caption.
 - Presence: snapshots may supersede older transient presence updates.
@@ -484,7 +484,7 @@ The automated acceptance scenarios are implemented in the backend WebSocket and 
 
 ## Status
 
-- [x] Complete — 2026-08-30
+- [-] In progress — engineering and fixture gates pass; supported-browser physical-camera acceptance remains open
 
 ## Objective
 
@@ -586,8 +586,8 @@ Preserve the existing MediaPipe handedness correction and validate it with recor
 ## Acceptance gate
 
 - [x] The interface explains why recognition is unavailable.
-- [x] Users can position themselves without guessing.
-- [x] Camera adjustment does not begin a sign accidentally.
+- [-] Users can position themselves without guessing in fixture-backed browser coverage; physical-camera acceptance remains open.
+- [-] Camera/body adjustment is compensated and regression-tested; physical-camera acceptance remains open.
 - [x] Held signs do not repeatedly emit captions.
 - [x] Returning to idle separates genuine repeated signs.
 - [x] Deterministic fixtures normalize consistently across distance, frame rate, missing-point masks, and dropped-frame gaps.
@@ -1144,21 +1144,21 @@ Copy this template when completing a milestone:
 ### Milestone 3 implementation record
 
 - Branch: `codex/gesture-segmentation`
-- Pull request or commit: Recorded when the implementation loop is committed.
+- Pull request or commit: `ab31ce88559093e0069d0664c1f1f0d149382dbf`
 - Implementation date: 2026-08-30
 - Demonstration performed: The running fixture-backed app traversed actionable camera-quality, calibration, gesture, processing, recognized, and unknown states; the optional overlay remained keyboard-operable and the completed UI reflowed at 320 CSS pixels.
-- Automated checks run: Repository verifier, 90 meeting tests, 145 backend tests, 18 ML tests, 23 training-contract fixtures, production builds, and 16/16 E2E tests in bundled Chromium, installed Chrome, and installed Edge. Performance evidence is recorded in the AI implementation checklist.
+- Automated checks run: Unified release verifier, 97 meeting tests, 162 backend tests, 42 ML tests, 23 training-contract fixtures, typecheck, production builds, release-runner self-test, 16/16 E2E tests in bundled Chromium, installed Chrome, and installed Edge, simulator 1/1, and performance 1/1. Performance evidence is recorded in the AI implementation checklist.
 - Known limitations: Browser fixtures use deterministic normalized landmarks and the bundled classifier is synthetic; this is not SGSL recognition evidence.
 - Follow-up work: Obtain approved training governance, an SGSL-fluent Deaf reviewer, and consented multi-signer SGSL data before genuine model training.
-- Acceptance gate: PASS
+- Acceptance gate: PARTIAL — automated engineering/browser gates pass; supported-browser physical-camera validation remains open
 
 ### Milestone 4 engineering-pipeline record
 
 - Branch: `codex/gesture-segmentation`
-- Pull request or commit: Recorded when the implementation loop is committed.
+- Pull request or commit: `ab31ce88559093e0069d0664c1f1f0d149382dbf`
 - Implementation date: 2026-08-30
 - Demonstration performed: Reproducible synthetic TCN training/export/parity and explicit Java loading proved the mechanics without claiming SGSL quality.
-- Automated checks run: Strict contract fixtures, signer-leak checks, TCN/GRU unit coverage, Python/ONNX parity, Java fail-closed model validation, full repository verifier, Chromium E2E, and synthetic latency probes.
+- Automated checks run: Strict contract fixtures, signer-leak and OOV/reject-accounting checks, model-state-bound locked-test evidence, TCN/GRU unit coverage, Python/ONNX parity, Java fail-closed model validation, full unified release verifier, three-browser E2E, and synthetic latency probes.
 - Known limitations: No approved SGSL reviewer, collection consent, licensed multi-signer SGSL dataset, locked independent test signer, or promoted `mockModel: false` artifact exists.
 - Follow-up work: Clear the G5 external-input gate in `docs/ai-model-implementation-checklist.md`, then run identical signer-disjoint TCN/GRU evaluation and the genuine browser promotion gates.
 - Acceptance gate: BLOCKED — engineering groundwork is complete; genuine SGSL proof is not.

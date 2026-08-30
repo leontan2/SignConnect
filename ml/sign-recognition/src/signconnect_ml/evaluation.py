@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
@@ -35,6 +34,8 @@ def evaluate_model(
         np.concatenate(targets_parts),
         manifest.no_sign_index,
         false_final_threshold,
+        unknown_mask=np.asarray(dataset.unknown_mask, dtype=np.bool_),
+        reject_indices=manifest.reject_indices,
     )
 
 
@@ -43,17 +44,53 @@ def metrics_document(
     manifest: DatasetManifest,
     split_name: str,
 ) -> dict:
-    document = asdict(metrics)
-    document["per_class_f1"] = {
-        label: score for label, score in zip(manifest.classes, metrics.per_class_f1)
-    }
+    per_class = [
+        {
+            "index": index,
+            "labelId": label,
+            "precision": metrics.per_class_precision[index],
+            "recall": metrics.per_class_recall[index],
+            "f1": metrics.per_class_f1[index],
+            "support": metrics.per_class_support[index],
+        }
+        for index, label in enumerate(manifest.classes)
+    ]
+    rejection = metrics.rejection
     return {
         "schemaVersion": 1,
         "datasetId": manifest.dataset_id,
         "manifestSha256": manifest.sha256,
         "provenanceStatus": manifest.provenance_status,
         "split": split_name,
-        "metrics": document,
+        "metrics": {
+            "accuracy": metrics.accuracy,
+            "macroF1": metrics.macro_f1,
+            "falseFinalRate": metrics.false_final_rate,
+            "sampleCount": sum(metrics.per_class_support),
+            "perClass": per_class,
+            "confusionMatrix": {
+                "labelOrder": list(manifest.classes),
+                "rows": [list(row) for row in metrics.confusion_matrix],
+            },
+            "noSignBehavior": {
+                "sampleCount": metrics.no_sign_count,
+                "falseFinalCount": metrics.false_final_count,
+                "falseFinalRate": metrics.false_final_rate,
+            },
+            "rejectionBehavior": {
+                "minimumConfidence": rejection.minimum_confidence,
+                "acceptedSignCount": rejection.accepted_sign_count,
+                "lowConfidenceRejectionCount": rejection.low_confidence_rejection_count,
+                "noSignDecisionCount": rejection.no_sign_decision_count,
+                "rejectionRate": rejection.rejection_rate,
+                "acceptedSignAccuracy": rejection.accepted_sign_accuracy,
+                "unknownSampleCount": rejection.unknown_sample_count,
+                "unknownRejectedCount": rejection.unknown_rejected_count,
+                "unknownRejectionRate": rejection.unknown_rejection_rate,
+                "unknownFalseFinalCount": rejection.unknown_false_final_count,
+                "unknownFalseFinalRate": rejection.unknown_false_final_rate,
+            },
+        },
     }
 
 

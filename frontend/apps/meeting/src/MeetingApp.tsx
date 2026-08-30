@@ -56,7 +56,10 @@ type CameraState = "off" | "requesting" | "on" | "permission-denied" | "no-devic
 
 type ProductState = {
   captions: CaptionEvent[];
+  pendingRecognitionStreamId: string | null;
   latestRecognitionOutcome: "recognized" | "not-recognized" | null;
+  latestRecognitionStreamId: string | null;
+  recognitionResultToken: number;
   recognitionFeedback: string | null;
   serviceStatus: string;
   protocolFeedback: string | null;
@@ -68,13 +71,18 @@ type ProductAction =
   | { type: "server-event"; event: ServerRealtimeEvent }
   | { type: "parse-issue"; reason: "malformed" | "unsupported" }
   | { type: "room-order-issue" }
-  | { type: "gesture-dispatched" }
+  | { type: "gesture-dispatched"; streamId: string }
+  | { type: "recognition-ended"; streamId: string }
+  | { type: "recognition-result-expired"; token: number }
   | { type: "signer-feedback"; message: string | null }
   | { type: "reset-session" };
 
 const INITIAL_PRODUCT_STATE: ProductState = {
   captions: [],
+  pendingRecognitionStreamId: null,
   latestRecognitionOutcome: null,
+  latestRecognitionStreamId: null,
+  recognitionResultToken: 0,
   recognitionFeedback: null,
   serviceStatus: "Recognition service is waiting.",
   protocolFeedback: null,
@@ -83,6 +91,7 @@ const INITIAL_PRODUCT_STATE: ProductState = {
 };
 
 const SIMULATOR_ENABLED = process.env.RECOGNITION_SIMULATOR_ENABLED === "true";
+const RECOGNITION_RESULT_DWELL_MS = 2_000;
 
 function productReducer(state: ProductState, action: ProductAction): ProductState {
   if (action.type === "reset-session") return { ...INITIAL_PRODUCT_STATE };
@@ -90,7 +99,33 @@ function productReducer(state: ProductState, action: ProductAction): ProductStat
     return { ...state, protocolFeedback: "Some room updates arrived out of order. The newest room state is shown." };
   }
   if (action.type === "gesture-dispatched") {
-    return { ...state, latestRecognitionOutcome: null };
+    return {
+      ...state,
+      pendingRecognitionStreamId: action.streamId,
+      latestRecognitionOutcome: null,
+      latestRecognitionStreamId: null,
+      recognitionFeedback: null
+    };
+  }
+  if (action.type === "recognition-ended") {
+    if (state.pendingRecognitionStreamId !== action.streamId
+      && state.latestRecognitionStreamId !== action.streamId) return state;
+    return {
+      ...state,
+      pendingRecognitionStreamId: null,
+      latestRecognitionOutcome: null,
+      latestRecognitionStreamId: null,
+      recognitionFeedback: null
+    };
+  }
+  if (action.type === "recognition-result-expired") {
+    if (state.recognitionResultToken !== action.token) return state;
+    return {
+      ...state,
+      latestRecognitionOutcome: null,
+      latestRecognitionStreamId: null,
+      recognitionFeedback: null
+    };
   }
   if (action.type === "signer-feedback") return { ...state, signerFeedback: action.message };
   if (action.type === "parse-issue") {
@@ -105,10 +140,19 @@ function productReducer(state: ProductState, action: ProductAction): ProductStat
     if (event.captionId && state.captions.some((caption) => caption.captionId === event.captionId)) {
       return state;
     }
+    const matchesPendingRecognition = event.streamId === state.pendingRecognitionStreamId;
+    if (!matchesPendingRecognition && event.participantId === undefined) {
+      return state;
+    }
     return {
       ...state,
       captions: [...state.captions, event],
-      latestRecognitionOutcome: "recognized",
+      pendingRecognitionStreamId: matchesPendingRecognition ? null : state.pendingRecognitionStreamId,
+      latestRecognitionOutcome: matchesPendingRecognition ? "recognized" : state.latestRecognitionOutcome,
+      latestRecognitionStreamId: matchesPendingRecognition ? event.streamId : state.latestRecognitionStreamId,
+      recognitionResultToken: matchesPendingRecognition
+        ? state.recognitionResultToken + 1
+        : state.recognitionResultToken,
       recognitionFeedback: null,
       mockModelActive: state.mockModelActive || event.payload.mockModel
     };
@@ -117,10 +161,21 @@ function productReducer(state: ProductState, action: ProductAction): ProductStat
     const reason = event.payload.reason === "LOW_CONFIDENCE"
       ? "The sign was not recognized with enough confidence."
       : "The sign was not recognized because tracking was unstable.";
+    const matchesPendingRecognition = event.streamId === state.pendingRecognitionStreamId;
+    if (!matchesPendingRecognition) {
+      return event.payload.mockModel && !state.mockModelActive
+        ? { ...state, mockModelActive: true }
+        : state;
+    }
     return {
       ...state,
       recognitionFeedback: reason,
-      latestRecognitionOutcome: "not-recognized",
+      pendingRecognitionStreamId: matchesPendingRecognition ? null : state.pendingRecognitionStreamId,
+      latestRecognitionOutcome: matchesPendingRecognition ? "not-recognized" : state.latestRecognitionOutcome,
+      latestRecognitionStreamId: matchesPendingRecognition ? event.streamId : state.latestRecognitionStreamId,
+      recognitionResultToken: matchesPendingRecognition
+        ? state.recognitionResultToken + 1
+        : state.recognitionResultToken,
       mockModelActive: state.mockModelActive || event.payload.mockModel
     };
   }
@@ -137,8 +192,25 @@ function productReducer(state: ProductState, action: ProductAction): ProductStat
   } else if (event.payload.state === "STOPPED") {
     serviceStatus = "Recognition stopped.";
   }
+  const recognitionFailed = event.payload.state === "UNAVAILABLE"
+    || event.payload.state === "INVALID_INPUT"
+    || event.payload.state === "STOPPED";
+  const matchesPendingRecognition = event.streamId === state.pendingRecognitionStreamId;
+  const matchesRecognitionResult = event.streamId === state.latestRecognitionStreamId;
   return {
     ...state,
+    pendingRecognitionStreamId: recognitionFailed && matchesPendingRecognition
+      ? null
+      : state.pendingRecognitionStreamId,
+    latestRecognitionOutcome: recognitionFailed && (matchesPendingRecognition || matchesRecognitionResult)
+      ? null
+      : state.latestRecognitionOutcome,
+    latestRecognitionStreamId: recognitionFailed && matchesRecognitionResult
+      ? null
+      : state.latestRecognitionStreamId,
+    recognitionFeedback: recognitionFailed && (matchesPendingRecognition || matchesRecognitionResult)
+      ? null
+      : state.recognitionFeedback,
     serviceStatus,
     mockModelActive: state.mockModelActive || event.payload.mockModel === true
   };
@@ -182,6 +254,7 @@ function cameraReadinessGuidance(
   cameraState: CameraState,
   recognitionEnabled: boolean,
   frame: BrowserLocalVisionFrame | null,
+  recognitionPending: boolean,
   recognitionOutcome: ProductState["latestRecognitionOutcome"]
 ): CameraReadinessGuidance {
   const title = mapCanonicalApplicationState({
@@ -191,6 +264,7 @@ function cameraReadinessGuidance(
     trackingQuality: frame?.trackingQuality.state ?? null,
     calibrationReady: frame?.calibration.state === "ready",
     gesturePhase: frame?.gesturePhase ?? null,
+    recognitionPending,
     recognitionOutcome
   });
   switch (title) {
@@ -390,6 +464,14 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
     const [signerOwnership, setSignerOwnership] = useState<SignerOwnershipState>(INITIAL_SIGNER_STATE);
     const [liveAnnouncement, setLiveAnnouncement] = useState("");
     const [product, dispatch] = useReducer(productReducer, INITIAL_PRODUCT_STATE);
+    useEffect(() => {
+      if (product.latestRecognitionOutcome === null) return;
+      const token = product.recognitionResultToken;
+      const handle = window.setTimeout(() => {
+        dispatch({ type: "recognition-result-expired", token });
+      }, RECOGNITION_RESULT_DWELL_MS);
+      return () => window.clearTimeout(handle);
+    }, [product.latestRecognitionOutcome, product.recognitionResultToken]);
     const { toasts, pushToast, dismissToast } = useToastQueue();
     const announce = useCallback((message: string) => setLiveAnnouncement(message), []);
     const notify = useCallback((notice: Parameters<typeof pushToast>[0]) => {
@@ -415,10 +497,13 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
     const signerOwnershipRef = useRef(signerOwnership);
     const currentParticipantRef = useRef(currentParticipant);
     const revokeRecognitionRef = useRef<() => void>(() => undefined);
+    const settleRecognitionGestureRef = useRef<(streamId: string) => void>(() => undefined);
     const stopMediaRef = useRef<() => void>(() => undefined);
+    const productRef = useRef(product);
 
     signerOwnershipRef.current = signerOwnership;
     currentParticipantRef.current = currentParticipant;
+    productRef.current = product;
 
     const acceptServerEvent = useCallback((event: ServerRealtimeEvent, generation: number) => {
       if (roomGenerationRef.current !== generation) {
@@ -537,6 +622,14 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
         if (!isTerminalStop) return;
         recentlyStoppedStreamRef.current = null;
       }
+      if (event.type === "recognition.status"
+        && (event.payload.state === "UNAVAILABLE"
+          || event.payload.state === "INVALID_INPUT"
+          || event.payload.state === "STOPPED")
+        && event.streamId !== null
+        && event.streamId === productRef.current.pendingRecognitionStreamId) {
+        settleRecognitionGestureRef.current(event.streamId);
+      }
       dispatch({ type: "server-event", event });
     }, []);
 
@@ -578,11 +671,12 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       signerGranted: signerOwnership.status === "granted"
         && signerOwnership.streamId === recognitionStreamRef.current,
       trackingAnnouncementDelayMs: composition.trackingAnnouncementDelayMs,
-      onGestureDispatched: () => dispatch({ type: "gesture-dispatched" }),
+      onGestureDispatched: (streamId) => dispatch({ type: "gesture-dispatched", streamId }),
       onStreamChange: (streamId) => {
         const previousStreamId = recognitionStreamRef.current;
         if (streamId === null && previousStreamId !== null) {
           recentlyStoppedStreamRef.current = previousStreamId;
+          dispatch({ type: "recognition-ended", streamId: previousStreamId });
         } else if (streamId !== null) {
           recentlyStoppedStreamRef.current = null;
         }
@@ -592,6 +686,13 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
     });
     browserLocalFrameRef.current = recognition.browserLocalFrame;
     revokeRecognitionRef.current = recognition.revoke;
+    settleRecognitionGestureRef.current = recognition.settleGesture;
+
+    useEffect(() => {
+      if (product.latestRecognitionStreamId !== null) {
+        recognition.settleGesture(product.latestRecognitionStreamId);
+      }
+    }, [product.latestRecognitionStreamId, product.recognitionResultToken, recognition.settleGesture]);
 
     useEffect(() => {
       const streamId = recognition.streamId;
@@ -1019,6 +1120,7 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       cameraState,
       recognition.enabledByUser,
       browserLocalFrame,
+      product.pendingRecognitionStreamId !== null,
       product.latestRecognitionOutcome
     );
     const trackedHandCount = browserLocalFrame?.hands.length ?? 0;

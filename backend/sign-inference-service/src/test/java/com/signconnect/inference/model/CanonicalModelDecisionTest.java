@@ -7,7 +7,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class CanonicalModelDecisionTest {
 
     @Test
-    void mapsRecognizedAndLowConfidenceSignCandidatesWithoutCreatingFinalCaptions() {
+    void onlyRecognizedSignsRetainCaptionCandidateFieldsOnTheWire() {
         ModelContract.Label hello = new ModelContract.Label(
                 1, "HELLO", "Hello.", ModelContract.LabelOutcome.SIGN);
 
@@ -20,8 +20,8 @@ class CanonicalModelDecisionTest {
         assertThat(recognized.wireCaptionText()).isEqualTo("Hello.");
         assertThat(lowConfidence.outcome()).isEqualTo(CanonicalModelDecision.Outcome.LOW_CONFIDENCE);
         assertThat(lowConfidence.canBecomeCaptionCandidate()).isFalse();
-        assertThat(lowConfidence.wireLabelId()).isEqualTo("HELLO");
-        assertThat(lowConfidence.wireCaptionText()).isEqualTo("Hello.");
+        assertThat(lowConfidence.wireLabelId()).isEqualTo("NO_SIGN");
+        assertThat(lowConfidence.wireCaptionText()).isNull();
     }
 
     @Test

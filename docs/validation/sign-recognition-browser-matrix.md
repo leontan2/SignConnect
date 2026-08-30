@@ -9,7 +9,7 @@ This matrix records observed full-stack results for the mock-first milestone. `P
 
 The default `chromium` project uses Playwright’s bundled Chromium and is the required repeatable browser gate; 16/16 full-stack specs passed on this Windows host. That suite verifies the default/production bundle remains simulator-free. The enabled development simulator path passed its separate `test:e2e:simulator` gate 1/1. Branded Chrome and Edge remain explicit matrix commands so unavailable installations do not silently substitute another executable.
 
-The synthetic latency project passed 1/1 with one discarded warm-up and 20 measured samples from completed-gesture WebSocket dispatch to caption DOM render: nearest-rank p50 26.9 ms, p95 64.5 ms, minimum 21.2 ms, and maximum 64.7 ms against a 1000 ms budget. These fixture-backed timings are pipeline evidence, not genuine SGSL model evidence.
+The synthetic latency project passed 1/1 with one discarded warm-up and 20 measured samples from completed-gesture WebSocket dispatch to caption DOM render: nearest-rank p50 25.8 ms, p95 47.9 ms, minimum 20.5 ms, and maximum 63.8 ms against a 1000 ms budget. These fixture-backed timings are pipeline evidence, not genuine SGSL model evidence.
 
 The final full-stack gate also found and repaired a loopback-origin mismatch between the `127.0.0.1` runner and Meeting API CORS. `MeetingApiTest.allowsTheLoopbackOriginUsedByTheFullStackRunner` now verifies that origin. Remaining release checks are physical camera/device-ended behavior, deployment JDK/native compatibility with ONNX Runtime 1.29.0, both branded browsers on macOS, and real SGSL model/data qualification.
 

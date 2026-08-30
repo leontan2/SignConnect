@@ -168,9 +168,13 @@ shoulder scale stays within 15% of its running baseline. A bad frame resets an i
 calibration (`frontend/apps/meeting/src/recognition/trackingQuality.ts:140-201`). Calibration state
 is not stored or transmitted.
 
-The browser-local gesture segmenter measures average 2D movement of comparable hand points,
-divides it by shoulder scale, and time-normalizes it to a 40 ms reference interval. Three frames at
-normalized motion 0.08 or above start a gesture; four frames at 0.025 or below end it. A frame gap
+The browser-local gesture segmenter measures comparable hand points in both screen space and a
+shoulder-centred, shoulder-scaled, shoulder-rotation-normalized pose space. Its motion signal uses
+the conservative lower screen/pose displacement for common motion, while separately retaining
+finger-within-hand, between-hand, and pose-wrist-relative motion. This compensates for common
+camera/body translation, rotation, and scale changes without cancelling a real one-hand or
+two-hand gesture moving against the torso. Three frames at normalized motion 0.08 or above start a
+gesture; four frames at 0.025 or below end it. A frame gap
 over 200 ms, lost quality, or insufficient comparable points resets the segment. It retains at most
 90 accepted source frames and resamples a completed segment to exactly `[30][224]`: coordinates are
 linearly interpolated only when both endpoint masks are present, otherwise the nearest whole
@@ -180,7 +184,10 @@ landmark slot supplies coordinates and its binary mask
 The worker emits each completed, timestamped candidate exactly once
 (`frontend/apps/meeting/src/recognition/landmark.worker.ts:368-406`).
 `LandmarkCaptureController` and `useLandmarkCapture` forward it once to `useSignRecognition`, which
-is the authoritative transport consumer
+is the authoritative transport consumer. Because frozen v1 terminal events identify a stream but
+not an individual gesture, that consumer permits exactly one completed gesture to remain in flight
+for a stream. It ignores later completed candidates until the matching final/unknown/failure settles
+the current gesture
 (`frontend/apps/meeting/src/recognition/LandmarkCaptureController.ts:414-421`,
 `frontend/apps/meeting/src/recognition/useLandmarkCapture.ts:13-20,42-59`, and
 `frontend/apps/meeting/src/recognition/useSignRecognition.ts:147-183`). The live path no longer
@@ -199,7 +206,8 @@ start at zero for a fresh stream and continue across later completed gestures in
 
 Capture begins paused. Candidate transport becomes eligible only after active-signer ownership is
 granted and the sequence-zero `recognition.control/start` send succeeds. The six chunks for one
-candidate are then sent consecutively. If the socket is under pressure, a candidate is invalid, or
+candidate are then sent consecutively. A compliant browser does not dispatch another candidate on
+that stream until the current result settles. If the socket is under pressure, a candidate is invalid, or
 any send fails, the browser fails closed by stopping recognition; it does not retain, replace, or
 send only part of a newer candidate. Stop, reconnect, signer replacement, and camera-off lifecycle
 paths clear the current transport state (`frontend/apps/meeting/src/recognition/useSignRecognition.ts:133-183,209-353`).
@@ -223,8 +231,9 @@ chunk establishes the new sequence baseline and is not used for inference
 The default `SEGMENTED_GESTURES` input mode gives the 30-frame window an effective stride of 30.
 Consequently, the six chunks from one browser candidate assemble one non-overlapping `[30][224]`
 window and create one inference opportunity; the next completed gesture assembles a distinct
-window. At most one request is in flight, and under load a newer complete candidate may replace an
-older pending candidate before evaluation without mixing frames. The default is declared in
+window. The browser's one-in-flight rule normally serializes these opportunities. As a defensive
+server rule for legacy or non-browser clients, at most one request is in flight and a newer complete
+candidate may replace an older pending candidate before evaluation without mixing frames. The default is declared in
 application configuration, and `effectiveStrideFrames()` prevents
 the configured legacy stride of 5 from creating overlapping windows in this mode
 (`backend/realtime-service/src/main/resources/application.yml:21-32`,
@@ -233,7 +242,7 @@ and `backend/realtime-service/src/main/java/com/signconnect/realtime/recognition
 
 - wire chunk shape: `[5][224]` JSON numbers;
 - completed browser candidate: `[30][224]`, carried as six uninterrupted chunks;
-- default server candidate: one `[30][224]` Java `List<Double>` per completed gesture, subject to latest-pending replacement under load;
+- default server candidate: one `[30][224]` Java `List<Double>` per completed gesture; compliant browsers serialize gestures, while the server retains latest-pending replacement as a defensive fallback;
 - inference opportunity: immediately after the sixth chunk of that gesture is accepted;
 - no inference windows are produced from incomplete gestures or continuous idle capture.
 
@@ -266,10 +275,10 @@ finite and within `[0,1]`, then selects the highest-probability label
 (`backend/sign-inference-service/src/main/java/com/signconnect/inference/model/OnnxModelRuntime.java:361-407`). The response returns label ID, caption text, confidence, model
 version, inference latency, and the mandatory `mockModel` provenance flag.
 
-The selected label also has an internal typed outcome. `NO_SIGN` stays `NO_SIGN`; `REJECT` is
-fail-closed to the frozen v1 wire shape `labelId=NO_SIGN, captionText=null`; and a `SIGN` below the
-metadata decision threshold keeps its sign label, caption, and confidence so the realtime
-stabilizer can report low confidence rather than mistake it for idle. An unavailable runtime returns
+The selected label also has an internal typed outcome. Because the frozen v1 response has no
+outcome discriminator, `NO_SIGN`, `REJECT`, and a `SIGN` below the metadata decision threshold all
+fail closed to `labelId=NO_SIGN, captionText=null`. Consequently, no non-recognized internal outcome
+can become a final caption even if a downstream confidence setting is less strict. An unavailable runtime returns
 no prediction candidate (`backend/sign-inference-service/src/main/java/com/signconnect/inference/model/CanonicalModelDecision.java:9-55` and
 `backend/sign-inference-service/src/main/java/com/signconnect/inference/model/OnnxModelRuntime.java:258-276`).
 
@@ -325,11 +334,16 @@ The separate `ml/sign-recognition` package is an offline training/evaluation/exp
 second live recognizer. It provides TCN and GRU candidates and exports a fixed `features`
 float32 `[1,30,224]` input through Softmax to `probabilities [1,N]`, then writes the same full
 metadata contract consumed by Java
-(`ml/sign-recognition/src/signconnect_ml/exporting.py:37-74,125-166`). Its bundled generated data is
-explicitly non-production synthetic data; the repository still contains no trained SGSL model or
-real participant dataset (`ml/sign-recognition/README.md:1-26`). An exported candidate becomes live
-only when its artifact and metadata are deliberately selected through the inference-service model
-configuration and all runtime gates accept them.
+(`ml/sign-recognition/src/signconnect_ml/exporting.py:37-74,125-166`). Model selection uses the
+validation split; the locked test split is evaluated once and produces confusion-matrix-derived
+per-class, no-sign, reject/OOV, and thresholded-decision metrics. That evidence is bound to the
+checkpoint's exact canonical tensor state by `modelStateSha256`, and export rejects legacy or
+swapped-weight evidence. The exported ONNX bytes are separately bound to deployment metadata by
+`artifactSha256` (`ml/sign-recognition/src/signconnect_ml/training.py:308-359,662-690`). Its bundled
+generated data is explicitly non-production synthetic data; the repository still contains no
+trained SGSL model or real participant dataset (`ml/sign-recognition/README.md:1-26`). An exported
+candidate becomes live only when its artifact and metadata are deliberately selected through the
+inference-service model configuration and all runtime gates accept them.
 
 ## 5. Prediction stabilization and observable states
 
@@ -340,9 +354,10 @@ inference result is evaluated immediately:
 - a non-`NO_SIGN` label with a non-null caption and confidence at or above 0.80 produces `Final`;
 - `NO_SIGN`, a null caption, or confidence below 0.80 produces private `Unknown(LOW_CONFIDENCE)`.
 
-There are no rolling votes, idle-finalization frames, duplicate cooldown, or unknown-event rate
-limit in this mode. Each completed gesture can produce at most one observable decision, and repeated
-completed gestures with the same recognized label remain separate occurrences
+There are no rolling votes, idle-finalization frames, label cooldown, or unknown-event rate limit in
+this mode. The session accepts only a strictly increasing completed-window sequence for the active
+stream, so a replayed or out-of-order candidate cannot duplicate a caption. A genuinely newer
+completed gesture can still repeat the same recognized label as a separate occurrence
 (`backend/realtime-service/src/main/java/com/signconnect/realtime/recognition/RecognitionStabilizer.java:64-78` and
 `backend/realtime-service/src/main/java/com/signconnect/realtime/recognition/RealtimeRecognitionSession.java:430-488`).
 
@@ -383,7 +398,7 @@ is camera off; camera initializing/recognition disabled/no frame; non-ready trac
 incomplete calibration; gesture in progress; completed gesture processing; recognized or
 not-recognized server outcome; then ready to sign
 (`frontend/apps/meeting/src/recognition/CanonicalStateMapper.ts:6-61`). Dispatching a completed
-candidate clears the previous outcome, `ready-for-inference` displays “Processing,” and the next
+candidate clears the previous outcome and establishes the pending “Processing” state; the next
 `caption.final` or `recognition.unknown` selects “Sign recognized” or “Sign not recognized”
 (`frontend/apps/meeting/src/MeetingApp.tsx:87-125,181-227,580`). Changes are also announced through
 the accessibility live region (`frontend/apps/meeting/src/MeetingApp.tsx:1015-1022,1385-1388,1428-1431`).

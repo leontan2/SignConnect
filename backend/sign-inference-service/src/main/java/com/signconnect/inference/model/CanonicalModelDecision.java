@@ -4,7 +4,8 @@ import java.util.Objects;
 
 /**
  * Internal model-outcome vocabulary. The frozen v1 wire response does not carry this discriminator,
- * so explicit rejection safely crosses that boundary as {@code NO_SIGN} with no caption candidate.
+ * so every non-recognized outcome safely crosses that boundary as {@code NO_SIGN} with no caption
+ * candidate.
  */
 public record CanonicalModelDecision(
         Outcome outcome,
@@ -31,7 +32,7 @@ public record CanonicalModelDecision(
             case REJECT -> new CanonicalModelDecision(Outcome.REJECTED, "NO_SIGN", null, confidence);
             case SIGN -> confidence < minimumConfidence
                     ? new CanonicalModelDecision(
-                            Outcome.LOW_CONFIDENCE, label.id(), label.captionText(), confidence)
+                            Outcome.LOW_CONFIDENCE, "NO_SIGN", null, confidence)
                     : new CanonicalModelDecision(
                             Outcome.RECOGNIZED, label.id(), label.captionText(), confidence);
         };

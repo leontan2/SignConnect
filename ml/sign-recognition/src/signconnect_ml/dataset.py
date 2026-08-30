@@ -22,6 +22,14 @@ class LandmarkDataset:
             self._samples.append(samples_by_id[sample_id])
         self._manifest_dir = manifest.path.parent
         self._class_index = {label: index for index, label in enumerate(manifest.classes)}
+        self._unknown_mask = tuple(
+            manifest.label_outcome(sample.label_id) == "REJECT"
+            for sample in self._samples
+        )
+
+    @property
+    def unknown_mask(self) -> tuple[bool, ...]:
+        return self._unknown_mask
 
     def __len__(self) -> int:
         return len(self._samples)

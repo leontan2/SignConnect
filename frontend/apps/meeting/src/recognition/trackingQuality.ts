@@ -232,17 +232,138 @@ export interface GestureSegmentationSnapshot {
   candidate: GestureCandidateFrame[] | null;
 }
 
-type MotionPoint = { x: number; y: number };
+interface MotionPoint {
+  screenX: number;
+  screenY: number;
+  poseX: number;
+  poseY: number;
+}
+
+type PoseWristPoints = Map<DetectedHand["handedness"], Pick<MotionPoint, "poseX" | "poseY">>;
+
+interface PoseMotionReference {
+  centerX: number;
+  centerY: number;
+  shoulderAxisX: number;
+  shoulderAxisY: number;
+  shoulderScale: number;
+}
+
+function poseMotionReference(detection: LandmarkDetection): PoseMotionReference | null {
+  const leftShoulder = detection.poseLandmarks?.[11];
+  const rightShoulder = detection.poseLandmarks?.[12];
+  if (!isFinitePoint(leftShoulder) || !isFinitePoint(rightShoulder)) return null;
+  const shoulderX = rightShoulder.x - leftShoulder.x;
+  const shoulderY = rightShoulder.y - leftShoulder.y;
+  const shoulderScale = Math.hypot(shoulderX, shoulderY);
+  if (!Number.isFinite(shoulderScale) || shoulderScale <= 0) return null;
+  return {
+    centerX: (leftShoulder.x + rightShoulder.x) / 2,
+    centerY: (leftShoulder.y + rightShoulder.y) / 2,
+    shoulderAxisX: shoulderX / shoulderScale,
+    shoulderAxisY: shoulderY / shoulderScale,
+    shoulderScale
+  };
+}
 
 function motionPoints(detection: LandmarkDetection): Map<string, MotionPoint> {
   const points = new Map<string, MotionPoint>();
+  const reference = poseMotionReference(detection);
+  if (!reference) return points;
   for (const hand of detection.hands) {
     if (!Number.isFinite(hand.score) || hand.score < DEFAULT_TRACKING_QUALITY_OPTIONS.minimumHandScore) continue;
     hand.landmarks.slice(0, HAND_LANDMARK_COUNT).forEach((point, index) => {
-      if (isFinitePoint(point)) points.set(`${hand.handedness}-${index}`, { x: point.x, y: point.y });
+      if (!isFinitePoint(point)) return;
+      const offsetX = point.x - reference.centerX;
+      const offsetY = point.y - reference.centerY;
+      points.set(`${hand.handedness}-${index}`, {
+        screenX: point.x,
+        screenY: point.y,
+        poseX: (offsetX * reference.shoulderAxisX + offsetY * reference.shoulderAxisY)
+          / reference.shoulderScale,
+        poseY: (-offsetX * reference.shoulderAxisY + offsetY * reference.shoulderAxisX)
+          / reference.shoulderScale
+      });
     });
   }
   return points;
+}
+
+function poseWristPoints(detection: LandmarkDetection): PoseWristPoints {
+  const points: PoseWristPoints = new Map();
+  const reference = poseMotionReference(detection);
+  if (!reference) return points;
+  for (const [handedness, index] of [["Left", 15], ["Right", 16]] as const) {
+    const point = detection.poseLandmarks?.[index];
+    if (!isFinitePoint(point)) continue;
+    const offsetX = point.x - reference.centerX;
+    const offsetY = point.y - reference.centerY;
+    points.set(handedness, {
+      poseX: (offsetX * reference.shoulderAxisX + offsetY * reference.shoulderAxisY)
+        / reference.shoulderScale,
+      poseY: (-offsetX * reference.shoulderAxisY + offsetY * reference.shoulderAxisX)
+        / reference.shoulderScale
+    });
+  }
+  return points;
+}
+
+function maximumPoseWristMotion(
+  currentPoints: ReadonlyMap<DetectedHand["handedness"], Pick<MotionPoint, "poseX" | "poseY">>,
+  previousPoints: ReadonlyMap<DetectedHand["handedness"], Pick<MotionPoint, "poseX" | "poseY">>
+): number {
+  let maximumMotion = 0;
+  for (const [handedness, current] of currentPoints) {
+    const previous = previousPoints.get(handedness);
+    if (!previous) continue;
+    maximumMotion = Math.max(
+      maximumMotion,
+      Math.hypot(current.poseX - previous.poseX, current.poseY - previous.poseY)
+    );
+  }
+  return maximumMotion;
+}
+
+function relativeGestureMotion(
+  currentPoints: ReadonlyMap<string, MotionPoint>,
+  previousPoints: ReadonlyMap<string, MotionPoint>
+): number {
+  let internalMotion = 0;
+  let internalPointCount = 0;
+  for (const handedness of ["Left", "Right"] as const) {
+    const currentWrist = currentPoints.get(`${handedness}-0`);
+    const previousWrist = previousPoints.get(`${handedness}-0`);
+    if (!currentWrist || !previousWrist) continue;
+    for (let index = 1; index < HAND_LANDMARK_COUNT; index += 1) {
+      const current = currentPoints.get(`${handedness}-${index}`);
+      const previous = previousPoints.get(`${handedness}-${index}`);
+      if (!current || !previous) continue;
+      internalMotion += Math.hypot(
+        (current.poseX - currentWrist.poseX) - (previous.poseX - previousWrist.poseX),
+        (current.poseY - currentWrist.poseY) - (previous.poseY - previousWrist.poseY)
+      );
+      internalPointCount += 1;
+    }
+  }
+
+  const currentLeftWrist = currentPoints.get("Left-0");
+  const currentRightWrist = currentPoints.get("Right-0");
+  const previousLeftWrist = previousPoints.get("Left-0");
+  const previousRightWrist = previousPoints.get("Right-0");
+  const betweenHandsMotion = currentLeftWrist && currentRightWrist
+    && previousLeftWrist && previousRightWrist
+    ? Math.hypot(
+      (currentRightWrist.poseX - currentLeftWrist.poseX)
+        - (previousRightWrist.poseX - previousLeftWrist.poseX),
+      (currentRightWrist.poseY - currentLeftWrist.poseY)
+        - (previousRightWrist.poseY - previousLeftWrist.poseY)
+    )
+    : 0;
+
+  return Math.max(
+    internalPointCount === 0 ? 0 : internalMotion / internalPointCount,
+    betweenHandsMotion
+  );
 }
 
 function assertCandidateFrame(frame: GestureCandidateFrame): void {
@@ -331,6 +452,7 @@ export class GestureSegmenter {
   private startStreak = 0;
   private endStreak = 0;
   private previousPoints = new Map<string, MotionPoint>();
+  private previousPoseWristPoints: PoseWristPoints = new Map();
   private previousTimestampMs: number | null = null;
   private candidateFrames: GestureCandidateFrame[] = [];
 
@@ -349,12 +471,15 @@ export class GestureSegmenter {
     calibrationReady = true
   ): GestureSegmentationSnapshot {
     const currentPoints = motionPoints(detection);
+    const currentPoseWristPoints = poseWristPoints(detection);
     const previousPoints = this.previousPoints;
+    const previousPoseWristPoints = this.previousPoseWristPoints;
     const segmentable = calibrationReady && evaluation.facts.state === "ready";
     const previousTimestampMs = this.previousTimestampMs;
     const elapsedMs = previousTimestampMs === null ? null : timestampMs - previousTimestampMs;
     const comparable = [...currentPoints.entries()].filter(([key]) => this.previousPoints.has(key));
     this.previousPoints = currentPoints;
+    this.previousPoseWristPoints = currentPoseWristPoints;
     this.previousTimestampMs = timestampMs;
 
     if (!segmentable
@@ -370,9 +495,24 @@ export class GestureSegmenter {
 
     const distance = comparable.reduce((total, [key, point]) => {
       const previous = previousPoints.get(key);
-      return previous ? total + Math.hypot(point.x - previous.x, point.y - previous.y) : total;
-    }, 0) / comparable.length;
-    const normalizedMotion = (distance / evaluation.shoulderScale)
+      if (!previous) return total;
+      return {
+        screen: total.screen + Math.hypot(
+          point.screenX - previous.screenX,
+          point.screenY - previous.screenY
+        ),
+        pose: total.pose + Math.hypot(point.poseX - previous.poseX, point.poseY - previous.poseY)
+      };
+    }, { screen: 0, pose: 0 });
+    const screenMotion = distance.screen / comparable.length / evaluation.shoulderScale;
+    const poseMotion = distance.pose / comparable.length;
+    const gestureRelativeMotion = relativeGestureMotion(currentPoints, previousPoints);
+    const poseWristMotion = maximumPoseWristMotion(currentPoseWristPoints, previousPoseWristPoints);
+    const normalizedMotion = Math.max(
+      Math.min(screenMotion, poseMotion),
+      gestureRelativeMotion,
+      poseWristMotion
+    )
       * (this.options.referenceFrameMs / elapsedMs);
     const previousPhase = this.phase;
     const transitioned = this.transition(normalizedMotion);
@@ -439,6 +579,7 @@ export class GestureSegmenter {
   reset(): void {
     this.resetPhase();
     this.previousPoints.clear();
+    this.previousPoseWristPoints.clear();
     this.previousTimestampMs = null;
     this.candidateFrames = [];
   }

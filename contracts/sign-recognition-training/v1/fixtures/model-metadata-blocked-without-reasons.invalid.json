@@ -79,10 +79,78 @@
       "testSignerCount": 0
     },
     "metrics": {
-      "macroF1": 1,
-      "accuracy": 1,
-      "falseFinalRate": 0,
-      "sampleCount": 3
+      "macroF1": 0.9218518518518518,
+      "accuracy": 0.9210526315789473,
+      "falseFinalRate": 0.07692307692307693,
+      "sampleCount": 38,
+      "perClass": [
+        {
+          "index": 0,
+          "labelId": "NO_SIGN",
+          "precision": 0.8571428571428571,
+          "recall": 0.9230769230769231,
+          "f1": 0.8888888888888888,
+          "support": 13
+        },
+        {
+          "index": 1,
+          "labelId": "MOCK_ACTIVE",
+          "precision": 0.9230769230769231,
+          "recall": 1,
+          "f1": 0.96,
+          "support": 12
+        },
+        {
+          "index": 2,
+          "labelId": "OUT_OF_VOCABULARY",
+          "precision": 1,
+          "recall": 0.8461538461538461,
+          "f1": 0.9166666666666666,
+          "support": 13
+        }
+      ],
+      "confusionMatrix": {
+        "labelOrder": [
+          "NO_SIGN",
+          "MOCK_ACTIVE",
+          "OUT_OF_VOCABULARY"
+        ],
+        "rows": [
+          [
+            12,
+            1,
+            0
+          ],
+          [
+            0,
+            12,
+            0
+          ],
+          [
+            2,
+            0,
+            11
+          ]
+        ]
+      },
+      "noSignBehavior": {
+        "sampleCount": 13,
+        "falseFinalCount": 1,
+        "falseFinalRate": 0.07692307692307693
+      },
+      "rejectionBehavior": {
+        "minimumConfidence": 0.8,
+        "acceptedSignCount": 20,
+        "lowConfidenceRejectionCount": 3,
+        "noSignDecisionCount": 15,
+        "rejectionRate": 0.07894736842105263,
+        "acceptedSignAccuracy": 0.9,
+        "unknownSampleCount": 13,
+        "unknownRejectedCount": 11,
+        "unknownRejectionRate": 0.8461538461538461,
+        "unknownFalseFinalCount": 2,
+        "unknownFalseFinalRate": 0.15384615384615385
+      }
     }
   },
   "onnx": {

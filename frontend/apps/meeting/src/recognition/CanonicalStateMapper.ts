@@ -28,6 +28,7 @@ export interface CanonicalStateInput {
   trackingQuality: BrowserLocalTrackingQualityState | null;
   calibrationReady: boolean;
   gesturePhase: BrowserLocalGesturePhase | null;
+  recognitionPending: boolean;
   recognitionOutcome: "recognized" | "not-recognized" | null;
 }
 
@@ -57,6 +58,6 @@ export function mapCanonicalApplicationState(input: CanonicalStateInput): Canoni
   }
   if (input.recognitionOutcome === "recognized") return "Sign recognized";
   if (input.recognitionOutcome === "not-recognized") return "Sign not recognized";
-  if (input.gesturePhase === "ready-for-inference") return "Processing";
+  if (input.recognitionPending) return "Processing";
   return "Ready to sign";
 }

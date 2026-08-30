@@ -43,7 +43,92 @@ class ModelContractTest {
 
         assertThat(contract.modelVersion()).isEqualTo("1.0.0-fixture");
         assertThat(contract.mockModel()).isFalse();
+        assertThat(contract.evaluation().metrics().perClass()).hasSize(7);
+        assertThat(contract.evaluation().metrics().confusionMatrix().labelOrder())
+                .containsExactly("NO_SIGN", "HELLO", "THANK_YOU", "YES", "NO", "HELP",
+                        "OUT_OF_VOCABULARY");
+        assertThat(contract.evaluation().metrics().rejectionBehavior().unknownRejectionRate())
+                .isGreaterThanOrEqualTo(0.95);
         assertThat(contract.isProductionReady()).isTrue();
+    }
+
+    @ParameterizedTest(name = "rejects inconsistent rich evaluation evidence: {0}")
+    @ValueSource(strings = {
+            "per-class-label",
+            "summary-accuracy",
+            "summary-macro-f1",
+            "per-class-precision",
+            "per-class-recall",
+            "per-class-f1",
+            "per-class-support",
+            "confusion-total",
+            "no-sign-rate",
+            "no-sign-false-finals",
+            "decision-threshold",
+            "accepted-signs",
+            "unknown-outcomes",
+            "unknown-matrix-support",
+            "accepted-accuracy-nullability"
+    })
+    void rejectsInconsistentRichEvaluationEvidence(String mismatch) throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        ObjectNode metadata = authoritativeMetadata(
+                objectMapper, "model-metadata-production.valid.json");
+        ObjectNode metrics = (ObjectNode) metadata.path("evaluation").path("metrics");
+        ObjectNode rejection = (ObjectNode) metrics.path("rejectionBehavior");
+        switch (mismatch) {
+            case "per-class-label" -> ((ObjectNode) metrics.withArray("perClass").get(1))
+                    .put("labelId", "THANK_YOU");
+            case "summary-accuracy" -> metrics.put("accuracy", 0.81);
+            case "summary-macro-f1" -> metrics.put("macroF1", 0.81);
+            case "per-class-precision" -> ((ObjectNode) metrics.withArray("perClass").get(1))
+                    .put("precision", 0.81);
+            case "per-class-recall" -> ((ObjectNode) metrics.withArray("perClass").get(1))
+                    .put("recall", 0.81);
+            case "per-class-f1" -> ((ObjectNode) metrics.withArray("perClass").get(1))
+                    .put("f1", 0.81);
+            case "per-class-support" -> ((ObjectNode) metrics.withArray("perClass").get(1))
+                    .put("support", 24);
+            case "confusion-total" -> ((ArrayNode) metrics.path("confusionMatrix").path("rows").get(0))
+                    .set(0, objectMapper.getNodeFactory().numberNode(28));
+            case "no-sign-rate" -> ((ObjectNode) metrics.path("noSignBehavior"))
+                    .put("falseFinalRate", 0.04);
+            case "no-sign-false-finals" -> ((ObjectNode) metrics.path("noSignBehavior"))
+                    .put("falseFinalCount", 0);
+            case "decision-threshold" -> rejection.put("minimumConfidence", 0.7);
+            case "accepted-signs" -> rejection.put("acceptedSignCount", 138);
+            case "unknown-outcomes" -> rejection.put("unknownRejectedCount", 28);
+            case "unknown-matrix-support" -> {
+                rejection.put("unknownSampleCount", 50);
+                rejection.put("unknownRejectedCount", 49);
+                rejection.put("unknownRejectionRate", 0.98);
+                rejection.put("unknownFalseFinalCount", 1);
+                rejection.put("unknownFalseFinalRate", 0.02);
+            }
+            case "accepted-accuracy-nullability" -> rejection.putNull("acceptedSignAccuracy");
+            default -> throw new IllegalArgumentException("Unknown evaluation mismatch");
+        }
+
+        assertInvalidMetadata(objectMapper, metadata);
+    }
+
+    @Test
+    void acceptsInternallyConsistentThresholdEvidenceNotEncodedByArgmaxMatrix() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        ObjectNode metadata = authoritativeMetadata(
+                objectMapper, "model-metadata-production.valid.json");
+        ObjectNode rejection = (ObjectNode) metadata.path("evaluation").path("metrics")
+                .path("rejectionBehavior");
+        rejection.put("acceptedSignCount", 138);
+        rejection.put("lowConfidenceRejectionCount", 7);
+        rejection.put("rejectionRate", 7.0 / 180.0);
+
+        ModelContract contract = ModelContract.read(
+                objectMapper,
+                new ByteArrayInputStream(objectMapper.writeValueAsBytes(metadata)));
+
+        assertThat(contract.evaluation().metrics().rejectionBehavior()
+                .lowConfidenceRejectionCount()).isEqualTo(7);
     }
 
     @ParameterizedTest(name = "rejects missing authoritative section: {0}")

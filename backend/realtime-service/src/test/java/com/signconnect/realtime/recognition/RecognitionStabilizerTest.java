@@ -257,7 +257,7 @@ class RecognitionStabilizerTest {
     }
 
     @Test
-    void completedGesturesFinalizeImmediatelyAndAllowTheSameSignAfterAnIdleBoundary() {
+    void completedGesturesFinalizeOncePerWindowAndAllowAGenuineRepeatInsideTheCooldown() {
         RecognitionStabilizer stabilizer = new RecognitionStabilizer(
                 Clock.fixed(NOW, ZoneOffset.UTC));
         RecognitionStabilizer.Prediction first = active(0, "MOCK_ACTIVE", 0.95);
@@ -265,6 +265,8 @@ class RecognitionStabilizerTest {
 
         assertThat(stabilizer.evaluateCompletedGesture(first))
                 .isEqualTo(new RecognitionStabilizer.Final(first, NOW));
+        assertThat(stabilizer.evaluateCompletedGesture(active(0, "OTHER_SIGN", 0.99)))
+                .isSameAs(RecognitionStabilizer.None.INSTANCE);
         assertThat(stabilizer.evaluateCompletedGesture(repeated))
                 .isEqualTo(new RecognitionStabilizer.Final(repeated, NOW));
     }
@@ -286,6 +288,21 @@ class RecognitionStabilizerTest {
                         RecognitionStabilizer.UnknownReason.LOW_CONFIDENCE,
                         lowConfidence,
                         NOW));
+    }
+
+    @Test
+    void completedGestureOrderingResetsWithTheStreamPipeline() {
+        RecognitionStabilizer stabilizer = new RecognitionStabilizer(
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        RecognitionStabilizer.Prediction first = active(0, "MOCK_ACTIVE", 0.95);
+
+        assertThat(stabilizer.evaluateCompletedGesture(first))
+                .isEqualTo(new RecognitionStabilizer.Final(first, NOW));
+
+        stabilizer.reset();
+
+        assertThat(stabilizer.evaluateCompletedGesture(first))
+                .isEqualTo(new RecognitionStabilizer.Final(first, NOW));
     }
 
     @Test
