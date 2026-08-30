@@ -6,15 +6,22 @@ const fakeCameraArgs = [
   "--use-fake-device-for-media-stream",
   "--use-fake-ui-for-media-stream"
 ];
+const jsonReportFile = process.env.PLAYWRIGHT_JSON_OUTPUT_FILE || "test-results/playwright/direct.json";
 
 export default defineConfig({
   testDir: "./tests",
+  // Playwright clears outputDir before each invocation. Keep transient traces
+  // separate so the per-project JSON reports survive the full release gate.
+  outputDir: "./test-results/artifacts",
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
   // These serial specs deliberately stop/restart owned services. Retrying a
   // partially completed mutation would make the external state ambiguous.
   retries: 0,
-  reporter: "list",
+  reporter: [
+    ["list"],
+    ["json", { outputFile: jsonReportFile }]
+  ],
   use: {
     baseURL: process.env.SIGNCONNECT_E2E_BASE_URL || "http://127.0.0.1:3000",
     permissions: ["camera"],

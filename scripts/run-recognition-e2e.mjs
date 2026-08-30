@@ -1,9 +1,10 @@
 import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import assert from "node:assert/strict";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -47,16 +48,23 @@ function usage() {
     "Usage: node scripts/run-recognition-e2e.mjs [options]",
     "",
     "  --project=chromium|chrome|edge  Browser for correctness tests (default: chromium)",
+    "  --approved-genuine-model       Reserved; fails closed until a reviewed-fixture browser consumer exists",
     "  --performance                  Run only the tagged bundled-Chromium latency spec",
     "  --simulator                    Enable the explicit client/server development simulator",
     "  --skip-build                   Reuse existing executable backend jars",
     "  --self-test                    Run the bounded lifecycle race regression only",
-    "  --help                         Show this help"
+    "  --help                         Show this help",
+    "",
+    "Approved genuine-model environment (private path values are not logged):",
+    "  SIGNCONNECT_E2E_APPROVED_MODEL_PATH       Approved ONNX artifact",
+    "  SIGNCONNECT_E2E_APPROVED_METADATA_PATH    Approved model metadata JSON",
+    "  SIGNCONNECT_E2E_REVIEWED_FIXTURE_PATH     Private reviewed browser fixture"
   ].join("\n");
 }
 
 function parseOptions(argv) {
   const options = {
+    approvedGenuineModel: false,
     performance: false,
     project: "chromium",
     selfTest: false,
@@ -64,7 +72,8 @@ function parseOptions(argv) {
     skipBuild: false
   };
   for (const argument of argv) {
-    if (argument === "--performance") options.performance = true;
+    if (argument === "--approved-genuine-model") options.approvedGenuineModel = true;
+    else if (argument === "--performance") options.performance = true;
     else if (argument === "--simulator") options.simulator = true;
     else if (argument === "--skip-build") options.skipBuild = true;
     else if (argument === "--self-test") options.selfTest = true;
@@ -83,7 +92,14 @@ function parseOptions(argv) {
   if (options.performance && options.project !== "chromium") {
     throw new Error("The performance profile intentionally uses bundled Chromium only.");
   }
-  if (options.selfTest && (options.performance || options.simulator || options.skipBuild || options.project !== "chromium")) {
+  if (options.approvedGenuineModel && options.simulator) {
+    throw new Error("--approved-genuine-model cannot be combined with --simulator.");
+  }
+  if (options.approvedGenuineModel && options.performance) {
+    throw new Error("--approved-genuine-model cannot be combined with --performance.");
+  }
+  if (options.selfTest && (options.approvedGenuineModel || options.performance || options.simulator
+      || options.skipBuild || options.project !== "chromium")) {
     throw new Error("--self-test cannot be combined with stack-runner options.");
   }
   return options;
@@ -545,7 +561,7 @@ function backendJar(moduleName) {
   return path.join(backendRoot, moduleName, "target", `${moduleName}-0.1.0-SNAPSHOT.jar`);
 }
 
-function backendDefinition(name, simulatorEnabled) {
+function backendDefinition(name, simulatorEnabled, approvedConfiguration = null) {
   const executable = javaExecutable();
   if (name === "meeting") {
     return {
@@ -557,17 +573,23 @@ function backendDefinition(name, simulatorEnabled) {
     };
   }
   if (name === "inference") {
+    const args = [
+      "-Djava.awt.headless=true",
+      "-jar",
+      backendJar("sign-inference-service"),
+      "--server.address=127.0.0.1",
+      "--server.port=8083"
+    ];
+    if (!approvedConfiguration) args.push("--spring.profiles.active=local");
     return {
       command: executable,
-      args: [
-        "-Djava.awt.headless=true",
-        "-jar",
-        backendJar("sign-inference-service"),
-        "--server.address=127.0.0.1",
-        "--server.port=8083",
-        "--spring.profiles.active=local"
-      ],
-      env: sanitizedEnvironment(),
+      args,
+      env: sanitizedEnvironment(approvedConfiguration ? {
+        SIGN_MODEL_RESOURCE: approvedConfiguration.modelResource,
+        SIGN_MODEL_LABELS_RESOURCE: approvedConfiguration.labelsResource,
+        SIGN_MODEL_EXPECTED_VERSION: approvedConfiguration.expectedModelVersion,
+        SIGN_MODEL_ALLOW_MOCK_MODEL: "false"
+      } : {}),
       health: "http://127.0.0.1:8083/actuator/health/readiness",
       port: 8083
     };
@@ -595,9 +617,9 @@ function backendDefinition(name, simulatorEnabled) {
   throw new Error(`Unknown backend service '${name}'.`);
 }
 
-async function startBackend(name, simulatorEnabled) {
+async function startBackend(name, simulatorEnabled, approvedConfiguration = null) {
   lifecycle.assertOpen();
-  const definition = backendDefinition(name, simulatorEnabled);
+  const definition = backendDefinition(name, simulatorEnabled, approvedConfiguration);
   if (!existsSync(definition.args[definition.args.indexOf("-jar") + 1])) {
     throw new Error(`Executable jar is missing for ${name}. Run without --skip-build first.`);
   }
@@ -610,7 +632,7 @@ async function startBackend(name, simulatorEnabled) {
   console.log(`${name} service is ready.`);
 }
 
-function frontendDefinition(name, simulatorEnabled) {
+function frontendDefinition(name, simulatorEnabled, approvedConfiguration = null) {
   const webpackCli = path.join(repositoryRoot, "node_modules", "webpack", "bin", "webpack.js");
   if (!existsSync(webpackCli)) throw new Error("Webpack is not installed. Run npm install first.");
   if (name === "meeting-frontend") {
@@ -621,7 +643,7 @@ function frontendDefinition(name, simulatorEnabled) {
       env: sanitizedEnvironment({
         MEETING_API_URL: "http://127.0.0.1:8081",
         REALTIME_WS_URL: "ws://127.0.0.1:8082",
-        RECOGNITION_E2E_FIXTURE_ENABLED: "true",
+        RECOGNITION_E2E_FIXTURE_ENABLED: approvedConfiguration ? "false" : "true",
         RECOGNITION_SIMULATOR_ENABLED: simulatorEnabled ? "true" : "false"
       }),
       health: "http://127.0.0.1:3001/remoteEntry.js"
@@ -641,9 +663,9 @@ function frontendDefinition(name, simulatorEnabled) {
   throw new Error(`Unknown frontend '${name}'.`);
 }
 
-async function startFrontend(name, simulatorEnabled) {
+async function startFrontend(name, simulatorEnabled, approvedConfiguration = null) {
   lifecycle.assertOpen();
-  const definition = frontendDefinition(name, simulatorEnabled);
+  const definition = frontendDefinition(name, simulatorEnabled, approvedConfiguration);
   const compilation = new WebpackCompilationInspector();
   console.log(`Starting ${name}...`);
   spawnOwned(name, definition.command, definition.args, {
@@ -680,7 +702,62 @@ async function buildBackend() {
   console.log("Backend jars are packaged.");
 }
 
-async function runPlaywright(options, control) {
+function playwrightSelection(options) {
+  if (options.performance) {
+    return {
+      project: "performance",
+      target: "tests/performance/sign-recognition-latency.spec.ts",
+      grep: null
+    };
+  }
+  if (options.simulator) {
+    return {
+      project: options.project,
+      target: "tests/e2e",
+      grep: "@simulator"
+    };
+  }
+  return {
+    project: options.project,
+    target: "tests/e2e",
+    grep: null
+  };
+}
+
+export function approvedGenuineModelConfiguration(options, _environment = process.env) {
+  if (!options.approvedGenuineModel) return null;
+  throw new Error(
+    "Approved genuine-model E2E is unavailable: no dedicated reviewed-fixture consumer exists, so no evidence report can be created."
+  );
+}
+
+export function playwrightJsonReportPath(options, root = repositoryRoot) {
+  const reportName = options.performance
+    ? "performance"
+    : options.approvedGenuineModel
+      ? `approved-genuine-${options.project}`
+      : options.simulator
+        ? `simulator-${options.project}`
+        : options.project;
+  return path.join(root, "test-results", "playwright", `${reportName}.json`);
+}
+
+function playwrightEnvironment(options, control, approvedConfiguration = null) {
+  return sanitizedEnvironment({
+    PLAYWRIGHT_HTML_OPEN: "never",
+    PLAYWRIGHT_JSON_OUTPUT_FILE: playwrightJsonReportPath(options),
+    SIGNCONNECT_E2E_BASE_URL: "http://127.0.0.1:3000",
+    SIGNCONNECT_E2E_CONTROL_URL: control.url,
+    SIGNCONNECT_E2E_CONTROL_TOKEN: control.token,
+    SIGNCONNECT_E2E_SIMULATOR: options.simulator ? "true" : "false",
+    SIGNCONNECT_E2E_APPROVED_GENUINE_MODEL: approvedConfiguration ? "true" : "false",
+    ...(approvedConfiguration ? {
+      SIGNCONNECT_E2E_REVIEWED_FIXTURE_PATH: approvedConfiguration.reviewedFixturePath
+    } : {})
+  });
+}
+
+async function runPlaywright(options, control, approvedConfiguration = null) {
   lifecycle.assertOpen();
   for (const name of ["meeting-frontend", "shell-frontend"]) {
     const record = ownedProcesses.get(name);
@@ -690,26 +767,18 @@ async function runPlaywright(options, control) {
   }
   const playwrightCli = path.join(repositoryRoot, "node_modules", "@playwright", "test", "cli.js");
   if (!existsSync(playwrightCli)) throw new Error("Playwright is not installed. Run npm install first.");
-  const project = options.performance ? "performance" : options.project;
-  const target = options.performance
-    ? "tests/performance/sign-recognition-latency.spec.ts"
-    : "tests/e2e";
-  const args = [playwrightCli, "test", target, `--project=${project}`, "--workers=1"];
-  console.log(`Running Playwright project '${project}'...`);
+  const selection = playwrightSelection(options);
+  const args = [playwrightCli, "test", selection.target, `--project=${selection.project}`, "--workers=1"];
+  if (selection.grep) args.push("--grep", selection.grep);
+  console.log(`Running Playwright project '${selection.project}'...`);
   const output = await runPreparation("playwright", process.execPath, args, {
     cwd: repositoryRoot,
-    env: sanitizedEnvironment({
-      PLAYWRIGHT_HTML_OPEN: "never",
-      SIGNCONNECT_E2E_BASE_URL: "http://127.0.0.1:3000",
-      SIGNCONNECT_E2E_CONTROL_URL: control.url,
-      SIGNCONNECT_E2E_CONTROL_TOKEN: control.token,
-      SIGNCONNECT_E2E_SIMULATOR: options.simulator ? "true" : "false"
-    })
+    env: playwrightEnvironment(options, control, approvedConfiguration)
   });
   if (output) console.log(output);
 }
 
-async function startControlServer(simulatorEnabled) {
+async function startControlServer(simulatorEnabled, approvedConfiguration = null) {
   lifecycle.assertOpen();
   const token = randomBytes(24).toString("hex");
   rememberSecret(token);
@@ -737,14 +806,14 @@ async function startControlServer(simulatorEnabled) {
     operation = operation.catch(() => undefined).then(async () => {
       lifecycle.assertOpen();
       const [, service, action] = match;
-      const definition = backendDefinition(service, simulatorEnabled);
+      const definition = backendDefinition(service, simulatorEnabled, approvedConfiguration);
       if (action === "stop") {
         await terminateOwned(service);
         await waitForPortClosed(definition.port);
       } else {
         lifecycle.assertOpen();
         if (ownedProcesses.has(service)) throw new Error(`${service} is already running.`);
-        await startBackend(service, simulatorEnabled);
+        await startBackend(service, simulatorEnabled, approvedConfiguration);
       }
     });
     operation.then(
@@ -930,6 +999,140 @@ async function runLifecycleSelfTest() {
     assert.equal(compilation.state, "error", "an error after a prior success invalidates readiness");
     compilation.append("\nwebpack 5.110.1 compiled successfully");
     assert.equal(compilation.state, "success", "a later successful rebuild restores readiness");
+
+    assert.deepEqual(
+      playwrightSelection({ performance: false, project: "chromium", simulator: true }),
+      {
+        project: "chromium",
+        target: "tests/e2e",
+        grep: "@simulator"
+      },
+      "the simulator stack must select only the explicit simulator development-gate test"
+    );
+    assert.deepEqual(
+      playwrightSelection({ performance: false, project: "chromium", simulator: false }),
+      {
+        project: "chromium",
+        target: "tests/e2e",
+        grep: null
+      },
+      "the production stack must retain the complete correctness suite, including simulator absence coverage"
+    );
+    assert.equal(
+      playwrightJsonReportPath({ performance: false, project: "chrome", simulator: false }),
+      path.join(repositoryRoot, "test-results", "playwright", "chrome.json"),
+      "each installed-browser correctness run must retain its own JSON result"
+    );
+    assert.equal(
+      playwrightJsonReportPath({ performance: false, project: "chromium", simulator: true }),
+      path.join(repositoryRoot, "test-results", "playwright", "simulator-chromium.json"),
+      "the simulator result must not overwrite bundled-Chromium correctness evidence"
+    );
+    assert.equal(
+      playwrightJsonReportPath({ performance: true, project: "chromium", simulator: false }),
+      path.join(repositoryRoot, "test-results", "playwright", "performance.json"),
+      "the performance result must have a dedicated machine-readable artifact"
+    );
+
+    assert.equal(
+      parseOptions(["--approved-genuine-model"]).approvedGenuineModel,
+      true,
+      "the genuine-model browser runner must require an explicit opt-in flag"
+    );
+    assert.equal(
+      parseOptions([]).approvedGenuineModel,
+      false,
+      "the default browser runner must retain its synthetic integration behavior"
+    );
+    assert.throws(
+      () => parseOptions(["--approved-genuine-model", "--simulator"]),
+      /approved-genuine-model.*cannot be combined.*simulator/i,
+      "the approved-model runner must not enter the development simulator profile"
+    );
+    assert.throws(
+      () => parseOptions(["--approved-genuine-model", "--performance"]),
+      /approved-genuine-model.*cannot be combined.*performance/i,
+      "genuine browser evidence and the existing synthetic latency profile must stay distinct"
+    );
+    assert.throws(
+      () => parseOptions(["--approved-genuine-model", "--self-test"]),
+      /self-test cannot be combined/i,
+      "self-test mode must not silently ignore the approved-model opt-in"
+    );
+    for (const environmentName of [
+      "SIGNCONNECT_E2E_APPROVED_MODEL_PATH",
+      "SIGNCONNECT_E2E_APPROVED_METADATA_PATH",
+      "SIGNCONNECT_E2E_REVIEWED_FIXTURE_PATH"
+    ]) {
+      assert.match(usage(), new RegExp(environmentName), "approved-mode inputs must be discoverable in CLI help");
+    }
+
+    const privateRoot = mkdtempSync(path.join(os.tmpdir(), "signconnect-approved-runner-"));
+    const privateModelPath = path.join(privateRoot, "approved-private.onnx");
+    const privateMetadataPath = path.join(privateRoot, "approved-private.json");
+    const privateFixturePath = path.join(privateRoot, "reviewed-private.json");
+    const privateTensorSentinel = "PRIVATE_TENSOR_SENTINEL_4b112e";
+    try {
+      writeFileSync(privateModelPath, "private-model-placeholder");
+      writeFileSync(privateMetadataPath, JSON.stringify({
+        modelVersion: "approved-1.2.3",
+        mockModel: false,
+        genuineSignLanguageData: true,
+        productionPromotion: { status: "APPROVED" }
+      }));
+      writeFileSync(privateFixturePath, JSON.stringify({ features: [privateTensorSentinel] }));
+
+      let unsupportedMessage = "";
+      try {
+        approvedGenuineModelConfiguration(
+          parseOptions(["--approved-genuine-model"]),
+          {
+            SIGNCONNECT_E2E_APPROVED_MODEL_PATH: privateModelPath,
+            SIGNCONNECT_E2E_APPROVED_METADATA_PATH: privateMetadataPath,
+            SIGNCONNECT_E2E_REVIEWED_FIXTURE_PATH: privateFixturePath
+          }
+        );
+      } catch (error) {
+        unsupportedMessage = String(error instanceof Error ? error.message : error);
+      }
+      assert.match(
+        unsupportedMessage,
+        /unavailable.*dedicated reviewed-fixture consumer.*no evidence report/i,
+        "private paths alone must not enable genuine-browser evidence"
+      );
+      assert.equal(unsupportedMessage.includes(privateRoot), false, "private paths must not enter runner errors");
+      assert.equal(
+        unsupportedMessage.includes(privateTensorSentinel),
+        false,
+        "private fixture content must not enter runner errors"
+      );
+      const blockedReportPath = playwrightJsonReportPath(
+        parseOptions(["--approved-genuine-model", "--project=chrome"]),
+        privateRoot
+      );
+      assert.equal(existsSync(blockedReportPath), false, "blocked approved mode must not create an evidence report");
+
+      const defaultInference = backendDefinition("inference", false, null);
+      assert.equal(
+        defaultInference.args.includes("--spring.profiles.active=local"),
+        true,
+        "the default E2E stack must retain its synthetic local profile"
+      );
+      assert.equal(defaultInference.env.SIGN_MODEL_RESOURCE, undefined);
+
+      const defaultFrontend = frontendDefinition("meeting-frontend", false, null);
+      assert.equal(defaultFrontend.env.RECOGNITION_E2E_FIXTURE_ENABLED, "true");
+
+      const defaultPlaywrightEnvironment = playwrightEnvironment(
+        parseOptions([]),
+        { token: "self-test-control-token", url: "http://127.0.0.1:40000" },
+        null
+      );
+      assert.equal(defaultPlaywrightEnvironment.SIGNCONNECT_E2E_REVIEWED_FIXTURE_PATH, undefined);
+      assert.equal(defaultPlaywrightEnvironment.SIGNCONNECT_E2E_APPROVED_GENUINE_MODEL, "false");
+    } finally {
+      rmSync(privateRoot, { force: true, recursive: true });
+    }
   };
 
   let timeout;
@@ -963,18 +1166,19 @@ async function main() {
     await runLifecycleSelfTest();
     return;
   }
+  const approvedConfiguration = approvedGenuineModelConfiguration(options);
   await requireFreePorts([3000, 3001, 8081, 8082, 8083]);
   if (!options.skipBuild) await buildBackend();
 
   await Promise.all([
-    startBackend("meeting", options.simulator),
-    startBackend("inference", options.simulator)
+    startBackend("meeting", options.simulator, approvedConfiguration),
+    startBackend("inference", options.simulator, approvedConfiguration)
   ]);
-  await startBackend("realtime", options.simulator);
-  await startFrontend("meeting-frontend", options.simulator);
-  await startFrontend("shell-frontend", options.simulator);
-  controlServer = await startControlServer(options.simulator);
-  await runPlaywright(options, controlServer);
+  await startBackend("realtime", options.simulator, approvedConfiguration);
+  await startFrontend("meeting-frontend", options.simulator, approvedConfiguration);
+  await startFrontend("shell-frontend", options.simulator, approvedConfiguration);
+  controlServer = await startControlServer(options.simulator, approvedConfiguration);
+  await runPlaywright(options, controlServer, approvedConfiguration);
 }
 
 try {

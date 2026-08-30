@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "datasetId": "non-production-synthetic-template",
+  "datasetVersion": "1.0.0-synthetic",
+  "createdAt": "2026-08-30T00:00:00Z",
+  "purposeVersion": "1.0.0-synthetic",
+  "consentNoticeVersion": "1.0.0-synthetic",
+  "vocabularyVersion": "1.0.0-synthetic",
+  "reviewRecordId": "review_1111111111111111",
+  "reviewedLabels": [
+    {"labelId": "SYNTHETIC_A", "gloss": "SYNTHETIC-A", "captionText": "Synthetic A"},
+    {"labelId": "SYNTHETIC_B", "gloss": "SYNTHETIC-B", "captionText": "Synthetic B"}
+  ],
+  "retentionExpiresAt": "2026-11-28T00:00:00Z",
+  "provenance": {
+    "kind": "NON_PRODUCTION_SYNTHETIC",
+    "evidence": {
+      "type": "SYNTHETIC_GENERATOR",
+      "generatorId": "signconnect-ml-generate-synthetic",
+      "generatorVersion": "1.0.0",
+      "seed": 20260830
+    }
+  },
+  "targetLanguage": "sls",
+  "featureLayoutVersion": "mediapipe-holistic-224-v1",
+  "preprocessingVersion": "shoulder-midpoint-shoulder-width-v1",
+  "datasetLicence": {
+    "spdxExpression": "MIT",
+    "commercialUseAllowed": false,
+    "redistributionAllowed": false
+  },
+  "splitPolicy": {
+    "strategy": "SIGNER_INDEPENDENT",
+    "locked": true,
+    "assignmentSha256": "6f54ef8797a2993cdcfcc1430d9fc9c1ac01bcac6043382df16dd9420bd3f849",
+    "testSignerCount": 1
+  },
+  "samples": [
+    {
+      "sampleId": "sample_1111111111111111",
+      "signerId": "sgn_111111111111",
+      "labelId": "NO_SIGN",
+      "language": "sls",
+      "handedness": "NOT_APPLICABLE",
+      "captureCondition": {"lighting": "INDOOR", "background": "PLAIN", "cameraPosition": "DESKTOP", "occlusion": "NONE", "speed": "NATURAL", "distance": "NOMINAL", "scenario": "IDLE"},
+      "captureTimestamp": "2026-08-30T00:00:00Z",
+      "landmarkArtifact": {"path": "landmarks/sample_1111111111111111.npz", "sha256": "1111111111111111111111111111111111111111111111111111111111111111", "mediaType": "application/x-npz"},
+      "frameCount": 30,
+      "featureCount": 224,
+      "featureLayoutVersion": "mediapipe-holistic-224-v1",
+      "consentAttestation": {"status": "VERIFIED", "attestationId": "consent_1111111111111111", "consentedAt": "2026-08-30T00:00:00Z", "permittedUses": ["MODEL_TRAINING", "MODEL_EVALUATION"], "withdrawalStatus": "ACTIVE"},
+      "usageRightsAttestation": {"status": "VERIFIED", "basis": "DATASET_LICENCE", "sourceRecordId": "rights_1111111111111111", "attestedAt": "2026-08-30T00:00:00Z", "attestedByRole": "DATA_STEWARD", "restrictions": ["NON-PRODUCTION synthetic pipeline testing only"]},
+      "splitAssignment": "TRAIN"
+    },
+    {
+      "sampleId": "sample_2222222222222222",
+      "signerId": "sgn_222222222222",
+      "labelId": "SYNTHETIC_A",
+      "language": "sls",
+      "handedness": "NOT_APPLICABLE",
+      "captureCondition": {"lighting": "INDOOR", "background": "PLAIN", "cameraPosition": "DESKTOP", "occlusion": "NONE", "speed": "NATURAL", "distance": "NOMINAL", "scenario": "ISOLATED_SIGN"},
+      "captureTimestamp": "2026-08-30T00:00:00Z",
+      "landmarkArtifact": {"path": "landmarks/sample_2222222222222222.npz", "sha256": "2222222222222222222222222222222222222222222222222222222222222222", "mediaType": "application/x-npz"},
+      "frameCount": 30,
+      "featureCount": 224,
+      "featureLayoutVersion": "mediapipe-holistic-224-v1",
+      "consentAttestation": {"status": "VERIFIED", "attestationId": "consent_2222222222222222", "consentedAt": "2026-08-30T00:00:00Z", "permittedUses": ["MODEL_TRAINING", "MODEL_EVALUATION"], "withdrawalStatus": "ACTIVE"},
+      "usageRightsAttestation": {"status": "VERIFIED", "basis": "DATASET_LICENCE", "sourceRecordId": "rights_2222222222222222", "attestedAt": "2026-08-30T00:00:00Z", "attestedByRole": "DATA_STEWARD", "restrictions": ["NON-PRODUCTION synthetic pipeline testing only"]},
+      "splitAssignment": "VALIDATION"
+    },
+    {
+      "sampleId": "sample_3333333333333333",
+      "signerId": "sgn_333333333333",
+      "labelId": "SYNTHETIC_B",
+      "language": "sls",
+      "handedness": "NOT_APPLICABLE",
+      "captureCondition": {"lighting": "INDOOR", "background": "PLAIN", "cameraPosition": "DESKTOP", "occlusion": "NONE", "speed": "NATURAL", "distance": "NOMINAL", "scenario": "ISOLATED_SIGN"},
+      "captureTimestamp": "2026-08-30T00:00:00Z",
+      "landmarkArtifact": {"path": "landmarks/sample_3333333333333333.npz", "sha256": "3333333333333333333333333333333333333333333333333333333333333333", "mediaType": "application/x-npz"},
+      "frameCount": 30,
+      "featureCount": 224,
+      "featureLayoutVersion": "mediapipe-holistic-224-v1",
+      "consentAttestation": {"status": "VERIFIED", "attestationId": "consent_3333333333333333", "consentedAt": "2026-08-30T00:00:00Z", "permittedUses": ["MODEL_TRAINING", "MODEL_EVALUATION"], "withdrawalStatus": "ACTIVE"},
+      "usageRightsAttestation": {"status": "VERIFIED", "basis": "DATASET_LICENCE", "sourceRecordId": "rights_3333333333333333", "attestedAt": "2026-08-30T00:00:00Z", "attestedByRole": "DATA_STEWARD", "restrictions": ["NON-PRODUCTION synthetic pipeline testing only"]},
+      "splitAssignment": "TEST"
+    }
+  ]
+}

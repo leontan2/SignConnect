@@ -3,13 +3,32 @@
 `deterministic-sign-v1.onnx` is a code-generated integration fixture. It contains no
 trained weights, recordings, landmarks, or third-party dataset content, and it makes
 no SGSL recognition claim. The repository's explicit `local` profile is the only
-bundled configuration that selects it.
+bundled configuration that selects it. Runtime loading also requires the explicit
+`allow-mock-model` flag and a `local`, `development`, or `test` profile. The known
+synthetic artifact digest cannot be relabeled as a real model.
 
 The graph accepts float input `features` with shape `[1,30,224]`. It flattens the
 window, counts only the 42 hand-presence positions in each frame through fixed linear
 weights, and applies Softmax to emit `probabilities` with shape `[1,2]`. A fully active
 shared fixture selects `MOCK_ACTIVE`; the pose-only idle fixture and the first
 five-idle-frame transition window select `NO_SIGN`.
+
+## Versioned runtime metadata
+
+The adjacent JSON sidecar is startup-validated before ONNX Runtime becomes ready. It
+implements the complete authoritative `sign-recognition-training/v1` metadata
+contract: artifact and tensor details, provenance, evaluation, ONNX parity, runtime,
+SGSL review, governance, and production-promotion evidence are all required. Unknown,
+missing, or inconsistent fields fail readiness closed. This synthetic document is
+explicitly `BLOCKED` from production promotion. Deployment configuration must also
+select the same model version with `SIGN_MODEL_EXPECTED_VERSION`.
+
+The frozen v1 inference response has no outcome discriminator. To keep that wire shape
+fail-closed, every non-recognized internal outcome—including a `SIGN` below the model
+metadata threshold, `NO_SIGN`, and explicit `REJECT`—crosses v1 as
+`labelId: "NO_SIGN"` with `captionText: null`; none is a caption candidate. The
+realtime service reports that result privately as not recognized. Model-unavailable state returns
+the existing privacy-safe 503 and no prediction body.
 
 ## Service resource bounds
 
@@ -23,11 +42,11 @@ the value-free `INFERENCE_BUSY` response without changing model readiness.
 
 ## Reproduction
 
-The artifact was generated with `onnx==1.17.0`, opset 13, and IR version 8 using this
-script from the repository root. The constants are deliberately transparent and do
+The artifact was generated with `onnx==1.22.0`, opset 17, and IR version 8 using the
+checked-in `scripts/generate_deterministic_model.py` generator. The constants are deliberately transparent and do
 not originate from model training:
 
-Artifact SHA-256: `3ea81d50540a314493687a961211a3bfc07e23714382bf669199d45c0abfbfa5`.
+Artifact SHA-256: `fd2cf50b2bdbe8c7c6953e0f809b33df2012de2a476b09fcff0e6987e289c4a8`.
 
 ```python
 from pathlib import Path
@@ -60,7 +79,7 @@ graph = helper.make_graph(
 model = helper.make_model(
     graph,
     producer_name="SignConnect deterministic fixture generator",
-    opset_imports=[helper.make_operatorsetid("", 13)],
+    opset_imports=[helper.make_operatorsetid("", 17)],
     ir_version=8,
 )
 onnx.checker.check_model(model)

@@ -1,17 +1,13 @@
 import {
   FilesetResolver,
-  GestureRecognizer,
   HandLandmarker,
   PoseLandmarker,
   type Category,
-  type GestureRecognizerResult,
   type HandLandmarkerResult,
   type PoseLandmarkerResult
 } from "@mediapipe/tasks-vision";
 
 import type {
-  BrowserLocalGestureLabel,
-  BrowserLocalGesturePrediction,
   BrowserLocalHandOverlay,
   BrowserLocalOverlayPoint,
   BrowserLocalVisionFrame,
@@ -20,13 +16,13 @@ import type {
   RawLandmark,
   VisionAssetLocations
 } from "./contracts";
-import {
-  BROWSER_LOCAL_GESTURE_DISPLAY_NAMES,
-  BROWSER_LOCAL_GESTURE_LABELS,
-  BROWSER_LOCAL_GESTURE_SOURCE,
-  POSE_LANDMARK_INDICES
-} from "./contracts";
+import { UPPER_BODY_OVERLAY_LANDMARK_INDICES } from "./contracts";
 import { normalizeLandmarks } from "./normalizeLandmarks";
+import {
+  GestureSegmenter,
+  SessionCalibrator,
+  evaluateTrackingQuality
+} from "./trackingQuality";
 import type { LandmarkWorkerCommand, LandmarkWorkerResult } from "./workerProtocol";
 
 export interface HandLandmarkerTaskLike {
@@ -42,17 +38,8 @@ export interface PoseLandmarkerTaskLike {
   close(): void;
 }
 
-export interface GestureRecognizerTaskLike {
-  recognizeForVideo(frame: ImageBitmap, timestampMs: number): Pick<
-    GestureRecognizerResult,
-    "landmarks" | "handedness" | "handednesses" | "gestures"
-  >;
-  close(): void;
-}
-
 export interface MediaPipeTaskSet {
-  hand?: HandLandmarkerTaskLike;
-  gesture?: GestureRecognizerTaskLike;
+  hand: HandLandmarkerTaskLike;
   pose: PoseLandmarkerTaskLike;
 }
 
@@ -60,18 +47,13 @@ export interface MediaPipeBindings {
   FilesetResolver: Pick<typeof FilesetResolver, "forVisionTasks">;
   HandLandmarker: Pick<typeof HandLandmarker, "createFromOptions">;
   PoseLandmarker: Pick<typeof PoseLandmarker, "createFromOptions">;
-  GestureRecognizer?: Pick<typeof GestureRecognizer, "createFromOptions">;
 }
 
 const defaultMediaPipeBindings: MediaPipeBindings = {
   FilesetResolver,
-  GestureRecognizer,
   HandLandmarker,
   PoseLandmarker
 };
-
-const GENERIC_GESTURE_SCORE_THRESHOLD = 0.6;
-const GENERIC_GESTURE_STABLE_FRAME_COUNT = 4;
 
 function validateAssetLocations(config: VisionAssetLocations): void {
   if (![config.wasmRootUrl, config.handModelUrl, config.poseModelUrl]
@@ -86,38 +68,14 @@ export async function createMediaPipeTasks(
 ): Promise<MediaPipeTaskSet> {
   validateAssetLocations(config);
   const fileset = await bindings.FilesetResolver.forVisionTasks(config.wasmRootUrl);
-  let gesture: GestureRecognizerTaskLike | undefined;
-  if (config.gestureModelUrl && bindings.GestureRecognizer) {
-    try {
-      gesture = await bindings.GestureRecognizer.createFromOptions(fileset, {
-        baseOptions: { modelAssetPath: config.gestureModelUrl },
-        runningMode: "VIDEO",
-        numHands: 2,
-        minHandDetectionConfidence: 0.5,
-        minHandPresenceConfidence: 0.5,
-        minTrackingConfidence: 0.5,
-        cannedGesturesClassifierOptions: {
-          scoreThreshold: GENERIC_GESTURE_SCORE_THRESHOLD,
-          categoryAllowlist: [...BROWSER_LOCAL_GESTURE_LABELS]
-        }
-      });
-    } catch {
-      // The canned gesture model is a presentation-only demo. Landmark capture
-      // remains available through the smaller hand task if it cannot load.
-    }
-  }
-
-  let hand: HandLandmarkerTaskLike | undefined;
-  if (!gesture) {
-    hand = await bindings.HandLandmarker.createFromOptions(fileset, {
-      baseOptions: { modelAssetPath: config.handModelUrl },
-      runningMode: "VIDEO",
-      numHands: 2,
-      minHandDetectionConfidence: 0.5,
-      minHandPresenceConfidence: 0.5,
-      minTrackingConfidence: 0.5
-    });
-  }
+  const hand = await bindings.HandLandmarker.createFromOptions(fileset, {
+    baseOptions: { modelAssetPath: config.handModelUrl },
+    runningMode: "VIDEO",
+    numHands: 2,
+    minHandDetectionConfidence: 0.5,
+    minHandPresenceConfidence: 0.5,
+    minTrackingConfidence: 0.5
+  });
 
   try {
     const pose = await bindings.PoseLandmarker.createFromOptions(fileset, {
@@ -129,24 +87,21 @@ export async function createMediaPipeTasks(
       minTrackingConfidence: 0.5,
       outputSegmentationMasks: false
     });
-    return {
-      ...(hand ? { hand } : {}),
-      ...(gesture ? { gesture } : {}),
-      pose
-    };
+    return { hand, pose };
   } catch {
-    hand?.close();
-    gesture?.close();
+    hand.close();
     throw new Error("Pose task initialization failed.");
   }
 }
 
 function anatomicalHandedness(category: Category | undefined): DetectedHand["handedness"] | null {
   const normalized = category?.categoryName.trim().toLowerCase();
-  // MediaPipe labels handedness as though its input were mirrored. Capture stays
-  // unmirrored, so swap the classifier label into the signer's anatomical side.
-  if (normalized === "left") return "Right";
-  if (normalized === "right") return "Left";
+  // The Tasks API labels observed webcam/video results in the same anatomical
+  // channels used by MediaPipe Holistic and the released OpenHands WLASL pose
+  // files. Preserve those channels; swapping them makes one-hand signs feed the
+  // opposite half of the pretrained graph.
+  if (normalized === "left") return "Left";
+  if (normalized === "right") return "Right";
   return null;
 }
 
@@ -216,42 +171,9 @@ function toHandOverlays(
   });
 }
 
-function isGenericGestureLabel(value: string): value is BrowserLocalGestureLabel {
-  return (BROWSER_LOCAL_GESTURE_LABELS as readonly string[]).includes(value);
-}
-
-function toGenericGesturePrediction(
-  result: Pick<GestureRecognizerResult, "gestures" | "handedness" | "handednesses"> | undefined
-): Omit<BrowserLocalGesturePrediction, "stable" | "consecutiveFrames"> | null {
-  if (!result) return null;
-  const handednesses = result.handedness ?? result.handednesses;
-  let best: Omit<BrowserLocalGesturePrediction, "stable" | "consecutiveFrames"> | null = null;
-
-  for (let index = 0; index < result.gestures.length; index += 1) {
-    const category = result.gestures[index]?.[0];
-    const label = category?.categoryName;
-    if (!category || !label || !isGenericGestureLabel(label)) continue;
-    if (!Number.isFinite(category.score) || category.score < GENERIC_GESTURE_SCORE_THRESHOLD) continue;
-    if (best && best.confidence >= category.score) continue;
-    best = {
-      source: BROWSER_LOCAL_GESTURE_SOURCE,
-      label,
-      displayName: BROWSER_LOCAL_GESTURE_DISPLAY_NAMES[label],
-      confidence: clampUnit(category.score),
-      handedness: anatomicalHandedness(handednesses[index]?.[0])
-    };
-  }
-  return best;
-}
-
 function closeTaskSet(tasks: MediaPipeTaskSet): void {
   try {
-    tasks.hand?.close();
-  } catch {
-    // Worker teardown must continue even when an SDK close call fails.
-  }
-  try {
-    tasks.gesture?.close();
+    tasks.hand.close();
   } catch {
     // Worker teardown must continue even when an SDK close call fails.
   }
@@ -282,30 +204,9 @@ export interface LandmarkWorkerProcessor {
 export function createLandmarkWorkerProcessor(options: LandmarkWorkerProcessorOptions): LandmarkWorkerProcessor {
   let tasks: MediaPipeTaskSet | null = null;
   let lastTimestampMs = Number.NEGATIVE_INFINITY;
-  let lastGestureLabel: BrowserLocalGestureLabel | null = null;
-  let consecutiveGestureFrames = 0;
+  const calibrator = new SessionCalibrator();
+  const segmenter = new GestureSegmenter();
   let disposed = false;
-
-  function stabilizeGesture(
-    prediction: Omit<BrowserLocalGesturePrediction, "stable" | "consecutiveFrames"> | null
-  ): BrowserLocalGesturePrediction | null {
-    if (!prediction) {
-      lastGestureLabel = null;
-      consecutiveGestureFrames = 0;
-      return null;
-    }
-    if (prediction.label === lastGestureLabel) {
-      consecutiveGestureFrames += 1;
-    } else {
-      lastGestureLabel = prediction.label;
-      consecutiveGestureFrames = 1;
-    }
-    return {
-      ...prediction,
-      stable: consecutiveGestureFrames >= GENERIC_GESTURE_STABLE_FRAME_COUNT,
-      consecutiveFrames: consecutiveGestureFrames
-    };
-  }
 
   async function initialize(config: VisionAssetLocations): Promise<void> {
     if (disposed || tasks) return;
@@ -351,23 +252,37 @@ export function createLandmarkWorkerProcessor(options: LandmarkWorkerProcessorOp
       }
 
       lastTimestampMs = command.timestampMs;
-      const gestureResult = tasks.gesture?.recognizeForVideo(command.frame, command.timestampMs);
-      const handResult = gestureResult ?? tasks.hand?.detectForVideo(command.frame, command.timestampMs);
-      if (!handResult) throw new Error("No hand tracking task is available.");
+      const handResult = tasks.hand.detectForVideo(command.frame, command.timestampMs);
       const poseResult = tasks.pose.detectForVideo(command.frame, command.timestampMs);
       const detection = toDetection(handResult, poseResult);
       const result = detection
         ? normalizeLandmarks(detection)
         : { kind: "rejected" as const, reason: "LOW_QUALITY" as const };
+      const qualityDetection = detection ?? {
+        hands: [],
+        poseLandmarks: poseResult.landmarks[0] as RawLandmark[] | undefined
+      };
+      const quality = evaluateTrackingQuality(qualityDetection);
+      const calibration = calibrator.observe(quality);
+      const segmentation = segmenter.observe(
+        qualityDetection,
+        quality,
+        command.timestampMs,
+        result.kind === "accepted"
+          ? { timestampMs: command.timestampMs, features: result.features }
+          : undefined,
+        calibration.state === "ready"
+      );
       const browserLocal: BrowserLocalVisionFrame = {
         timestampMs: command.timestampMs,
-        gestureModel: tasks.gesture ? "ready" : "unavailable",
         hands: toHandOverlays(handResult),
         upperBody: toOverlayPoints(
           (poseResult.landmarks[0] ?? []) as RawLandmark[],
-          POSE_LANDMARK_INDICES
+          UPPER_BODY_OVERLAY_LANDMARK_INDICES
         ),
-        gesture: stabilizeGesture(toGenericGesturePrediction(gestureResult))
+        trackingQuality: quality.facts,
+        calibration,
+        gesturePhase: segmentation.phase
       };
 
       options.emit({
@@ -375,7 +290,8 @@ export function createLandmarkWorkerProcessor(options: LandmarkWorkerProcessorOp
         requestId: command.requestId,
         timestampMs: command.timestampMs,
         result,
-        browserLocal
+        browserLocal,
+        ...(segmentation.candidate ? { gestureCandidate: segmentation.candidate } : {})
       });
     } catch {
       options.emit({
@@ -401,8 +317,8 @@ export function createLandmarkWorkerProcessor(options: LandmarkWorkerProcessorOp
     }
 
     disposed = true;
-    lastGestureLabel = null;
-    consecutiveGestureFrames = 0;
+    calibrator.reset();
+    segmenter.reset();
     if (tasks) closeTaskSet(tasks);
     tasks = null;
   }

@@ -2,10 +2,9 @@ import {
   CAPTURE_INTERVAL_MS,
   type BrowserLocalVisionFrame,
   type LandmarkCaptureStatus,
-  type LandmarkChunkConsumer,
   type VisionAssetLocations
 } from "./contracts";
-import { LandmarkBatcher, type LandmarkBatcherStats } from "./LandmarkBatcher";
+import type { GestureCandidateFrame } from "./trackingQuality";
 import type {
   LandmarkWorkerCommand,
   LandmarkWorkerLike,
@@ -27,7 +26,6 @@ export interface WatchdogScheduler {
 }
 
 export interface LandmarkCaptureControllerOptions {
-  consumer: LandmarkChunkConsumer;
   workerFactory?: () => LandmarkWorkerLike;
   frameFactory?: (video: HTMLVideoElement) => ImageBitmap | Promise<ImageBitmap>;
   scheduler?: AnimationScheduler;
@@ -36,6 +34,7 @@ export interface LandmarkCaptureControllerOptions {
   assets?: VisionAssetLocations;
   onStatus?: (status: LandmarkCaptureStatus) => void;
   onBrowserLocalFrame?: (frame: BrowserLocalVisionFrame | null) => void;
+  onGestureCandidate?: (candidate: GestureCandidateFrame[]) => void;
   watchdogScheduler?: WatchdogScheduler;
   initializationTimeoutMs?: number;
   processingTimeoutMs?: number;
@@ -44,13 +43,11 @@ export interface LandmarkCaptureControllerOptions {
 const DEFAULT_WASM_ROOT_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm";
 const DEFAULT_HAND_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
 const DEFAULT_POSE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
-const DEFAULT_GESTURE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task";
 
 export const DEFAULT_VISION_ASSET_LOCATIONS: VisionAssetLocations = {
   wasmRootUrl: process.env.MEDIAPIPE_WASM_ROOT_URL || DEFAULT_WASM_ROOT_URL,
   handModelUrl: process.env.MEDIAPIPE_HAND_MODEL_URL || DEFAULT_HAND_MODEL_URL,
-  poseModelUrl: process.env.MEDIAPIPE_POSE_MODEL_URL || DEFAULT_POSE_MODEL_URL,
-  gestureModelUrl: DEFAULT_GESTURE_MODEL_URL
+  poseModelUrl: process.env.MEDIAPIPE_POSE_MODEL_URL || DEFAULT_POSE_MODEL_URL
 };
 
 const defaultScheduler: AnimationScheduler = {
@@ -197,7 +194,6 @@ function releaseFrame(frame: ImageBitmap | null): void {
 }
 
 export class LandmarkCaptureController {
-  private readonly consumer: LandmarkChunkConsumer;
   private readonly workerFactory: () => LandmarkWorkerLike;
   private readonly frameFactory: (video: HTMLVideoElement) => ImageBitmap | Promise<ImageBitmap>;
   private readonly scheduler: AnimationScheduler;
@@ -206,13 +202,13 @@ export class LandmarkCaptureController {
   private readonly assets: VisionAssetLocations;
   private readonly onStatus?: (status: LandmarkCaptureStatus) => void;
   private readonly onBrowserLocalFrame?: (frame: BrowserLocalVisionFrame | null) => void;
+  private readonly onGestureCandidate?: (candidate: GestureCandidateFrame[]) => void;
   private readonly watchdogScheduler: WatchdogScheduler;
   private readonly initializationTimeoutMs: number;
   private readonly processingTimeoutMs: number;
 
   private worker: LandmarkWorkerLike | null = null;
   private video: HTMLVideoElement | null = null;
-  private batcher: LandmarkBatcher | null = null;
   private animationHandle: number | null = null;
   private active = false;
   private capturePaused = false;
@@ -229,7 +225,6 @@ export class LandmarkCaptureController {
   private processingWatchdogHandle: unknown = null;
 
   constructor(options: LandmarkCaptureControllerOptions) {
-    this.consumer = options.consumer;
     this.workerFactory = options.workerFactory ?? defaultWorkerFactory;
     this.frameFactory = options.frameFactory ?? ((video) => createImageBitmap(video));
     this.scheduler = options.scheduler ?? defaultScheduler;
@@ -238,6 +233,7 @@ export class LandmarkCaptureController {
     this.assets = options.assets ?? DEFAULT_VISION_ASSET_LOCATIONS;
     this.onStatus = options.onStatus;
     this.onBrowserLocalFrame = options.onBrowserLocalFrame;
+    this.onGestureCandidate = options.onGestureCandidate;
     this.watchdogScheduler = options.watchdogScheduler ?? defaultWatchdogScheduler;
     this.initializationTimeoutMs = options.initializationTimeoutMs ?? DEFAULT_INITIALIZATION_TIMEOUT_MS;
     this.processingTimeoutMs = options.processingTimeoutMs ?? DEFAULT_PROCESSING_TIMEOUT_MS;
@@ -258,11 +254,15 @@ export class LandmarkCaptureController {
     return this.streamIdValue;
   }
 
-  get stats(): LandmarkBatcherStats {
-    return this.batcher?.stats ?? { bufferedFrames: 0, pendingChunks: 0, droppedChunks: 0 };
-  }
-
   start(video: HTMLVideoElement, capturePaused = false): string | null {
+    if (capturePaused
+      && this.active
+      && this.worker
+      && this.video === video
+      && this.capturePaused
+      && this.streamIdValue) {
+      return this.streamIdValue;
+    }
     if (this.active || this.worker) this.teardown("stopped");
 
     let streamId: string;
@@ -286,7 +286,6 @@ export class LandmarkCaptureController {
     this.streamIdValue = streamId;
     this.video = video;
     this.worker = worker;
-    this.batcher = new LandmarkBatcher({ streamId, consumer: this.consumer });
 
     worker.onmessage = (event) => {
       if (this.worker === worker) this.handleWorkerResult(event.data);
@@ -321,10 +320,6 @@ export class LandmarkCaptureController {
   resumeCapture(): void {
     if (!this.active || !this.streamIdValue || !this.capturePaused) return;
     this.capturePaused = false;
-    this.batcher = new LandmarkBatcher({
-      streamId: this.streamIdValue,
-      consumer: this.consumer
-    });
     this.lastCaptureTimestampMs = Number.NEGATIVE_INFINITY;
   }
 
@@ -334,10 +329,6 @@ export class LandmarkCaptureController {
 
   dispose(): void {
     this.stop();
-  }
-
-  drainPendingChunk(): boolean {
-    return this.batcher?.drain() ?? false;
   }
 
   private scheduleNextFrame(): void {
@@ -433,22 +424,15 @@ export class LandmarkCaptureController {
     this.inFlightFrame = null;
 
     if (message.browserLocal) this.onBrowserLocalFrame?.(message.browserLocal);
+    if (message.gestureCandidate) this.onGestureCandidate?.(message.gestureCandidate);
+    if (!this.active) return;
 
     if (message.result.kind === "rejected") {
       this.setStatus("low-quality");
       return;
     }
 
-    try {
-      this.batcher?.drain();
-      this.batcher?.addFrame({
-        timestampMs: message.timestampMs,
-        features: message.result.features
-      });
-      this.setStatus(message.result.frameKind === "idle" ? "no-hands" : "tracking");
-    } catch {
-      this.teardown("error");
-    }
+    this.setStatus(message.result.frameKind === "idle" ? "no-hands" : "tracking");
   }
 
   private teardown(finalStatus: LandmarkCaptureStatus): void {
@@ -467,8 +451,6 @@ export class LandmarkCaptureController {
     this.inFlightFrame = null;
     this.inFlightRequestId = null;
     this.creatingFrame = false;
-    this.batcher?.clear();
-    this.batcher = null;
     this.video = null;
     this.streamIdValue = null;
     this.onBrowserLocalFrame?.(null);

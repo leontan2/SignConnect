@@ -3,6 +3,7 @@ import type {
   LandmarkNormalizationResult,
   VisionAssetLocations
 } from "./contracts";
+import type { GestureCandidateFrame } from "./trackingQuality";
 
 export type LandmarkWorkerRequestId = number;
 
@@ -37,6 +38,8 @@ export type LandmarkWorkerResult =
     timestampMs: number;
     result: LandmarkNormalizationResult;
     browserLocal?: BrowserLocalVisionFrame;
+    /** Exactly one bounded 30-frame browser-local candidate per completed gesture. */
+    gestureCandidate?: GestureCandidateFrame[];
   }
   | {
     type: "worker.error";

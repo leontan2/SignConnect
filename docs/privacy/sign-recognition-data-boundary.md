@@ -6,6 +6,8 @@ This document defines the allowed data flow for the mock-first isolated-sign rec
 
 Recognition is opt-in and separate from camera preview. The user must explicitly start it after seeing a disclosure that normalized hand and upper-body landmarks are transmitted while raw video is not.
 
+This document governs the live meeting and inference path. It does not authorize dataset capture or model training. Any development-only training capture is a separate local workflow governed by [ADR-0003](../adr/0003-training-data-capture-boundary.md) and may operate only after its consent, SGSL review, retention, deletion, and repository-guard prerequisites pass.
+
 ## Boundary Summary
 
 | Data | Permitted locations and use | Prohibited destinations or use |
@@ -24,12 +26,20 @@ Raw media and derived values are separate classes, but both are sensitive. Calli
 2. With recognition explicitly enabled, one frame at a time is transferred to the MediaPipe worker. The worker closes/releases each frame after processing; additional animation frames are skipped or delayed while it is busy.
 3. The worker emits only normalized anatomical left-hand, right-hand, and upper-body pose features. Inadequately tracked frames are dropped. Accepted or valid idle frames are held only long enough to form a five-frame chunk.
 4. The browser sends the strict v1 `landmark.chunk` on the current meeting WebSocket. Under socket pressure it retains only the newest unsent complete batch, so sensitive values cannot accumulate in an unbounded queue.
-5. The realtime service holds data in memory per connection and `streamId`, builds a 30-frame rolling window, and evaluates at five-frame strides. It permits one inference call in flight and keeps only the newest pending complete window.
+5. In the default segmented path, the browser resamples one completed gesture to 30 frames and sends six ordered five-frame chunks. The realtime service holds those chunks only in memory per connection and `streamId`, assembles one 30-frame candidate, permits one inference call in flight, and keeps only the newest pending complete candidate as a defensive bound. Five-frame-stride rolling evaluation exists only in explicit legacy compatibility mode.
 6. The realtime service sends the selected window to `POST /api/v1/predictions` over the configured internal HTTP boundary. The live request has a 500 ms timeout and stale windows are not retried.
 7. The inference service creates a transient `[1,30,224]` tensor for its singleton ONNX Runtime Java session. Its response returns `labelId`, nullable `captionText`, `confidence`, `modelVersion`, `inferenceLatencyMs`, and `mockModel`, never input values.
 8. The realtime service keeps landmark state, tensors, predictions, recognition status, and unknown-sign feedback private to the submitting connection. After stabilization, it adds bounded source metadata and broadcasts only the finalized caption to authenticated participants in the same ephemeral room. Captions are not persisted or replayed to late joiners.
 
 This is the complete authorized data path. Live recognition payloads are not an implied source of training data, test fixtures, analytics, support attachments, or product research.
+
+## Separation From Training Capture
+
+Camera permission, joining a room, starting a meeting session, and selecting **Start recognition** authorize only the transient live processing described above. None of those actions authorize collection, retention, labeling, dataset export, training, evaluation, or creation of a model artifact. A participant must be able to use live recognition without being asked to contribute training data.
+
+Training capture must not tap, copy, replay, or redirect a live `landmark.chunk`, rolling window, inference tensor, prediction, caption, room event, credential, or live camera buffer. It runs only in the separately gated local development workflow defined by ADR-0003, with a reviewed vocabulary and its own versioned informed consent before the camera starts. Accepting or discarding each take and exporting accepted normalized landmarks are explicit actions in that workflow; silence, continued camera use, meeting participation, and prior live consent are never acceptance.
+
+The training workflow does not weaken this document's zero-retention live boundary. It has no connection to the meeting, realtime, inference, analytics, or cloud services; raw media is never written; and its accepted local normalized-landmark exports follow ADR-0003's purpose, access, maximum 90-day retention, withdrawal, deletion, and repository-exclusion rules.
 
 ## Raw Media Rules
 
@@ -96,3 +106,5 @@ Automated checks must:
 - prove that production/default simulator handling is disabled, connection-local recognition events stay private, finalized captions reach the current room exactly once, and neither credentials nor events cross into another room.
 
 Any future proposal to retain, broadcast, analyze, replay, or train on raw media, landmarks, tensors, predictions, or captions changes this boundary. It requires a separate reviewed decision, explicit consent and usage terms where applicable, retention/deletion controls, access controls, and an updated privacy disclosure before implementation.
+
+ADR-0003 supplies that separate decision only for its narrowly defined, informed-consent, local development capture workflow. It does not authorize retention or training from the live path, raw-media capture, remote collection, cloud storage, public dataset release, or broader reuse.

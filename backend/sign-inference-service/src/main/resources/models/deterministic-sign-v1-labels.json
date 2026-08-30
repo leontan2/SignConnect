@@ -1,17 +1,119 @@
 {
   "schemaVersion": 1,
+  "modelId": "deterministic-sign-fixture",
   "modelVersion": "synthetic-v1",
+  "generatedAt": "2026-08-30T13:00:00Z",
   "mockModel": true,
+  "genuineSignLanguageData": false,
+  "targetLanguage": "sls",
+  "vocabularyVersion": "1.0.0-synthetic",
+  "vocabularySha256": "afd4bd331c9dd8ae99c8cd51b62be38ea3f46d18e48fb057e9337a066ab68c43",
+  "sourceProvenance": {"commit": null, "dirty": null, "trackedChangesSha256": null, "untrackedFileCount": null, "untrackedStateSha256": null, "untrackedContentSha256": null},
+  "architecture": {
+    "family": "SYNTHETIC_FIXTURE",
+    "name": "Deterministic inference integration fixture",
+    "parameterCount": 0
+  },
+  "artifactSha256": "fd2cf50b2bdbe8c7c6953e0f809b33df2012de2a476b09fcff0e6987e289c4a8",
+  "input": {
+    "name": "features",
+    "shape": [1, 30, 224],
+    "tensorType": "FLOAT32",
+    "featureLayoutVersion": "mediapipe-holistic-224-v1",
+    "normalizationVersion": "shoulder-midpoint-shoulder-width-v1",
+    "featureOrder": [
+      "LEFT_HAND_0_20_XYZ_PRESENCE",
+      "RIGHT_HAND_0_20_XYZ_PRESENCE",
+      "POSE_11_24_XYZ_PRESENCE"
+    ]
+  },
+  "output": {
+    "name": "probabilities",
+    "shape": [1, 2],
+    "tensorType": "FLOAT32",
+    "semanticsVersion": "softmax-class-probabilities-v1"
+  },
+  "decision": {
+    "minimumConfidence": 0.8
+  },
   "labels": [
     {
       "index": 0,
       "id": "NO_SIGN",
-      "captionText": null
+      "captionText": null,
+      "outcome": "NO_SIGN"
     },
     {
       "index": 1,
       "id": "MOCK_ACTIVE",
-      "captionText": "Synthetic active gesture"
+      "captionText": "Synthetic active gesture",
+      "outcome": "SIGN"
     }
-  ]
+  ],
+  "trainingDataset": {
+    "datasetId": "synthetic-contract-fixtures",
+    "datasetVersion": "1.0.0",
+    "manifestPath": "manifests/deterministic-sign-fixture.json",
+    "manifestSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "licence": {
+      "spdxExpression": "MIT",
+      "commercialUseAllowed": true,
+      "redistributionAllowed": true
+    }
+  },
+  "evaluation": {
+    "protocol": {
+      "splitStrategy": "SYNTHETIC",
+      "splitSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "signerOverlapCount": 0,
+      "testSignerCount": 0
+    },
+    "metrics": {
+      "macroF1": 1,
+      "accuracy": 1,
+      "falseFinalRate": 0,
+      "sampleCount": 2
+    }
+  },
+  "onnx": {
+    "artifactPath": "models/deterministic-sign-v1.onnx",
+    "opset": 17,
+    "parity": {
+      "verified": true,
+      "absoluteTolerance": 0.00001,
+      "relativeTolerance": 0.0001,
+      "maxAbsoluteDifference": 0
+    }
+  },
+  "runtime": {
+    "engine": "ONNX_RUNTIME_JAVA",
+    "minimumVersion": "1.22.0",
+    "executionProviders": [
+      "CPUExecutionProvider"
+    ],
+    "maxBatchSize": 1,
+    "warmedP95LatencyMs": 1
+  },
+  "sgslReview": {
+    "status": "PENDING",
+    "reviewerRole": "SGSL_FLUENT_DEAF_REVIEWER",
+    "reviewedLabelIds": [],
+    "reviewArtifactSha256": null,
+    "reviewedAt": null
+  },
+  "governance": {
+    "allTrainingSamplesConsentVerified": false,
+    "usageRightsVerified": true,
+    "signerIndependentEvaluationVerified": false,
+    "rawVideoOrImageDataIncluded": false
+  },
+  "productionPromotion": {
+    "status": "BLOCKED",
+    "assessedAt": "2026-08-30T13:00:00Z",
+    "blockingReasons": [
+      "Synthetic fixtures are not genuine SGSL data.",
+      "SGSL-fluent Deaf review is absent.",
+      "Signer-independent evaluation is absent."
+    ]
+  }
 }

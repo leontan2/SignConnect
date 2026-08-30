@@ -23,6 +23,7 @@ signconnect:
     inference-timeout: ${SIGN_INFERENCE_TIMEOUT:500ms}
     window-frames: ${SIGN_RECOGNITION_WINDOW_FRAMES:30}
     stride-frames: ${SIGN_RECOGNITION_STRIDE_FRAMES:5}
+    input-mode: ${SIGN_RECOGNITION_INPUT_MODE:SEGMENTED_GESTURES}
     confidence-threshold: ${SIGN_RECOGNITION_CONFIDENCE_THRESHOLD:0.80}
     stable-active-evaluations: ${SIGN_RECOGNITION_STABLE_ACTIVE_EVALUATIONS:3}
     idle-evaluations: ${SIGN_RECOGNITION_IDLE_EVALUATIONS:2}

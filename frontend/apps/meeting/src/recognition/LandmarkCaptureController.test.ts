@@ -44,7 +44,7 @@ type WatchdogScheduler = {
 type Controller = {
   readonly status: CaptureStatus;
   readonly streamId: string | null;
-  start(video: HTMLVideoElement): string | null;
+  start(video: HTMLVideoElement, capturePaused?: boolean): string | null;
   stop(): void;
   restart(video: HTMLVideoElement): string | null;
   cameraOff(): void;
@@ -62,11 +62,8 @@ type ControllerConstructor = new (options: {
     handModelUrl: string;
     poseModelUrl: string;
   };
-  consumer: {
-    isUnderPressure(): boolean;
-    send(chunk: unknown): void;
-  };
   onStatus?(status: CaptureStatus): void;
+  onGestureCandidate?(candidate: Array<{ timestampMs: number; features: number[] }>): void;
   watchdogScheduler?: WatchdogScheduler;
   initializationTimeoutMs?: number;
   processingTimeoutMs?: number;
@@ -235,7 +232,6 @@ function controllerOptions(worker: FakeWorker, scheduler: ManualScheduler, now: 
     clock: { now: () => now.value },
     uuidFactory: () => "11111111-1111-4111-8111-111111111111",
     assets,
-    consumer: { isUnderPressure: () => false, send: vi.fn() },
     watchdogScheduler: new ManualWatchdogScheduler(),
     ...overrides
   };
@@ -246,6 +242,55 @@ function processMessages(worker: FakeWorker): Array<{ message: WorkerCommand; tr
 }
 
 describe("LandmarkCaptureController", () => {
+  it("reuses a paused warm worker when recognition starts", () => {
+    const LandmarkCaptureController = controllerConstructorFor("warm worker reuse");
+    const worker = new FakeWorker();
+    const scheduler = new ManualScheduler();
+    const now = { value: 0 };
+    const workerFactory = vi.fn(() => worker);
+    const controller = new LandmarkCaptureController(controllerOptions(worker, scheduler, now, {
+      workerFactory
+    }));
+
+    const preparedStreamId = controller.start(readyVideo, true);
+    worker.emit({ type: "worker.ready" });
+    const recognitionStreamId = controller.start(readyVideo, true);
+
+    expect(recognitionStreamId).toBe(preparedStreamId);
+    expect(workerFactory).toHaveBeenCalledOnce();
+    expect(worker.posted.filter(({ message }) => message.type === "worker.initialize")).toHaveLength(1);
+    expect(worker.terminate).not.toHaveBeenCalled();
+  });
+
+  it("forwards one completed 30-frame gesture candidate through the browser-local adapter", async () => {
+    const LandmarkCaptureController = controllerConstructorFor("gesture candidate adapter");
+    const worker = new FakeWorker();
+    const scheduler = new ManualScheduler();
+    const now = { value: 40 };
+    const onGestureCandidate = vi.fn();
+    const controller = new LandmarkCaptureController(controllerOptions(worker, scheduler, now, { onGestureCandidate }));
+
+    controller.start(readyVideo);
+    worker.emit({ type: "worker.ready" });
+    scheduler.step(40);
+    await flushCapture();
+    const pending = processMessages(worker)[0].message;
+    const candidate = Array.from({ length: 30 }, (_unused, index) => ({
+      timestampMs: 40 + index * 40,
+      features: [...activeChunkFixture.frames[0].features]
+    }));
+    worker.emit({
+      type: "frame.result",
+      requestId: pending.requestId,
+      timestampMs: pending.timestampMs,
+      result: { kind: "accepted", frameKind: "active", features: activeChunkFixture.frames[0].features },
+      gestureCandidate: candidate
+    });
+
+    expect(onGestureCandidate).toHaveBeenCalledOnce();
+    expect(onGestureCandidate).toHaveBeenCalledWith(candidate);
+  });
+
   it("waits for model and video readiness and permits only one frame in flight", async () => {
     const LandmarkCaptureController = controllerConstructorFor("readiness and one-frame backpressure");
     const worker = new FakeWorker();
@@ -298,18 +343,16 @@ describe("LandmarkCaptureController", () => {
     expect(statuses).toContain("no-hands");
   });
 
-  it("samples within the 20-30 FPS acceptance range at a 25 FPS target", async () => {
+  it("samples within the 20-30 FPS acceptance range without sending rolling frames", async () => {
     const LandmarkCaptureController = controllerConstructorFor("25 FPS scheduling");
     const worker = new FakeWorker();
     worker.autoRespond = true;
     const scheduler = new ManualScheduler();
     const now = { value: 0 };
     const frameFactory = vi.fn(() => fakeFrame(`frame-${now.value}`));
-    const send = vi.fn();
     const statuses: CaptureStatus[] = [];
     const controller = new LandmarkCaptureController(controllerOptions(worker, scheduler, now, {
       frameFactory,
-      consumer: { isUnderPressure: () => false, send },
       onStatus: (status: CaptureStatus) => statuses.push(status)
     }));
 
@@ -324,7 +367,6 @@ describe("LandmarkCaptureController", () => {
     expect(processMessages(worker).length).toBeGreaterThanOrEqual(20);
     expect(processMessages(worker).length).toBeLessThanOrEqual(30);
     expect(frameFactory).toHaveBeenCalledTimes(processMessages(worker).length);
-    expect(send).toHaveBeenCalledTimes(Math.floor(processMessages(worker).length / 5));
     expect(statuses.filter((status) => status === "no-hands")).toHaveLength(1);
     controller.stop();
   });
@@ -621,7 +663,6 @@ describe("useLandmarkCapture", () => {
       clock: { now: () => 0 },
       uuidFactory: () => "11111111-1111-4111-8111-111111111111",
       assets,
-      consumer: { isUnderPressure: () => false, send: vi.fn() }
     }));
     let streamId: string | null = "not-started";
 
@@ -644,22 +685,35 @@ function landmarkFromFeatureGroup(features: number[], offset: number) {
   };
 }
 
+function canonicalV2Features() {
+  const legacy = activeChunkFixture.frames[0].features;
+  const legacyPoseGroup = (slot: number) => legacy.slice(168 + slot * 4, 172 + slot * 4);
+  return [
+    ...legacy.slice(0, 168),
+    0, -1, 0, 1,
+    -0.1, -1.05, 0, 1,
+    0.1, -1.05, 0, 1,
+    ...Array.from({ length: 11 }, (_, slot) => legacyPoseGroup(slot)).flat()
+  ];
+}
+
 function mediaPipeResults() {
-  const features = activeChunkFixture.frames[0].features;
+  const features = canonicalV2Features();
   const pose = Array.from({ length: 33 }, () => ({ x: 0, y: 0, z: 0, visibility: 0 }));
-  for (let index = 11; index <= 24; index += 1) {
-    pose[index] = landmarkFromFeatureGroup(features, 168 + (index - 11) * 4);
-  }
+  const poseIndices = [0, 2, 5, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21];
+  poseIndices.forEach((index, slot) => {
+    pose[index] = landmarkFromFeatureGroup(features, 168 + slot * 4);
+  });
 
   return {
     hand: {
       landmarks: [
         Array.from({ length: 21 }, (_, index) => ({
-          ...landmarkFromFeatureGroup(features, 84 + index * 4),
+          ...landmarkFromFeatureGroup(features, index * 4),
           visibility: 0
         })),
         Array.from({ length: 21 }, (_, index) => ({
-          ...landmarkFromFeatureGroup(features, index * 4),
+          ...landmarkFromFeatureGroup(features, 84 + index * 4),
           visibility: 0
         }))
       ],
@@ -706,6 +760,30 @@ describe("landmark worker", () => {
     expect(tasks).toEqual({ hand, pose });
   });
 
+  it("uses landmark extraction without loading the canned gesture classifier", async () => {
+    const { createMediaPipeTasks } = workerFunctionsFor("landmark-only browser vision");
+    const fileset = { id: "wasm" };
+    const hand = { close: vi.fn() };
+    const pose = { close: vi.fn() };
+    const gesture = { close: vi.fn() };
+    const bindings = {
+      FilesetResolver: { forVisionTasks: vi.fn(async () => fileset) },
+      HandLandmarker: { createFromOptions: vi.fn(async () => hand) },
+      PoseLandmarker: { createFromOptions: vi.fn(async () => pose) },
+      GestureRecognizer: { createFromOptions: vi.fn(async () => gesture) }
+    };
+    const legacyAssets = {
+      ...assets,
+      gestureModelUrl: "/assets/mediapipe/gesture_recognizer.task"
+    };
+
+    const tasks = await createMediaPipeTasks(legacyAssets, bindings);
+
+    expect(bindings.GestureRecognizer.createFromOptions).not.toHaveBeenCalled();
+    expect(bindings.HandLandmarker.createFromOptions).toHaveBeenCalledOnce();
+    expect(tasks).toEqual({ hand, pose });
+  });
+
   it("uses strictly increasing VIDEO timestamps, normalizes results, and closes every frame", async () => {
     const { createLandmarkWorkerProcessor } = workerFunctionsFor("VIDEO timestamp processing");
     const results = mediaPipeResults();
@@ -738,7 +816,19 @@ describe("landmark worker", () => {
       result: {
         kind: "accepted",
         frameKind: "active",
-        features: activeChunkFixture.frames[0].features
+        features: canonicalV2Features()
+      },
+      browserLocal: {
+        trackingQuality: {
+          state: "ready",
+          personDetected: true,
+          upperBodyVisible: true,
+          leftHandVisible: true,
+          rightHandVisible: true,
+          handsInsideFrame: true
+        },
+        calibration: { state: "collecting", stableFrames: 1, requiredStableFrames: 8 },
+        gesturePhase: "idle"
       }
     });
     expect(JSON.stringify(emitted)).not.toContain("RAW_PIXEL_SENTINEL");

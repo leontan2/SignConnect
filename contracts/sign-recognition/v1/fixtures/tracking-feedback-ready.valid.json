@@ -1,0 +1,39 @@
+{
+  "timestampMs": 480,
+  "gestureModel": "ready",
+  "hands": [
+    {
+      "handedness": "Left",
+      "score": 0.94,
+      "points": [
+        { "index": 0, "x": 0.38, "y": 0.54, "confidence": 0.96 }
+      ]
+    },
+    {
+      "handedness": "Right",
+      "score": 0.93,
+      "points": [
+        { "index": 0, "x": 0.62, "y": 0.54, "confidence": 0.95 }
+      ]
+    }
+  ],
+  "upperBody": [
+    { "index": 11, "x": 0.43, "y": 0.35, "confidence": 0.97 },
+    { "index": 12, "x": 0.57, "y": 0.35, "confidence": 0.97 }
+  ],
+  "gesture": null,
+  "trackingQuality": {
+    "state": "ready",
+    "personDetected": true,
+    "upperBodyVisible": true,
+    "leftHandVisible": true,
+    "rightHandVisible": true,
+    "handsInsideFrame": true
+  },
+  "calibration": {
+    "state": "ready",
+    "stableFrames": 8,
+    "requiredStableFrames": 8
+  },
+  "gesturePhase": "idle"
+}

@@ -1,0 +1,330 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.signconnect.dev/sign-recognition/v1/tracking-feedback.schema.json",
+  "title": "SignConnect BrowserLocalVisionFrame v1",
+  "description": "Strict schema for the ephemeral BrowserLocalVisionFrame snapshot emitted by the vision worker. Overlay coordinates are permitted only for local rendering. This snapshot MUST NOT be sent over WebSocket or HTTP, broadcast, persisted, logged, or used as transcript content.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "timestampMs",
+    "gestureModel",
+    "hands",
+    "upperBody",
+    "gesture",
+    "trackingQuality",
+    "calibration",
+    "gesturePhase"
+  ],
+  "properties": {
+    "timestampMs": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Finite monotonic browser capture timestamp in milliseconds."
+    },
+    "gestureModel": {
+      "type": "string",
+      "enum": [
+        "ready",
+        "unavailable"
+      ]
+    },
+    "hands": {
+      "type": "array",
+      "maxItems": 2,
+      "items": {
+        "$ref": "#/$defs/handOverlay"
+      }
+    },
+    "upperBody": {
+      "type": "array",
+      "maxItems": 14,
+      "items": {
+        "$ref": "#/$defs/overlayPoint"
+      }
+    },
+    "gesture": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/gesturePrediction"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "trackingQuality": {
+      "$ref": "#/$defs/trackingQuality"
+    },
+    "calibration": {
+      "$ref": "#/$defs/calibration"
+    },
+    "gesturePhase": {
+      "type": "string",
+      "enum": [
+        "idle",
+        "starting",
+        "active",
+        "ending",
+        "ready-for-inference"
+      ]
+    }
+  },
+  "$defs": {
+    "unitScore": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "overlayPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "index",
+        "x",
+        "y"
+      ],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32
+        },
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "confidence": {
+          "$ref": "#/$defs/unitScore"
+        }
+      }
+    },
+    "handOverlay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "handedness",
+        "score",
+        "points"
+      ],
+      "properties": {
+        "handedness": {
+          "type": "string",
+          "enum": [
+            "Left",
+            "Right",
+            "Unknown"
+          ]
+        },
+        "score": {
+          "$ref": "#/$defs/unitScore"
+        },
+        "points": {
+          "type": "array",
+          "maxItems": 21,
+          "items": {
+            "$ref": "#/$defs/overlayPoint"
+          }
+        }
+      }
+    },
+    "gesturePrediction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "label",
+        "displayName",
+        "confidence",
+        "handedness",
+        "stable",
+        "consecutiveFrames"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "const": "mediapipe-canned-gestures"
+        },
+        "label": {
+          "type": "string",
+          "enum": [
+            "Closed_Fist",
+            "Open_Palm",
+            "Pointing_Up",
+            "Thumb_Down",
+            "Thumb_Up",
+            "Victory",
+            "ILoveYou"
+          ]
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "confidence": {
+          "$ref": "#/$defs/unitScore"
+        },
+        "handedness": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "Left",
+                "Right"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stable": {
+          "type": "boolean"
+        },
+        "consecutiveFrames": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "trackingQuality": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "personDetected",
+        "upperBodyVisible",
+        "leftHandVisible",
+        "rightHandVisible",
+        "handsInsideFrame"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "no-person",
+            "upper-body-missing",
+            "left-hand-missing",
+            "right-hand-missing",
+            "out-of-frame",
+            "low-quality",
+            "ready"
+          ],
+          "description": "The first failing tracking condition using the documented precedence."
+        },
+        "personDetected": {
+          "type": "boolean"
+        },
+        "upperBodyVisible": {
+          "type": "boolean"
+        },
+        "leftHandVisible": {
+          "type": "boolean"
+        },
+        "rightHandVisible": {
+          "type": "boolean"
+        },
+        "handsInsideFrame": {
+          "type": "boolean"
+        }
+      },
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "state": { "const": "no-person" },
+            "personDetected": { "const": false }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "state": { "const": "upper-body-missing" },
+            "personDetected": { "const": true },
+            "upperBodyVisible": { "const": false }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "state": { "const": "left-hand-missing" },
+            "personDetected": { "const": true },
+            "upperBodyVisible": { "const": true },
+            "leftHandVisible": { "const": false }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "state": { "const": "right-hand-missing" },
+            "personDetected": { "const": true },
+            "upperBodyVisible": { "const": true },
+            "leftHandVisible": { "const": true },
+            "rightHandVisible": { "const": false }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "state": { "const": "out-of-frame" },
+            "personDetected": { "const": true },
+            "upperBodyVisible": { "const": true },
+            "leftHandVisible": { "const": true },
+            "rightHandVisible": { "const": true },
+            "handsInsideFrame": { "const": false }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "state": { "const": "low-quality" },
+            "personDetected": { "const": true },
+            "upperBodyVisible": { "const": true },
+            "leftHandVisible": { "const": true },
+            "rightHandVisible": { "const": true },
+            "handsInsideFrame": { "const": true }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "state": { "const": "ready" },
+            "personDetected": { "const": true },
+            "upperBodyVisible": { "const": true },
+            "leftHandVisible": { "const": true },
+            "rightHandVisible": { "const": true },
+            "handsInsideFrame": { "const": true }
+          }
+        }
+      ]
+    },
+    "calibration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "stableFrames",
+        "requiredStableFrames"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "collecting",
+            "ready"
+          ]
+        },
+        "stableFrames": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "requiredStableFrames": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  }
+}

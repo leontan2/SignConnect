@@ -19,12 +19,16 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.ResourceLoader;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.FloatBuffer;
+import java.security.MessageDigest;
 import java.util.Arrays;
+import java.util.HexFormat;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -36,6 +40,9 @@ public class OnnxModelRuntime implements AutoCloseable {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(OnnxModelRuntime.class);
     private static final long[] INPUT_SHAPE = {1, 30, 224};
+    private static final double PROBABILITY_SUM_TOLERANCE = 1.0e-4;
+    private static final String BUNDLED_SYNTHETIC_SHA256 =
+            "fd2cf50b2bdbe8c7c6953e0f809b33df2012de2a476b09fcff0e6987e289c4a8";
 
     private final ResourceLoader resourceLoader;
     private final ObjectMapper objectMapper;
@@ -43,8 +50,11 @@ public class OnnxModelRuntime implements AutoCloseable {
     private final String labelsResource;
     private final String inputName;
     private final String outputName;
+    private final String expectedModelVersion;
     private final NanoTimeSource nanoTimeSource;
     private final InferenceConcurrencyLimiter concurrencyLimiter;
+    private final boolean mockModelAllowed;
+    private final boolean developmentModelAllowed;
     private final AtomicBoolean initializationAttempted = new AtomicBoolean();
     private final AtomicBoolean shutdown = new AtomicBoolean();
     private final AtomicInteger initializationCount = new AtomicInteger();
@@ -73,9 +83,15 @@ public class OnnxModelRuntime implements AutoCloseable {
             @Value("${signconnect.inference.model.labels-resource:}") String labelsResource,
             @Value("${signconnect.inference.model.input-name:features}") String inputName,
             @Value("${signconnect.inference.model.output-name:probabilities}") String outputName,
+            @Value("${signconnect.inference.model.expected-version:}") String expectedModelVersion,
+            @Value("${signconnect.inference.model.allow-mock-model:false}") boolean allowMockModel,
+            Environment environment,
             InferenceConcurrencyLimiter concurrencyLimiter) {
         this(resourceLoader, objectMapper, modelResource, labelsResource, inputName, outputName,
-                System::nanoTime, concurrencyLimiter);
+                expectedModelVersion,
+                System::nanoTime, concurrencyLimiter,
+                allowMockModel && isDevelopmentProfile(environment),
+                isDevelopmentProfile(environment));
     }
 
     OnnxModelRuntime(
@@ -87,14 +103,33 @@ public class OnnxModelRuntime implements AutoCloseable {
             String outputName,
             NanoTimeSource nanoTimeSource,
             InferenceConcurrencyLimiter concurrencyLimiter) {
+        this(resourceLoader, objectMapper, modelResource, labelsResource, inputName, outputName,
+                "synthetic-v1", nanoTimeSource, concurrencyLimiter, true, true);
+    }
+
+    OnnxModelRuntime(
+            ResourceLoader resourceLoader,
+            ObjectMapper objectMapper,
+            String modelResource,
+            String labelsResource,
+            String inputName,
+            String outputName,
+            String expectedModelVersion,
+            NanoTimeSource nanoTimeSource,
+            InferenceConcurrencyLimiter concurrencyLimiter,
+            boolean mockModelAllowed,
+            boolean developmentModelAllowed) {
         this.resourceLoader = resourceLoader;
         this.objectMapper = objectMapper;
         this.modelResource = modelResource;
         this.labelsResource = labelsResource;
         this.inputName = inputName;
         this.outputName = outputName;
+        this.expectedModelVersion = expectedModelVersion;
         this.nanoTimeSource = nanoTimeSource;
         this.concurrencyLimiter = concurrencyLimiter;
+        this.mockModelAllowed = mockModelAllowed;
+        this.developmentModelAllowed = developmentModelAllowed;
     }
 
     @PostConstruct
@@ -118,17 +153,55 @@ public class OnnxModelRuntime implements AutoCloseable {
             try (InputStream input = labelMap.getInputStream()) {
                 candidateContract = ModelContract.read(objectMapper, input);
             }
+            if (isBlank(expectedModelVersion)
+                    || !expectedModelVersion.equals(candidateContract.modelVersion())) {
+                throw new IllegalArgumentException(
+                        "Selected model version does not match the model metadata");
+            }
+            if (candidateContract.mockModel() && !mockModelAllowed) {
+                throw new IllegalArgumentException(
+                        "Synthetic model is not permitted outside an explicit development/test gate");
+            }
+            if (!developmentModelAllowed && !candidateContract.isProductionReady()) {
+                throw new IllegalArgumentException(
+                        "Model metadata is not approved for production readiness");
+            }
+            if (!inputName.equals(candidateContract.input().name())
+                    || !outputName.equals(candidateContract.output().name())) {
+                throw new IllegalArgumentException(
+                        "Configured tensor names do not match the model metadata");
+            }
 
             byte[] modelBytes;
             Resource model = readableResource(modelResource);
+            String metadataArtifactName = candidateContract.onnx().artifactPath()
+                    .substring(candidateContract.onnx().artifactPath().lastIndexOf('/') + 1);
+            if (!metadataArtifactName.equals(model.getFilename())) {
+                throw new IllegalArgumentException(
+                        "Configured model resource does not match the metadata artifact path");
+            }
             try (InputStream input = model.getInputStream()) {
                 modelBytes = input.readAllBytes();
             }
             if (modelBytes.length == 0) {
                 throw new IllegalArgumentException("Model artifact is empty");
             }
+            String artifactSha256 = HexFormat.of().formatHex(
+                    MessageDigest.getInstance("SHA-256").digest(modelBytes));
+            if (!artifactSha256.equals(candidateContract.artifactSha256())) {
+                throw new IllegalArgumentException("Model artifact does not match its metadata");
+            }
+            if (BUNDLED_SYNTHETIC_SHA256.equals(artifactSha256)
+                    && !candidateContract.mockModel()) {
+                throw new IllegalArgumentException(
+                        "Bundled synthetic artifact must retain its mock-model marker");
+            }
 
             candidateEnvironment = OrtEnvironment.getEnvironment("signconnect-inference");
+            if (!candidateContract.runtime().isSatisfiedBy(candidateEnvironment.getVersion())) {
+                throw new IllegalArgumentException(
+                        "Installed ONNX Runtime does not satisfy the model metadata");
+            }
             try (OrtSession.SessionOptions options = new OrtSession.SessionOptions()) {
                 options.addCPU(true);
                 options.setDeterministicCompute(true);
@@ -146,6 +219,7 @@ public class OnnxModelRuntime implements AutoCloseable {
             ready = false;
             closeSession(candidateSession);
             closeEnvironment(candidateEnvironment);
+            LOGGER.debug("Inference model initialization detail", failure);
             LOGGER.warn("Inference model initialization failed; readiness is unavailable");
         } finally {
             lifecycleLock.writeLock().unlock();
@@ -192,6 +266,10 @@ public class OnnxModelRuntime implements AutoCloseable {
 
                 int labelIndex = highestProbabilityIndex(probabilities);
                 ModelContract.Label label = activeContract.labelAt(labelIndex);
+                CanonicalModelDecision decision = CanonicalModelDecision.from(
+                        label,
+                        probabilities[labelIndex],
+                        activeContract.decision().minimumConfidence());
                 long elapsedNanos = Math.max(0L, nanoTimeSource.nanoTime() - startedAt);
                 predictionCount.incrementAndGet();
                 return new PredictionResponse(
@@ -199,9 +277,9 @@ public class OnnxModelRuntime implements AutoCloseable {
                         request.requestId(),
                         request.streamId(),
                         request.windowSequence(),
-                        label.id(),
-                        label.captionText(),
-                        probabilities[labelIndex],
+                        decision.wireLabelId(),
+                        decision.wireCaptionText(),
+                        decision.confidence(),
                         activeContract.modelVersion(),
                         elapsedNanos / 1_000_000.0,
                         activeContract.mockModel());
@@ -257,6 +335,15 @@ public class OnnxModelRuntime implements AutoCloseable {
 
     public long predictionCount() {
         return predictionCount.get();
+    }
+
+    boolean usesContract(ModelContract selectedContract) {
+        ModelContract activeContract = contract;
+        return ready && selectedContract != null && activeContract != null
+                && activeContract.artifactSha256().equals(selectedContract.artifactSha256())
+                && activeContract.vocabularySha256().equals(selectedContract.vocabularySha256())
+                && activeContract.modelId().equals(selectedContract.modelId())
+                && activeContract.modelVersion().equals(selectedContract.modelVersion());
     }
 
     @PreDestroy
@@ -319,11 +406,19 @@ public class OnnxModelRuntime implements AutoCloseable {
         if (!(output instanceof float[][] rows) || rows.length != 1 || rows[0].length != labelCount) {
             throw new IllegalStateException("Model output does not match the label map");
         }
-        float[] probabilities = rows[0];
+        return validateProbabilityVector(rows[0]);
+    }
+
+    static float[] validateProbabilityVector(float[] probabilities) {
+        double probabilitySum = 0.0;
         for (float probability : probabilities) {
             if (!Float.isFinite(probability) || probability < 0.0f || probability > 1.0f) {
                 throw new IllegalStateException("Model output is not a probability vector");
             }
+            probabilitySum += probability;
+        }
+        if (Math.abs(probabilitySum - 1.0) > PROBABILITY_SUM_TOLERANCE) {
+            throw new IllegalStateException("Model output is not a normalized probability vector");
         }
         return probabilities;
     }
@@ -363,9 +458,21 @@ public class OnnxModelRuntime implements AutoCloseable {
         return value == null || value.isBlank();
     }
 
+    private static boolean isDevelopmentProfile(Environment environment) {
+        return environment.acceptsProfiles(Profiles.of("local", "development", "test"));
+    }
+
     public static final class ModelUnavailableException extends RuntimeException {
+
+        private final CanonicalModelDecision.Outcome outcome;
+
         public ModelUnavailableException() {
             super("Inference model is not ready");
+            this.outcome = CanonicalModelDecision.unavailable().outcome();
+        }
+
+        public CanonicalModelDecision.Outcome outcome() {
+            return outcome;
         }
     }
 }

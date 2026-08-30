@@ -22,6 +22,7 @@ public record LandmarkChunkEvent(
     public static final int SCHEMA_VERSION = 1;
     public static final int FRAMES_PER_CHUNK = 5;
     public static final int FEATURES_PER_FRAME = 224;
+    private static final double MAX_ABSOLUTE_NORMALIZED_COORDINATE = 20.0;
     private static final Pattern CANONICAL_UUID = Pattern.compile(
             "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
 
@@ -77,14 +78,12 @@ public record LandmarkChunkEvent(
                 if (feature == null || !Double.isFinite(feature) || !Float.isFinite(feature.floatValue())) {
                     return false;
                 }
+                if ((index + 1) % 4 != 0
+                        && Math.abs(feature) > MAX_ABSOLUTE_NORMALIZED_COORDINATE) {
+                    return false;
+                }
                 if ((index + 1) % 4 == 0) {
                     if (feature != 0.0 && feature != 1.0) {
-                        return false;
-                    }
-                    if (feature == 0.0
-                            && (features.get(index - 3) != 0.0
-                            || features.get(index - 2) != 0.0
-                            || features.get(index - 1) != 0.0)) {
                         return false;
                     }
                 }

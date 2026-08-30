@@ -2,16 +2,89 @@ import React from "react";
 
 import activeToIdleSequence from "../../../../../contracts/sign-recognition/v1/fixtures/active-to-idle.sequence.json";
 import { createMeetingApp } from "../MeetingApp";
+import type {
+  BrowserLocalTrackingQualityState,
+  BrowserLocalVisionFrame
+} from "./contracts";
+import type { GestureCandidateFrame } from "./trackingQuality";
 import type { LandmarkWorkerCommand, LandmarkWorkerLike, LandmarkWorkerResult } from "./workerProtocol";
 
 const FIXTURE_ENABLED = process.env.RECOGNITION_E2E_FIXTURE_ENABLED === "true";
-const COMPLETION_EVENT = "signconnect:e2e-fixture-completion";
 const replayFrames = activeToIdleSequence.chunks.flatMap((chunk) => chunk.frames);
-const firstIdleFrameIndex = replayFrames.findIndex((frame) =>
-  frame.features.slice(0, 168).every((value, index) => index % 4 !== 3 || value === 0)
-);
-let replayCycle = 0;
 let activeFixtureWorker: E2eFixtureWorker | null = null;
+
+const FIXTURE_QUALITY_STATES: BrowserLocalTrackingQualityState[] = [
+  "no-person",
+  "upper-body-missing",
+  "left-hand-missing",
+  "right-hand-missing",
+  "out-of-frame",
+  "low-quality",
+  "ready"
+];
+
+function browserLocalFixtureFrame(
+  sourceIndex: number,
+  timestampMs: number,
+  candidateJustCompleted: boolean,
+  candidateCompleted: boolean
+): BrowserLocalVisionFrame {
+  const qualityIndex = Math.min(Math.floor(sourceIndex / 3), FIXTURE_QUALITY_STATES.length - 1);
+  const state = FIXTURE_QUALITY_STATES[qualityIndex];
+  const personDetected = state !== "no-person";
+  const upperBodyVisible = personDetected && state !== "upper-body-missing";
+  const leftHandVisible = upperBodyVisible && state !== "left-hand-missing";
+  const rightHandVisible = upperBodyVisible && state !== "right-hand-missing";
+  const handsInsideFrame = state !== "out-of-frame";
+  const calibrationReady = sourceIndex >= (FIXTURE_QUALITY_STATES.length - 1) * 3;
+  const gestureActive = sourceIndex >= FIXTURE_QUALITY_STATES.length * 3;
+
+  return {
+    timestampMs,
+    hands: [],
+    upperBody: [],
+    trackingQuality: {
+      state,
+      personDetected,
+      upperBodyVisible,
+      leftHandVisible,
+      rightHandVisible,
+      handsInsideFrame
+    },
+    calibration: {
+      state: calibrationReady ? "ready" : "collecting",
+      stableFrames: calibrationReady ? 8 : Math.min(sourceIndex, 7),
+      requiredStableFrames: 8
+    },
+    gesturePhase: candidateJustCompleted
+      ? "ready-for-inference"
+      : candidateCompleted
+        ? "idle"
+        : gestureActive
+          ? "active"
+          : "idle"
+  };
+}
+
+export class E2eFixtureCandidateBuffer {
+  private frames: GestureCandidateFrame[] = [];
+  private emitted = false;
+
+  observe(frame: GestureCandidateFrame): GestureCandidateFrame[] | null {
+    if (this.emitted) return null;
+    this.frames.push({ timestampMs: frame.timestampMs, features: [...frame.features] });
+    if (this.frames.length < 30) return null;
+    const candidate = this.frames;
+    this.frames = [];
+    this.emitted = true;
+    return candidate;
+  }
+
+  reset(): void {
+    this.frames = [];
+    this.emitted = false;
+  }
+}
 
 export class E2eFixtureReplayGate {
   private readonly frameCount: number;
@@ -75,10 +148,10 @@ class FixtureFrame implements Pick<ImageBitmap, "close"> {
 class E2eFixtureWorker implements LandmarkWorkerLike {
   onmessage: ((event: MessageEvent<LandmarkWorkerResult>) => void) | null = null;
   onerror: ((event: ErrorEvent) => void) | null = null;
-  private readonly cycle = ++replayCycle;
   private readonly replayGate = new E2eFixtureReplayGate(replayFrames.length);
+  private readonly candidateBuffer = new E2eFixtureCandidateBuffer();
   private terminated = false;
-  private announcedCompletion = false;
+  private candidateCompleted = false;
 
   constructor() {
     activeFixtureWorker = this;
@@ -97,14 +170,12 @@ class E2eFixtureWorker implements LandmarkWorkerLike {
 
     const sourceIndex = this.replayGate.nextSourceIndex();
     const source = replayFrames[sourceIndex];
+    const gestureCandidate = this.candidateBuffer.observe({
+      timestampMs: message.timestampMs,
+      features: source.features
+    });
+    if (gestureCandidate) this.candidateCompleted = true;
     message.frame.close();
-
-    if (!this.announcedCompletion && sourceIndex === firstIdleFrameIndex) {
-      this.announcedCompletion = true;
-      window.dispatchEvent(new CustomEvent(COMPLETION_EVENT, {
-        detail: { cycle: this.cycle }
-      }));
-    }
 
     const frameKind = source.features
       .slice(0, 168)
@@ -119,19 +190,29 @@ class E2eFixtureWorker implements LandmarkWorkerLike {
         kind: "accepted",
         frameKind,
         features: [...source.features]
-      }
+      },
+      browserLocal: browserLocalFixtureFrame(
+        sourceIndex,
+        message.timestampMs,
+        Boolean(gestureCandidate),
+        this.candidateCompleted
+      ),
+      ...(gestureCandidate ? { gestureCandidate } : {})
     };
     queueMicrotask(() => this.emit(result));
   }
 
   terminate(): void {
     this.terminated = true;
+    this.candidateCompleted = false;
+    this.candidateBuffer.reset();
     if (activeFixtureWorker === this) activeFixtureWorker = null;
   }
 
   observeSuccessfullySent(data: unknown): void {
     if (this.replayGate.observeSuccessfullySent(data)) {
-      this.announcedCompletion = false;
+      this.candidateCompleted = false;
+      this.candidateBuffer.reset();
     }
   }
 

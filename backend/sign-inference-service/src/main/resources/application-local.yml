@@ -6,7 +6,9 @@ spring:
 signconnect:
   inference:
     model:
-      resource: classpath:models/deterministic-sign-v1.onnx
-      labels-resource: classpath:models/deterministic-sign-v1-labels.json
-      input-name: features
-      output-name: probabilities
+      resource: ${SIGN_MODEL_RESOURCE:classpath:models/deterministic-sign-v1.onnx}
+      labels-resource: ${SIGN_MODEL_LABELS_RESOURCE:classpath:models/deterministic-sign-v1-labels.json}
+      input-name: ${SIGN_MODEL_INPUT_NAME:features}
+      output-name: ${SIGN_MODEL_OUTPUT_NAME:probabilities}
+      expected-version: ${SIGN_MODEL_EXPECTED_VERSION:synthetic-v1}
+      allow-mock-model: ${SIGN_MODEL_ALLOW_MOCK_MODEL:true}

@@ -1,8 +1,8 @@
 # SignConnect
 
-SignConnect is a mock-first accessibility workspace for sending a signer’s camera-derived landmarks through a local inference stack and sharing finalized captions with participants in the same ephemeral meeting room.
+SignConnect is a privacy-first accessibility workspace for sending a signer’s camera-derived landmarks through a local inference stack and sharing finalized captions with participants in the same ephemeral meeting room.
 
-> The bundled ONNX model and replay capture are synthetic integration assets. They demonstrate the transport, windowing, inference, and caption experience; they do **not** recognize real Singapore Sign Language (SGSL).
+> The default bundled ONNX model and replay capture are synthetic integration assets. An optional, reproducible OpenHands/WLASL pack recognizes ten isolated American Sign Language (ASL) concepts for local research. Neither mode is Singapore Sign Language (SgSL) or continuous translation.
 
 ## Implemented product slice
 
@@ -11,17 +11,17 @@ SignConnect is a mock-first accessibility workspace for sending a signer’s cam
 | Shell MFE | React, TypeScript, Webpack Module Federation | 3000 | Product shell and navigation |
 | Meeting MFE | React, TypeScript, MediaPipe | 3001 | Consent, camera capture, landmarks, and transcript |
 | Meeting service | Spring Boot MVC | 8081 | Meeting creation and lifecycle |
-| Realtime service | Spring WebFlux | 8082 | WebSocket validation, stabilization, and caption delivery |
-| Inference service | Spring Boot, ONNX Runtime | 8083 | Local-profile inference against the bundled synthetic model |
+| Realtime service | Spring WebFlux | 8082 | WebSocket validation, recognition decisions, and caption delivery |
+| Inference service | Spring Boot, ONNX Runtime | 8083 | Local inference against the selected fail-closed model |
 
 The default path is:
 
 1. The user grants camera consent and starts a meeting.
 2. The Meeting MFE extracts pose/hand landmarks locally; video frames remain in the browser.
-3. Versioned landmark batches travel over the meeting WebSocket.
-4. The realtime service creates a sliding window and permits only one inference request at a time.
+3. A completed gesture is resampled to 30 frames and travels as six ordered, versioned landmark batches over the meeting WebSocket.
+4. The realtime service assembles one candidate per completed gesture and permits only one inference request at a time; under load, a newer completed candidate may replace older pending work without mixing frames. Rolling windows are legacy opt-in behavior.
 5. The inference service runs an actual `OrtSession` against the synthetic ONNX model.
-6. The realtime service stabilizes the result and returns a versioned caption event.
+6. In the default segmented mode, the realtime service immediately returns a versioned final caption for a known result or private unknown feedback. Temporal voting and idle finalization apply only to explicit legacy `ROLLING` mode.
 7. The realtime room hub attaches signer identity and broadcasts the finalized caption to authenticated participants in that room.
 8. Every participant adds the same caption to their transcript.
 
@@ -31,11 +31,32 @@ Creating a room returns a six-character share code and a short-lived signed real
 
 The camera workspace uses a responsive 4:3 stage with contained, centered video and an aligned tracking overlay. This avoids the shallow horizontal crop while keeping controls in a stable dock below the preview.
 
+### Run the real ASL research pack
+
+The optional pack maps the official OpenHands WLASL SL-GCN checkpoint to the existing local Java/ONNX path. It supports these isolated ASL concepts: **Hello, Thank you, Yes, No, Help, Repeat, Slower, Understand, Finished, and Goodbye**. Unsupported or ambiguous input is returned as no sign instead of being forced into the transcript. WLASL terms make this a noncommercial research path, and the interface labels it accordingly.
+
+From the repository root on Windows:
+
+```powershell
+.\scripts\setup-asl-research-model.ps1
+.\scripts\start-local-asl-research.ps1
+```
+
+Open `http://127.0.0.1:3000`, start a session, turn on the camera, start recognition, and keep both shoulders plus the signing hand inside the guide. Stop exactly the processes started by the runner with:
+
+```powershell
+.\scripts\stop-local-asl-research.ps1
+```
+
+The setup script pins and verifies the upstream source, checkpoint, and vocabulary hashes before exporting `runtime-models/asl-research/models/openhands-wlasl-slgcn-core-v2.onnx`. Downloads and generated runtime models are ignored by Git.
+
 ## Run locally
 
-Prerequisites: Node.js 20+, npm 10+, a compatible JDK 21, and dependencies installed with `npm install`. On Windows, use a process-scoped JDK/runtime compatible with ONNX Runtime; do not replace installed JDK or System32 DLLs.
+Prerequisites: Node.js 20+, npm 10+, a compatible JDK 21, Python 3.10-3.12, and [uv](https://docs.astral.sh/uv/). Install JavaScript dependencies with `npm install` and the locked model-development environment with `uv sync --project ml/sign-recognition --extra test`. On Windows, use a process-scoped JDK/runtime compatible with ONNX Runtime; do not replace installed JDK or System32 DLLs.
 
 Start each backend service in its own terminal:
+
+On managed Windows hosts where Java cannot establish its internal loopback socket under the default long temporary directory, create `C:\jtmp` once and set `$env:TEMP = 'C:\jtmp'` plus `$env:TMP = 'C:\jtmp'` in each backend terminal. If the failure persists when launching an executable jar directly, also pass `-Djdk.net.unixdomain.tmpdir=C:\jtmp -Djava.io.tmpdir=C:\jtmp` to `java`. These settings are process-local.
 
 ```powershell
 $env:JAVA_HOME = 'C:\path\to\compatible-jdk-21'
@@ -85,6 +106,15 @@ Run the unit, type, production-build, and full Maven reactor gates:
 
 ```powershell
 .\scripts\verify.ps1 -JavaHome 'C:\path\to\compatible-jdk-21'
+```
+
+The verification script also validates the versioned training contracts and runs the locked Python model, export, and ONNX parity tests. The bundled generated dataset is a mechanical non-production fixture, not SgSL training data or accuracy evidence. See [`ml/sign-recognition/README.md`](ml/sign-recognition/README.md) for the reproducible TCN/GRU commands and safety boundary.
+
+On a managed Windows host where Java NIO cannot use the default long temporary path, set a short process-local path before the verifier or browser suites:
+
+```powershell
+$env:TEMP = 'C:\jtmp'
+$env:TMP = 'C:\jtmp'
 ```
 
 Install Playwright’s bundled Chromium once if it is not already cached, then run the complete local stack through the exact-process runner:

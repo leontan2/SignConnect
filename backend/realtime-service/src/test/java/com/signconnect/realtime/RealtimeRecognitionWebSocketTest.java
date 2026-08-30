@@ -54,6 +54,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {
+                "signconnect.recognition.input-mode=ROLLING",
                 "signconnect.recognition.inference-timeout=100ms",
                 "signconnect.recognition.max-message-size=32KB",
                 "signconnect.recognition.tracking-timeout=5s",
@@ -317,14 +318,14 @@ class RealtimeRecognitionWebSocketTest {
     @Test
     void malformedAndInferenceFailurePathsDoNotExposeFeatureSentinel(
             CapturedOutput output) throws Exception {
-        String sentinel = "913579.2468";
+        String sentinel = "13.5792468";
         INFERENCE.enqueue(TestInferenceBoundary.ResponsePlan.unavailable());
         JsonNode replay = RealtimeTestFixtures.fixtureTree("active-to-idle.sequence.json", objectMapper);
         ObjectNode malformed = ((ObjectNode) replay.path("chunks").get(0).deepCopy());
         malformed.put("privateSentinel", sentinel);
         for (JsonNode chunk : replay.path("chunks")) {
             ((ArrayNode) chunk.path("frames").get(0).path("features"))
-                    .set(0, objectMapper.getNodeFactory().numberNode(913579.2468));
+                    .set(0, objectMapper.getNodeFactory().numberNode(13.5792468));
         }
 
         try (WebSocketProbe socket = connect()) {

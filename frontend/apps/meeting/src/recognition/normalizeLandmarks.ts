@@ -71,7 +71,15 @@ function appendPoint(
   useVisibility = true
 ): LandmarkQualityRejection | null {
   if (!isPresent(point, minimumConfidence, useVisibility)) {
-    features.push(0, 0, 0, 0);
+    // v2 reproduces the pretrained OpenHands normalization contract: a
+    // missing raw landmark is the normalized image origin plus a zero
+    // presence mask. The mask remains authoritative for quality and motion.
+    features.push(
+      normalizedValue(-center.x / scale),
+      normalizedValue(-center.y / scale),
+      normalizedValue(-center.z / scale),
+      0
+    );
     return null;
   }
 
@@ -125,11 +133,19 @@ export function normalizeLandmarks(
     return { kind: "rejected", reason: "INADEQUATE_ANCHORS" };
   }
 
-  const posePresenceCount = POSE_LANDMARK_INDICES.reduce(
+  const leftHand = bestHand(detection.hands, "Left");
+  const rightHand = bestHand(detection.hands, "Right");
+  const selectedHands = [leftHand, rightHand];
+  const hasValidHand = selectedHands.some((hand) => hand
+    && hand.score >= options.minimumHandConfidence
+    && hand.landmarks.slice(0, HAND_LANDMARK_COUNT)
+      .filter((point) => isPresent(point, options.minimumPointConfidence, false)).length >= options.minimumHandPoints);
+
+  const posePresenceCount = POSE_LANDMARK_INDICES.reduce<number>(
     (count, index) => count + (isPresent(pose?.[index], options.minimumPointConfidence) ? 1 : 0),
     0
   );
-  if (posePresenceCount < options.minimumPosePoints) {
+  if (posePresenceCount < options.minimumPosePoints && !hasValidHand) {
     return { kind: "rejected", reason: "LOW_QUALITY" };
   }
 
@@ -138,10 +154,6 @@ export function normalizeLandmarks(
     y: (leftShoulder.y + rightShoulder.y) / 2,
     z: (leftShoulder.z + rightShoulder.z) / 2
   };
-  const leftHand = bestHand(detection.hands, "Left");
-  const rightHand = bestHand(detection.hands, "Right");
-  const selectedHands = [leftHand, rightHand];
-
   if (detection.hands.length > 0 && selectedHands.every((hand) => !hand || hand.score < options.minimumHandConfidence)) {
     return { kind: "rejected", reason: "LOW_QUALITY" };
   }
@@ -150,7 +162,9 @@ export function normalizeLandmarks(
   let presentHandPoints = 0;
   for (const hand of selectedHands) {
     if (!hand || hand.score < options.minimumHandConfidence) {
-      for (let index = 0; index < HAND_LANDMARK_COUNT; index += 1) features.push(0, 0, 0, 0);
+      for (let index = 0; index < HAND_LANDMARK_COUNT; index += 1) {
+        appendPoint(features, undefined, center, shoulderWidth, options.minimumPointConfidence, options, false);
+      }
       continue;
     }
 

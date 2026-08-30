@@ -1,5 +1,5 @@
-import React, { Component, lazy, Suspense, type ErrorInfo, type ReactNode } from "react";
-import { Captions, CircleHelp, LockKeyhole, Radio, Settings2 } from "lucide-react";
+import React, { Component, lazy, Suspense, useState, type ErrorInfo, type MouseEvent, type ReactNode } from "react";
+import { Captions, CircleHelp, LockKeyhole, Radio, Settings2, Users } from "lucide-react";
 
 const MeetingApp = lazy(() => import("meeting/MeetingApp"));
 
@@ -51,28 +51,91 @@ class RemoteBoundary extends Component<RemoteBoundaryProps, RemoteBoundaryState>
 }
 
 export function App() {
+  const [activeSection, setActiveSection] = useState("camera-workspace");
+  const sectionTitles: Record<string, string> = {
+    "camera-workspace": "Recognition Studio",
+    "live-transcript": "Live Transcript",
+    "room-participants": "Room Participants",
+    "recognition-status": "Recognition Status",
+    "workspace-help": "Recognition Help"
+  };
+
+  function navigateToSection(event: MouseEvent<HTMLAnchorElement>, sectionId: string) {
+    event.preventDefault();
+    setActiveSection(sectionId);
+    window.history.replaceState(null, "", `#${sectionId}`);
+    window.requestAnimationFrame(() => {
+      const section = document.getElementById(sectionId);
+      section?.scrollIntoView({ behavior: "smooth", block: "start" });
+      section?.focus({ preventScroll: true });
+    });
+  }
+
   return (
     <div className="app-shell">
       <a className="skip-link" href="#meeting-workspace">Skip to meeting workspace</a>
       <aside className="workspace-rail" aria-label="Application navigation">
-        <a className="brand-symbol" href="/" aria-label="SignConnect home">
+        <a
+          className="brand-symbol"
+          href="#camera-workspace"
+          aria-label="SignConnect home"
+          onClick={(event) => navigateToSection(event, "camera-workspace")}
+        >
           <WaveMark />
         </a>
         <nav className="rail-navigation" aria-label="Workspace navigation">
-          <a className="sc-icon-button rail-action active" href="/" aria-current="page" aria-label="Recognition studio">
+          <a
+            className={`sc-icon-button rail-action${activeSection === "camera-workspace" ? " active" : ""}`}
+            href="#camera-workspace"
+            aria-current={activeSection === "camera-workspace" ? "location" : undefined}
+            aria-label="Recognition studio"
+            title="Recognition studio"
+            onClick={(event) => navigateToSection(event, "camera-workspace")}
+          >
             <Radio size={19} strokeWidth={1.7} aria-hidden="true" />
           </a>
-          <button className="sc-icon-button rail-action" type="button" aria-label="Transcript library" disabled>
+          <a
+            className={`sc-icon-button rail-action${activeSection === "live-transcript" ? " active" : ""}`}
+            href="#live-transcript"
+            aria-current={activeSection === "live-transcript" ? "location" : undefined}
+            aria-label="Live transcript"
+            title="Live transcript"
+            onClick={(event) => navigateToSection(event, "live-transcript")}
+          >
             <Captions size={19} strokeWidth={1.7} aria-hidden="true" />
-          </button>
-          <button className="sc-icon-button rail-action" type="button" aria-label="Workspace settings" disabled>
+          </a>
+          <a
+            className={`sc-icon-button rail-action${activeSection === "room-participants" ? " active" : ""}`}
+            href="#room-participants"
+            aria-current={activeSection === "room-participants" ? "location" : undefined}
+            aria-label="Room participants"
+            title="Room participants"
+            onClick={(event) => navigateToSection(event, "room-participants")}
+          >
+            <Users size={19} strokeWidth={1.7} aria-hidden="true" />
+          </a>
+          <a
+            className={`sc-icon-button rail-action${activeSection === "recognition-status" ? " active" : ""}`}
+            href="#recognition-status"
+            aria-current={activeSection === "recognition-status" ? "location" : undefined}
+            aria-label="Recognition status"
+            title="Recognition status"
+            onClick={(event) => navigateToSection(event, "recognition-status")}
+          >
             <Settings2 size={19} strokeWidth={1.7} aria-hidden="true" />
-          </button>
+          </a>
         </nav>
         <div className="rail-footer">
-          <button className="sc-icon-button rail-action" type="button" aria-label="Help" disabled>
+          <a
+            className={`sc-icon-button rail-action${activeSection === "workspace-help" ? " active" : ""}`}
+            href="#workspace-help"
+            aria-current={activeSection === "workspace-help" ? "location" : undefined}
+            aria-label="Recognition help"
+            title="Recognition help"
+            onClick={(event) => navigateToSection(event, "workspace-help")}
+          >
             <CircleHelp size={19} strokeWidth={1.7} aria-hidden="true" />
-          </button>
+          </a>
           <span className="region-mark" aria-label="Singapore region">SG</span>
         </div>
       </aside>
@@ -82,7 +145,7 @@ export function App() {
           <div className="product-context">
             <span className="brand-name">SignConnect</span>
             <span aria-hidden="true">/</span>
-            <strong>Recognition Studio</strong>
+            <strong>{sectionTitles[activeSection]}</strong>
           </div>
           <div className="privacy-status" role="note">
             <LockKeyhole size={14} strokeWidth={1.8} aria-hidden="true" />

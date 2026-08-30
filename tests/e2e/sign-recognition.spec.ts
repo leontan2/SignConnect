@@ -97,6 +97,14 @@ async function startRecognitionWithKeyboard(page: Page): Promise<void> {
   await expect(page.getByRole("button", { name: "Stop recognition" })).toBeVisible();
 }
 
+async function restartRecognition(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Stop recognition" }).click();
+  const start = page.getByRole("button", { name: "Start recognition" });
+  await expect(start).toBeEnabled();
+  await start.click();
+  await expect(page.getByRole("button", { name: "Stop recognition" })).toBeVisible();
+}
+
 async function controlService(
   request: APIRequestContext,
   service: "inference" | "realtime",
@@ -183,7 +191,17 @@ test.describe("sign-recognition full-stack milestone", () => {
 
     const transcript = page.getByRole("region", { name: "Live transcript" });
     await expect(transcript.getByText("Synthetic active gesture")).toBeVisible();
-    await expect(transcript.getByRole("article")).toHaveCount(1);
+    const captionEntry = transcript.getByRole("article");
+    await expect(captionEntry).toHaveCount(1);
+    await expect(captionEntry.locator(".caption-source")).toHaveText("You signed");
+    await expect(captionEntry.locator("time")).toHaveText(
+      /^at \d{1,2}:\d{2}:\d{2}(?:\s?[AP]M)?$/i
+    );
+    await expect(captionEntry.locator("time")).toHaveAttribute(
+      "datetime",
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/
+    );
+    await expect(captionEntry).toHaveAccessibleName(/^You signed Synthetic active gesture at /i);
     await expect(transcript.getByRole("note")).toContainText(/not validated SGSL recognition/i);
     await expect(transcript.getByText("synthetic-v1")).toBeVisible();
     await expect(transcript.getByText("Mock integration model.", { exact: true })).toBeVisible();
@@ -227,9 +245,10 @@ test.describe("sign-recognition full-stack milestone", () => {
       },
       occurredAt: new Date().toISOString()
     });
-    await expect(page.locator(".recognition-feedback")).toContainText(
-      /not recognized with enough confidence/i
-    );
+    // The frozen v1 result identifies only the stream. Once the dispatched
+    // gesture has settled, a later unmatched local result must be ignored
+    // rather than being attributed to a gesture that was never sent.
+    await expect(page.locator(".recognition-feedback")).toHaveCount(0);
     await expect(transcript.getByRole("article")).toHaveCount(1);
   });
 
@@ -267,7 +286,7 @@ test.describe("sign-recognition full-stack milestone", () => {
     }
   });
 
-  test("reports inference unavailability and recovery without adding captions", async ({ page, request }) => {
+  test("reports inference unavailability, suppresses outage captions, and recovers", async ({ page, request }) => {
     await openWorkspace(page);
     await enableCameraAndSession(page);
     await startRecognitionWithKeyboard(page);
@@ -278,23 +297,26 @@ test.describe("sign-recognition full-stack milestone", () => {
     try {
       await controlService(request, "inference", "stop");
       inferenceStopped = true;
+      await restartRecognition(page);
       await expect(page.getByLabel("Recognition service status")).toContainText(
         /temporarily unavailable/i,
         { timeout: 10_000 }
       );
+      await expect(transcript.getByRole("article")).toHaveCount(1);
       await controlService(request, "inference", "start");
       inferenceStopped = false;
+      await restartRecognition(page);
       await expect(page.getByLabel("Recognition service status")).toContainText(
-        /available again|recovered/i,
+        /recognition is ready/i,
         { timeout: 15_000 }
       );
-      await expect(transcript.getByRole("article")).toHaveCount(1);
+      await expect(transcript.getByRole("article")).toHaveCount(2, { timeout: 15_000 });
     } finally {
       if (inferenceStopped) await controlService(request, "inference", "start");
     }
   });
 
-  test("simulator follows the explicit client and server development gates", async ({ page }) => {
+  test("@simulator simulator follows the explicit client and server development gates", async ({ page }) => {
     const diagnostics = collectSocketDiagnostics(page);
     await openWorkspace(page);
     if (!SIMULATOR_ENABLED) {

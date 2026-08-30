@@ -159,6 +159,12 @@ async function enableRecognition(page: Page): Promise<void> {
   await expect(page.getByRole("button", { name: "Stop recognition" })).toBeVisible();
 }
 
+async function restartRecognition(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Stop recognition" }).click();
+  await page.getByRole("button", { name: "Start recognition" }).click();
+  await expect(page.getByRole("button", { name: "Stop recognition" })).toBeVisible();
+}
+
 async function controlService(
   request: APIRequestContext,
   service: "inference" | "realtime",
@@ -387,6 +393,7 @@ test.describe("Milestone 2 reliable room acceptance", () => {
 
       await controlService(request, "inference", "stop");
       inferenceStopped = true;
+      await restartRecognition(host.page);
       await expect(host.page.getByLabel("Recognition service status")).toContainText(
         /temporarily unavailable/i,
         { timeout: 10_000 }
@@ -402,10 +409,13 @@ test.describe("Milestone 2 reliable room acceptance", () => {
 
       await controlService(request, "inference", "start");
       inferenceStopped = false;
+      await restartRecognition(host.page);
       await expect(host.page.getByLabel("Recognition service status")).toContainText(
-        /available again|recovered/i,
+        /recognition is ready/i,
         { timeout: 15_000 }
       );
+      await expect(captions(host.page)).toHaveCount(2, { timeout: 15_000 });
+      await expect(captions(guest.page)).toHaveCount(1, { timeout: 15_000 });
       await expect(host.page.getByRole("button", { name: "Session active" })).toBeVisible();
       await expect(guest.page.getByRole("button", { name: "Session active" })).toBeVisible();
     } finally {

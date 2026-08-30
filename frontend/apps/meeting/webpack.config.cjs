@@ -9,6 +9,7 @@ const defaultHandModel = "https://storage.googleapis.com/mediapipe-models/hand_l
 const defaultPoseModel = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
 const e2eFixtureEnabled = process.env.RECOGNITION_E2E_FIXTURE_ENABLED === "true";
 const recognitionSimulatorEnabled = process.env.RECOGNITION_SIMULATOR_ENABLED === "true";
+const roomPreviewToolsEnabled = process.env.ROOM_PREVIEW_TOOLS_ENABLED === "true";
 
 module.exports = {
   entry: "./src/index.ts",
@@ -70,6 +71,9 @@ module.exports = {
       ),
       "process.env.RECOGNITION_E2E_FIXTURE_ENABLED": JSON.stringify(
         e2eFixtureEnabled ? "true" : "false"
+      ),
+      "process.env.ROOM_PREVIEW_TOOLS_ENABLED": JSON.stringify(
+        roomPreviewToolsEnabled ? "true" : "false"
       )
     }),
     new HtmlWebpackPlugin({ template: "./public/index.html" })
@@ -85,7 +89,8 @@ module.exports = {
       }
     },
     headers: {
-      "Access-Control-Allow-Origin": "*"
+      "Access-Control-Allow-Origin": "*",
+      "Cache-Control": "no-store"
     }
   }
 };

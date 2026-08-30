@@ -1,23 +1,15 @@
 export const LANDMARK_SCHEMA_VERSION = 1 as const;
 export const LANDMARK_CHUNK_TYPE = "landmark.chunk" as const;
 export const HAND_LANDMARK_COUNT = 21;
-export const POSE_LANDMARK_INDICES = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24] as const;
+// v2 keeps the tensor at 224 values while adding the three face anchors used by
+// the OpenHands graph. Shoulders remain present for normalization and quality.
+export const POSE_LANDMARK_INDICES = [0, 2, 5, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21] as const;
+export const UPPER_BODY_OVERLAY_LANDMARK_INDICES = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24] as const;
 export const VALUES_PER_LANDMARK = 4;
 export const LANDMARK_FEATURE_COUNT = 224;
 export const FRAMES_PER_LANDMARK_CHUNK = 5;
 export const TARGET_CAPTURE_FPS = 25;
 export const CAPTURE_INTERVAL_MS = 1000 / TARGET_CAPTURE_FPS;
-export const BROWSER_LOCAL_GESTURE_SOURCE = "mediapipe-canned-gestures" as const;
-
-export const BROWSER_LOCAL_GESTURE_LABELS = [
-  "Closed_Fist",
-  "Open_Palm",
-  "Pointing_Up",
-  "Thumb_Down",
-  "Thumb_Up",
-  "Victory",
-  "ILoveYou"
-] as const;
 
 export const FEATURE_LAYOUT = {
   leftHand: { start: 0, end: 83, landmarkCount: HAND_LANDMARK_COUNT },
@@ -77,27 +69,36 @@ export interface BrowserLocalHandOverlay {
   points: BrowserLocalOverlayPoint[];
 }
 
-export type BrowserLocalGestureLabel = typeof BROWSER_LOCAL_GESTURE_LABELS[number];
+export type BrowserLocalTrackingQualityState =
+  | "no-person"
+  | "upper-body-missing"
+  | "left-hand-missing"
+  | "right-hand-missing"
+  | "out-of-frame"
+  | "low-quality"
+  | "ready";
 
-export const BROWSER_LOCAL_GESTURE_DISPLAY_NAMES: Record<BrowserLocalGestureLabel, string> = {
-  Closed_Fist: "Closed fist",
-  Open_Palm: "Open palm",
-  Pointing_Up: "Pointing up",
-  Thumb_Down: "Thumbs down",
-  Thumb_Up: "Thumbs up",
-  Victory: "Victory",
-  ILoveYou: "I love you gesture"
-};
-
-export interface BrowserLocalGesturePrediction {
-  source: typeof BROWSER_LOCAL_GESTURE_SOURCE;
-  label: BrowserLocalGestureLabel;
-  displayName: string;
-  confidence: number;
-  handedness: DetectedHand["handedness"] | null;
-  stable: boolean;
-  consecutiveFrames: number;
+export interface BrowserLocalTrackingQualityFacts {
+  state: BrowserLocalTrackingQualityState;
+  personDetected: boolean;
+  upperBodyVisible: boolean;
+  leftHandVisible: boolean;
+  rightHandVisible: boolean;
+  handsInsideFrame: boolean;
 }
+
+export interface BrowserLocalCalibrationState {
+  state: "collecting" | "ready";
+  stableFrames: number;
+  requiredStableFrames: number;
+}
+
+export type BrowserLocalGesturePhase =
+  | "idle"
+  | "starting"
+  | "active"
+  | "ending"
+  | "ready-for-inference";
 
 /**
  * Ephemeral browser-only presentation data. This snapshot travels only from
@@ -106,10 +107,11 @@ export interface BrowserLocalGesturePrediction {
  */
 export interface BrowserLocalVisionFrame {
   timestampMs: number;
-  gestureModel: "ready" | "unavailable";
   hands: BrowserLocalHandOverlay[];
   upperBody: BrowserLocalOverlayPoint[];
-  gesture: BrowserLocalGesturePrediction | null;
+  trackingQuality: BrowserLocalTrackingQualityFacts;
+  calibration: BrowserLocalCalibrationState;
+  gesturePhase: BrowserLocalGesturePhase;
 }
 
 export type LandmarkFrameKind = "active" | "idle";
@@ -146,8 +148,6 @@ export interface VisionAssetLocations {
   wasmRootUrl: string;
   handModelUrl: string;
   poseModelUrl: string;
-  /** Optional so deployments can retain landmark-only capture as a fallback. */
-  gestureModelUrl?: string;
 }
 
 export interface LandmarkChunkConsumer {

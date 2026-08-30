@@ -1,0 +1,172 @@
+{
+  "schemaVersion": 1,
+  "datasetId": "signconnect-sgsl-five-sign-v1",
+  "datasetVersion": "1.0.0",
+  "createdAt": "2026-08-30T12:00:00Z",
+  "purposeVersion": "1.0.0",
+  "consentNoticeVersion": "1.0.0",
+  "vocabularyVersion": "1.0.0",
+  "reviewRecordId": "review_0000000000000001",
+  "reviewedLabels": [{"labelId": "HELLO", "gloss": "HELLO", "captionText": "Hello"}, {"labelId": "THANK_YOU", "gloss": "THANK-YOU", "captionText": "Thank you"}],
+  "retentionExpiresAt": "2026-11-26T10:00:00Z",
+  "provenance": {
+    "kind": "ATTESTED_SGSL_DATASET",
+    "evidence": {
+      "type": "DATASET_PROVENANCE_ATTESTATION",
+      "recordId": "provenance_0000000000000001",
+      "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "verifiedAt": "2026-08-30T11:00:00Z",
+      "verifiedByRole": "PRIVACY_REVIEWER"
+    }
+  },
+  "targetLanguage": "sls",
+  "featureLayoutVersion": "mediapipe-holistic-224-v1",
+  "preprocessingVersion": "shoulder-midpoint-shoulder-width-v1",
+  "datasetLicence": {
+    "spdxExpression": "LicenseRef-SignConnect-Consent-v1",
+    "commercialUseAllowed": false,
+    "redistributionAllowed": false
+  },
+  "splitPolicy": {
+    "strategy": "SIGNER_INDEPENDENT",
+    "locked": true,
+    "assignmentSha256": "5e07c9d8d45a5d393419f893f4665c71b6af6059f7250e5f476d0e7b50448152",
+    "testSignerCount": 1
+  },
+  "samples": [
+    {
+      "sampleId": "sample_0000000000000001",
+      "signerId": "sgn_000000000001",
+      "labelId": "HELLO",
+      "language": "sls",
+      "handedness": "RIGHT",
+      "captureCondition": {
+        "lighting": "INDOOR",
+        "background": "PLAIN",
+        "cameraPosition": "LAPTOP",
+        "occlusion": "NONE",
+        "speed": "NATURAL",
+        "distance": "NOMINAL",
+        "scenario": "ISOLATED_SIGN"
+      },
+      "captureTimestamp": "2026-08-28T10:00:00Z",
+      "landmarkArtifact": {
+        "path": "landmarks/train/sample_0000000000000001.npz",
+        "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "mediaType": "application/x-npz"
+      },
+      "frameCount": 31,
+      "featureCount": 224,
+      "featureLayoutVersion": "mediapipe-holistic-224-v1",
+      "consentAttestation": {
+        "status": "VERIFIED",
+        "attestationId": "consent_0000000000000001",
+        "consentedAt": "2026-08-28T09:55:00Z",
+        "permittedUses": [
+          "MODEL_TRAINING",
+          "MODEL_EVALUATION"
+        ],
+        "withdrawalStatus": "ACTIVE"
+      },
+      "usageRightsAttestation": {
+        "status": "VERIFIED",
+        "basis": "PARTICIPANT_CONSENT",
+        "sourceRecordId": "rights_0000000000000001",
+        "attestedAt": "2026-08-28T10:05:00Z",
+        "attestedByRole": "DATA_STEWARD",
+        "restrictions": [
+          "No raw video retained"
+        ]
+      },
+      "splitAssignment": "TRAIN"
+    },
+    {
+      "sampleId": "sample_0000000000000002",
+      "signerId": "sgn_000000000002",
+      "labelId": "THANK_YOU",
+      "language": "sls",
+      "handedness": "TWO_HANDED",
+      "captureCondition": {
+        "lighting": "DAYLIGHT",
+        "background": "CLUTTERED",
+        "cameraPosition": "DESKTOP",
+        "occlusion": "NONE",
+        "speed": "SLOW",
+        "distance": "FAR",
+        "scenario": "ISOLATED_SIGN"
+      },
+      "captureTimestamp": "2026-08-28T11:00:00Z",
+      "landmarkArtifact": {
+        "path": "landmarks/validation/sample_0000000000000002.npz",
+        "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "mediaType": "application/x-npz"
+      },
+      "frameCount": 30,
+      "featureCount": 224,
+      "featureLayoutVersion": "mediapipe-holistic-224-v1",
+      "consentAttestation": {
+        "status": "VERIFIED",
+        "attestationId": "consent_0000000000000002",
+        "consentedAt": "2026-08-28T10:55:00Z",
+        "permittedUses": [
+          "MODEL_TRAINING",
+          "MODEL_EVALUATION"
+        ],
+        "withdrawalStatus": "ACTIVE"
+      },
+      "usageRightsAttestation": {
+        "status": "VERIFIED",
+        "basis": "PARTICIPANT_CONSENT",
+        "sourceRecordId": "rights_0000000000000002",
+        "attestedAt": "2026-08-28T11:05:00Z",
+        "attestedByRole": "PRIVACY_REVIEWER",
+        "restrictions": []
+      },
+      "splitAssignment": "VALIDATION"
+    },
+    {
+      "sampleId": "sample_0000000000000003",
+      "signerId": "sgn_000000000003",
+      "labelId": "NO_SIGN",
+      "language": "sls",
+      "handedness": "NOT_APPLICABLE",
+      "captureCondition": {
+        "lighting": "MIXED",
+        "background": "MIXED",
+        "cameraPosition": "MOBILE",
+        "occlusion": "PARTIAL",
+        "speed": "NATURAL",
+        "distance": "NEAR",
+        "scenario": "IDLE"
+      },
+      "captureTimestamp": "2026-08-28T12:00:00Z",
+      "landmarkArtifact": {
+        "path": "landmarks/test/sample_0000000000000003.npz",
+        "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+        "mediaType": "application/x-npz"
+      },
+      "frameCount": 30,
+      "featureCount": 224,
+      "featureLayoutVersion": "mediapipe-holistic-224-v1",
+      "consentAttestation": {
+        "status": "VERIFIED",
+        "attestationId": "consent_0000000000000003",
+        "consentedAt": "2026-08-28T11:55:00Z",
+        "permittedUses": [
+          "MODEL_TRAINING",
+          "MODEL_EVALUATION"
+        ],
+        "withdrawalStatus": "ACTIVE"
+      },
+      "usageRightsAttestation": {
+        "status": "VERIFIED",
+        "basis": "PARTICIPANT_CONSENT",
+        "sourceRecordId": "rights_0000000000000003",
+        "attestedAt": "2026-08-28T12:05:00Z",
+        "attestedByRole": "DATA_STEWARD",
+        "restrictions": []
+      },
+      "splitAssignment": "TEST"
+    }
+  ]
+}

@@ -4,9 +4,17 @@ import type { RecognitionControlEvent } from "../api";
 import type {
   BrowserLocalVisionFrame,
   LandmarkCaptureStatus,
-  LandmarkChunk
+  LandmarkChunk,
+  LandmarkFrame
+} from "./contracts";
+import {
+  FRAMES_PER_LANDMARK_CHUNK as FRAMES_PER_CHUNK,
+  LANDMARK_CHUNK_TYPE,
+  LANDMARK_FEATURE_COUNT as FEATURE_COUNT,
+  LANDMARK_SCHEMA_VERSION as SCHEMA_VERSION
 } from "./contracts";
 import type { RealtimeConnectionState } from "./RealtimeClient";
+import type { GestureCandidateFrame } from "./trackingQuality";
 import {
   useLandmarkCapture,
   type UseLandmarkCaptureOptions
@@ -24,9 +32,10 @@ export interface UseSignRecognitionOptions {
   isUnderPressure(): boolean;
   /** Landmark and control delivery remain blocked until the room grants this stream ownership. */
   signerGranted?: boolean;
-  captureOptions?: Omit<UseLandmarkCaptureOptions, "consumer" | "onStatus">;
+  captureOptions?: Omit<UseLandmarkCaptureOptions, "onStatus" | "onGestureCandidate">;
   clock?: RecognitionClock;
   trackingAnnouncementDelayMs?: number;
+  onGestureDispatched?: (streamId: string) => void;
   onStreamChange?: (streamId: string | null) => void;
   onOwnershipReleaseNeeded?: (
     streamId: string,
@@ -41,6 +50,7 @@ export interface UseSignRecognitionResult {
   streamId: string | null;
   browserLocalFrame: BrowserLocalVisionFrame | null;
   trackingAnnouncement: string;
+  settleGesture(streamId: string): void;
   start(): boolean;
   stop(): void;
   revoke(): void;
@@ -48,6 +58,51 @@ export interface UseSignRecognitionResult {
 }
 
 const defaultClock: RecognitionClock = { now: () => performance.now() };
+const COMPLETED_GESTURE_FRAME_COUNT = 30;
+
+type GestureTransportState = {
+  streamId: string;
+  nextChunkSequence: number;
+  nextFrameSequence: number;
+  lastTimestampMs: number;
+};
+
+function candidateChunks(
+  candidate: readonly GestureCandidateFrame[],
+  transport: GestureTransportState
+): LandmarkChunk[] {
+  if (candidate.length !== COMPLETED_GESTURE_FRAME_COUNT) {
+    throw new TypeError(`Completed gestures require exactly ${COMPLETED_GESTURE_FRAME_COUNT} frames.`);
+  }
+
+  let lastTimestampMs = transport.lastTimestampMs;
+  const frames: LandmarkFrame[] = candidate.map((frame, index) => {
+    if (frame.features.length !== FEATURE_COUNT || !frame.features.every(Number.isFinite)) {
+      throw new TypeError(`Gesture frames require exactly ${FEATURE_COUNT} finite features.`);
+    }
+    if (!Number.isFinite(frame.timestampMs) || frame.timestampMs < 0 || frame.timestampMs <= lastTimestampMs) {
+      throw new RangeError("Gesture frame timestamps must be finite, non-negative, and strictly increasing.");
+    }
+    lastTimestampMs = frame.timestampMs;
+    return {
+      sequence: transport.nextFrameSequence + index,
+      timestampMs: frame.timestampMs,
+      features: [...frame.features]
+    };
+  });
+
+  const chunks: LandmarkChunk[] = [];
+  for (let offset = 0; offset < frames.length; offset += FRAMES_PER_CHUNK) {
+    chunks.push({
+      schemaVersion: SCHEMA_VERSION,
+      type: LANDMARK_CHUNK_TYPE,
+      streamId: transport.streamId,
+      sequence: transport.nextChunkSequence + chunks.length,
+      frames: frames.slice(offset, offset + FRAMES_PER_CHUNK)
+    });
+  }
+  return chunks;
+}
 
 export function captureStatusText(status: LandmarkCaptureStatus): string {
   switch (status) {
@@ -83,6 +138,9 @@ export function useSignRecognition(options: UseSignRecognitionOptions): UseSignR
   const enabledRef = useRef(false);
   const activeStreamRef = useRef<string | null>(null);
   const serverStartedStreamRef = useRef<string | null>(null);
+  const gestureTransportRef = useRef<GestureTransportState | null>(null);
+  const gestureInFlightStreamRef = useRef<string | null>(null);
+  const failGestureTransportRef = useRef<() => void>(() => undefined);
   const lastControlTimestampRef = useRef(Number.NEGATIVE_INFINITY);
   const [enabledByUser, setEnabledByUser] = useState(false);
   const [activeStreamId, setActiveStreamId] = useState<string | null>(null);
@@ -90,18 +148,45 @@ export function useSignRecognition(options: UseSignRecognitionOptions): UseSignR
 
   const capture = useLandmarkCapture({
     ...options.captureOptions,
-    consumer: {
-      isUnderPressure: () => !enabledRef.current
-        || activeStreamRef.current === null
-        || serverStartedStreamRef.current !== activeStreamRef.current
-        || optionsRef.current.signerGranted === false
-        || optionsRef.current.isUnderPressure(),
-      send: (chunk) => {
-        if (!enabledRef.current
-          || chunk.streamId !== activeStreamRef.current
-          || chunk.streamId !== serverStartedStreamRef.current) return;
-        optionsRef.current.send(chunk);
+    onGestureCandidate: (candidate) => {
+      const streamId = activeStreamRef.current;
+      const transport = gestureTransportRef.current;
+      if (!enabledRef.current
+        || !streamId
+        || serverStartedStreamRef.current !== streamId
+        || transport?.streamId !== streamId
+        || gestureInFlightStreamRef.current === streamId
+        || optionsRef.current.signerGranted === false) {
+        return;
       }
+
+      if (optionsRef.current.isUnderPressure()) {
+        failGestureTransportRef.current();
+        return;
+      }
+
+      let chunks: LandmarkChunk[];
+      try {
+        chunks = candidateChunks(candidate, transport);
+      } catch {
+        failGestureTransportRef.current();
+        return;
+      }
+
+      // v1 terminal events identify only the stream, not an individual gesture.
+      // Keep exactly one completed gesture in flight so a result cannot be
+      // attributed to a newer gesture on the same stream.
+      gestureInFlightStreamRef.current = streamId;
+      for (const chunk of chunks) {
+        if (optionsRef.current.isUnderPressure() || !optionsRef.current.send(chunk)) {
+          failGestureTransportRef.current();
+          return;
+        }
+        transport.nextChunkSequence += 1;
+        transport.nextFrameSequence += chunk.frames.length;
+        transport.lastTimestampMs = chunk.frames.at(-1)!.timestampMs;
+      }
+      optionsRef.current.onGestureDispatched?.(streamId);
     }
   });
   const captureStatus = capture.status;
@@ -112,9 +197,19 @@ export function useSignRecognition(options: UseSignRecognitionOptions): UseSignR
 
   const setActiveStream = useCallback((streamId: string | null) => {
     activeStreamRef.current = streamId;
-    if (streamId === null) serverStartedStreamRef.current = null;
+    if (streamId === null) {
+      serverStartedStreamRef.current = null;
+      gestureTransportRef.current = null;
+      gestureInFlightStreamRef.current = null;
+    }
     setActiveStreamId(streamId);
     optionsRef.current.onStreamChange?.(streamId);
+  }, []);
+
+  const settleGesture = useCallback((streamId: string) => {
+    if (gestureInFlightStreamRef.current === streamId) {
+      gestureInFlightStreamRef.current = null;
+    }
   }, []);
 
   const timestamp = useCallback(() => {
@@ -155,6 +250,18 @@ export function useSignRecognition(options: UseSignRecognitionOptions): UseSignR
     return false;
   }, [beginStream]);
 
+  useEffect(() => {
+    if (!options.cameraEnabled
+      || enabledRef.current
+      || activeStreamRef.current
+      || options.realtimeState.status !== "connected") {
+      return;
+    }
+    const video = optionsRef.current.getVideo();
+    if (video) startCapture(video, true);
+  }, [options.cameraEnabled, options.realtimeState.generation, options.realtimeState.status,
+    startCapture]);
+
   const stopStream = useCallback((
     preserveIntent: boolean,
     notifyServer: boolean,
@@ -181,6 +288,7 @@ export function useSignRecognition(options: UseSignRecognitionOptions): UseSignR
     setActiveStream(null);
     stopCapture();
   }, [setActiveStream, stopCapture, timestamp]);
+  failGestureTransportRef.current = () => stopStream(false, true, "recognition_stopped");
 
   const stop = useCallback(() => stopStream(false, true, "recognition_stopped"), [stopStream]);
   const revoke = useCallback(() => stopStream(false, false), [stopStream]);
@@ -231,6 +339,12 @@ export function useSignRecognition(options: UseSignRecognitionOptions): UseSignR
     };
     if (optionsRef.current.send(control)) {
       serverStartedStreamRef.current = streamId;
+      gestureTransportRef.current = {
+        streamId,
+        nextChunkSequence: 0,
+        nextFrameSequence: 0,
+        lastTimestampMs: control.timestampMs
+      };
       resumeCapture();
     } else {
       optionsRef.current.onOwnershipReleaseNeeded?.(streamId, "recognition_stopped");
@@ -252,10 +366,10 @@ export function useSignRecognition(options: UseSignRecognitionOptions): UseSignR
   }, [beginStream, options.cameraEnabled, options.realtimeState.generation, options.realtimeState.status, stopStream]);
 
   useEffect(() => {
-    if (!options.cameraEnabled && (enabledRef.current || activeStreamRef.current)) {
-      cameraOff();
-    }
-  }, [cameraOff, options.cameraEnabled]);
+    if (options.cameraEnabled) return;
+    if (enabledRef.current || activeStreamRef.current) cameraOff();
+    else cameraOffCapture();
+  }, [cameraOff, cameraOffCapture, options.cameraEnabled]);
 
   useEffect(() => {
     if ((captureStatus === "unavailable" || captureStatus === "error")
@@ -291,6 +405,8 @@ export function useSignRecognition(options: UseSignRecognitionOptions): UseSignR
     }
     activeStreamRef.current = null;
     serverStartedStreamRef.current = null;
+    gestureTransportRef.current = null;
+    gestureInFlightStreamRef.current = null;
     stopCapture();
   }, [stopCapture, timestamp]);
 
@@ -301,6 +417,7 @@ export function useSignRecognition(options: UseSignRecognitionOptions): UseSignR
     streamId: activeStreamId,
     browserLocalFrame: capture.browserLocalFrame,
     trackingAnnouncement,
+    settleGesture,
     start,
     stop,
     revoke,

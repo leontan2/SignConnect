@@ -1,0 +1,310 @@
+{
+  "schemaVersion": 1,
+  "modelId": "contract-fixture-sgsl-tcn",
+  "modelVersion": "1.0.0-fixture",
+  "generatedAt": "2026-08-30T13:00:00Z",
+  "mockModel": true,
+  "genuineSignLanguageData": false,
+  "targetLanguage": "sls",
+  "vocabularyVersion": "1.0.0-synthetic",
+  "vocabularySha256": "c48ca330f06a4d1702e7caac228ac2d87ba4182dcb2e608e2d7946dcc701862a",
+  "sourceProvenance": {"commit": null, "dirty": null, "trackedChangesSha256": null, "untrackedFileCount": null, "untrackedStateSha256": null, "untrackedContentSha256": null},
+  "architecture": {
+    "family": "TCN",
+    "name": "SignConnect TCN contract fixture",
+    "parameterCount": 84582
+  },
+  "artifactSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "input": {
+    "name": "features",
+    "shape": [
+      1,
+      30,
+      224
+    ],
+    "tensorType": "FLOAT32",
+    "featureLayoutVersion": "mediapipe-holistic-224-v1",
+    "normalizationVersion": "shoulder-midpoint-shoulder-width-v1",
+    "featureOrder": [
+      "LEFT_HAND_0_20_XYZ_PRESENCE",
+      "RIGHT_HAND_0_20_XYZ_PRESENCE",
+      "POSE_11_24_XYZ_PRESENCE"
+    ]
+  },
+  "output": {
+    "name": "probabilities",
+    "shape": [
+      1,
+      7
+    ],
+    "tensorType": "FLOAT32",
+    "semanticsVersion": "softmax-class-probabilities-v1"
+  },
+  "decision": {
+    "minimumConfidence": 0.8
+  },
+  "labels": [
+    {
+      "index": 0,
+      "id": "NO_SIGN",
+      "captionText": null,
+      "outcome": "NO_SIGN"
+    },
+    {
+      "index": 1,
+      "id": "HELLO",
+      "captionText": "Hello",
+      "outcome": "SIGN"
+    },
+    {
+      "index": 2,
+      "id": "THANK_YOU",
+      "captionText": "Thank you",
+      "outcome": "SIGN"
+    },
+    {
+      "index": 3,
+      "id": "YES",
+      "captionText": "Yes",
+      "outcome": "SIGN"
+    },
+    {
+      "index": 4,
+      "id": "NO",
+      "captionText": "No",
+      "outcome": "SIGN"
+    },
+    {
+      "index": 5,
+      "id": "HELP",
+      "captionText": "Help",
+      "outcome": "SIGN"
+    },
+    {
+      "index": 6,
+      "id": "OUT_OF_VOCABULARY",
+      "captionText": null,
+      "outcome": "REJECT"
+    }
+  ],
+  "trainingDataset": {
+    "datasetId": "signconnect-sgsl-five-sign-v1",
+    "datasetVersion": "1.0.0",
+    "manifestPath": "manifests/signconnect-sgsl-five-sign-v1.json",
+    "manifestSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "licence": {
+      "spdxExpression": "LicenseRef-SignConnect-Consent-v1",
+      "commercialUseAllowed": false,
+      "redistributionAllowed": false
+    }
+  },
+  "evaluation": {
+    "protocol": {
+      "splitStrategy": "SIGNER_INDEPENDENT",
+      "splitSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "signerOverlapCount": 0,
+      "testSignerCount": 2
+    },
+    "metrics": {
+      "macroF1": 0.8688925443885935,
+      "accuracy": 0.8722222222222222,
+      "falseFinalRate": 0.03333333333333333,
+      "sampleCount": 180,
+      "perClass": [
+        {
+          "index": 0,
+          "labelId": "NO_SIGN",
+          "precision": 0.7837837837837838,
+          "recall": 0.9666666666666667,
+          "f1": 0.8656716417910447,
+          "support": 30
+        },
+        {
+          "index": 1,
+          "labelId": "HELLO",
+          "precision": 0.88,
+          "recall": 0.88,
+          "f1": 0.88,
+          "support": 25
+        },
+        {
+          "index": 2,
+          "labelId": "THANK_YOU",
+          "precision": 0.88,
+          "recall": 0.88,
+          "f1": 0.88,
+          "support": 25
+        },
+        {
+          "index": 3,
+          "labelId": "YES",
+          "precision": 0.92,
+          "recall": 0.92,
+          "f1": 0.92,
+          "support": 25
+        },
+        {
+          "index": 4,
+          "labelId": "NO",
+          "precision": 0.8846153846153846,
+          "recall": 0.92,
+          "f1": 0.9019607843137255,
+          "support": 25
+        },
+        {
+          "index": 5,
+          "labelId": "HELP",
+          "precision": 0.8518518518518519,
+          "recall": 0.92,
+          "f1": 0.8846153846153846,
+          "support": 25
+        },
+        {
+          "index": 6,
+          "labelId": "OUT_OF_VOCABULARY",
+          "precision": 1,
+          "recall": 0.6,
+          "f1": 0.75,
+          "support": 25
+        }
+      ],
+      "confusionMatrix": {
+        "labelOrder": [
+          "NO_SIGN",
+          "HELLO",
+          "THANK_YOU",
+          "YES",
+          "NO",
+          "HELP",
+          "OUT_OF_VOCABULARY"
+        ],
+        "rows": [
+          [
+            29,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            1,
+            22,
+            1,
+            0,
+            0,
+            1,
+            0
+          ],
+          [
+            1,
+            1,
+            22,
+            0,
+            0,
+            1,
+            0
+          ],
+          [
+            0,
+            0,
+            1,
+            23,
+            1,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            1,
+            23,
+            1,
+            0
+          ],
+          [
+            1,
+            0,
+            0,
+            0,
+            1,
+            23,
+            0
+          ],
+          [
+            5,
+            1,
+            1,
+            1,
+            1,
+            1,
+            15
+          ]
+        ]
+      },
+      "noSignBehavior": {
+        "sampleCount": 30,
+        "falseFinalCount": 1,
+        "falseFinalRate": 0.03333333333333333
+      },
+      "rejectionBehavior": {
+        "minimumConfidence": 0.8,
+        "acceptedSignCount": 139,
+        "lowConfidenceRejectionCount": 6,
+        "noSignDecisionCount": 35,
+        "rejectionRate": 0.03333333333333333,
+        "acceptedSignAccuracy": 0.86,
+        "unknownSampleCount": 25,
+        "unknownRejectedCount": 24,
+        "unknownRejectionRate": 0.96,
+        "unknownFalseFinalCount": 1,
+        "unknownFalseFinalRate": 0.04
+      }
+    }
+  },
+  "onnx": {
+    "artifactPath": "models/fixtures/signconnect-sgsl-tcn.onnx",
+    "opset": 17,
+    "parity": {
+      "verified": true,
+      "absoluteTolerance": 0.00001,
+      "relativeTolerance": 0.0001,
+      "maxAbsoluteDifference": 0.000002
+    }
+  },
+  "runtime": {
+    "engine": "ONNX_RUNTIME_JAVA",
+    "minimumVersion": "1.22.0",
+    "executionProviders": [
+      "CPUExecutionProvider"
+    ],
+    "maxBatchSize": 1,
+    "warmedP95LatencyMs": 118.4
+  },
+  "sgslReview": {
+    "status": "APPROVED",
+    "reviewerRole": "SGSL_FLUENT_DEAF_REVIEWER",
+    "reviewedLabelIds": [
+      "HELLO",
+      "THANK_YOU",
+      "YES",
+      "NO",
+      "HELP"
+    ],
+    "reviewArtifactSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "reviewedAt": "2026-08-30T12:45:00Z"
+  },
+  "governance": {
+    "allTrainingSamplesConsentVerified": true,
+    "usageRightsVerified": true,
+    "signerIndependentEvaluationVerified": true,
+    "rawVideoOrImageDataIncluded": false
+  },
+  "productionPromotion": {
+    "status": "APPROVED",
+    "assessedAt": "2026-08-30T13:00:00Z",
+    "blockingReasons": []
+  }
+}

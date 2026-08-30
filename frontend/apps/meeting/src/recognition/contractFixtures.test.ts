@@ -28,11 +28,18 @@ import serverCaptionFinal from "../../../../../contracts/sign-recognition/v1/fix
 import serverRecognitionStatusReady from "../../../../../contracts/sign-recognition/v1/fixtures/server-recognition-status-ready.valid.json";
 import serverRecognitionStatusUnavailable from "../../../../../contracts/sign-recognition/v1/fixtures/server-recognition-status-unavailable.valid.json";
 import serverRecognitionUnknown from "../../../../../contracts/sign-recognition/v1/fixtures/server-recognition-unknown.valid.json";
+import trackingFeedbackExtraRawFrame from "../../../../../contracts/sign-recognition/v1/fixtures/tracking-feedback-extra-raw-frame.invalid.json";
+import trackingFeedbackNoPerson from "../../../../../contracts/sign-recognition/v1/fixtures/tracking-feedback-no-person-precedence.valid.json";
+import trackingFeedbackPrecedence from "../../../../../contracts/sign-recognition/v1/fixtures/tracking-feedback-precedence.invalid.json";
+import trackingFeedbackProcessing from "../../../../../contracts/sign-recognition/v1/fixtures/tracking-feedback-processing.valid.json";
+import trackingFeedbackReady from "../../../../../contracts/sign-recognition/v1/fixtures/tracking-feedback-ready.valid.json";
+import trackingFeedbackUnknownState from "../../../../../contracts/sign-recognition/v1/fixtures/tracking-feedback-unknown-state.invalid.json";
 import inferenceRequestSchema from "../../../../../contracts/sign-recognition/v1/inference-request.schema.json";
 import inferenceResponseSchema from "../../../../../contracts/sign-recognition/v1/inference-response.schema.json";
 import landmarkChunkSchema from "../../../../../contracts/sign-recognition/v1/landmark-chunk.schema.json";
 import recognitionControlSchema from "../../../../../contracts/sign-recognition/v1/recognition-control.schema.json";
 import serverEventSchema from "../../../../../contracts/sign-recognition/v1/server-event.schema.json";
+import trackingFeedbackSchema from "../../../../../contracts/sign-recognition/v1/tracking-feedback.schema.json";
 import roomJoin from "../../../../../contracts/realtime-room/v1/fixtures/room-join.valid.json";
 import roomJoinResume from "../../../../../contracts/realtime-room/v1/fixtures/room-join-resume.valid.json";
 import roomJoinBothTokens from "../../../../../contracts/realtime-room/v1/fixtures/room-join-both-tokens.invalid.json";
@@ -146,6 +153,39 @@ describe("shared sign-recognition v1 contracts", () => {
       {
         name: "inference-response-missing-mock-marker.invalid.json",
         value: inferenceResponseMissingMockMarker,
+        valid: false
+      }
+    ];
+    fixtures.forEach((fixture) => expectFixture(validate, fixture));
+  });
+
+  it("validates every browser-local tracking feedback fixture", () => {
+    const validate = contractValidator(trackingFeedbackSchema as AnySchema);
+    const fixtures: FixtureCase[] = [
+      { name: "tracking-feedback-ready.valid.json", value: trackingFeedbackReady, valid: true },
+      {
+        name: "tracking-feedback-no-person-precedence.valid.json",
+        value: trackingFeedbackNoPerson,
+        valid: true
+      },
+      {
+        name: "tracking-feedback-processing.valid.json",
+        value: trackingFeedbackProcessing,
+        valid: true
+      },
+      {
+        name: "tracking-feedback-precedence.invalid.json",
+        value: trackingFeedbackPrecedence,
+        valid: false
+      },
+      {
+        name: "tracking-feedback-extra-raw-frame.invalid.json",
+        value: trackingFeedbackExtraRawFrame,
+        valid: false
+      },
+      {
+        name: "tracking-feedback-unknown-state.invalid.json",
+        value: trackingFeedbackUnknownState,
         valid: false
       }
     ];

@@ -23,6 +23,8 @@ signconnect:
       labels-resource: ${SIGN_MODEL_LABELS_RESOURCE:}
       input-name: ${SIGN_MODEL_INPUT_NAME:features}
       output-name: ${SIGN_MODEL_OUTPUT_NAME:probabilities}
+      expected-version: ${SIGN_MODEL_EXPECTED_VERSION:}
+      allow-mock-model: false
 
 logging:
   level:

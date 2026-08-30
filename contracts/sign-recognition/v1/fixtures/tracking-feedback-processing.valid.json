@@ -1,0 +1,40 @@
+{
+  "timestampMs": 960,
+  "gestureModel": "ready",
+  "hands": [
+    {
+      "handedness": "Right",
+      "score": 0.95,
+      "points": [
+        { "index": 0, "x": 0.6, "y": 0.5, "confidence": 0.96 }
+      ]
+    }
+  ],
+  "upperBody": [
+    { "index": 11, "x": 0.43, "y": 0.35, "confidence": 0.97 },
+    { "index": 12, "x": 0.57, "y": 0.35, "confidence": 0.97 }
+  ],
+  "gesture": {
+    "source": "mediapipe-canned-gestures",
+    "label": "Open_Palm",
+    "displayName": "Open palm",
+    "confidence": 0.91,
+    "handedness": "Right",
+    "stable": true,
+    "consecutiveFrames": 4
+  },
+  "trackingQuality": {
+    "state": "ready",
+    "personDetected": true,
+    "upperBodyVisible": true,
+    "leftHandVisible": true,
+    "rightHandVisible": true,
+    "handsInsideFrame": true
+  },
+  "calibration": {
+    "state": "ready",
+    "stableFrames": 8,
+    "requiredStableFrames": 8
+  },
+  "gesturePhase": "ready-for-inference"
+}

@@ -7,5 +7,6 @@ declare const process: {
     MEDIAPIPE_POSE_MODEL_URL: string;
     RECOGNITION_SIMULATOR_ENABLED: string;
     RECOGNITION_E2E_FIXTURE_ENABLED: string;
+    ROOM_PREVIEW_TOOLS_ENABLED: string;
   };
 };

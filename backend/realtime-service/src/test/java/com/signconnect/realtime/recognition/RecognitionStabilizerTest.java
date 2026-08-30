@@ -257,6 +257,55 @@ class RecognitionStabilizerTest {
     }
 
     @Test
+    void completedGesturesFinalizeOncePerWindowAndAllowAGenuineRepeatInsideTheCooldown() {
+        RecognitionStabilizer stabilizer = new RecognitionStabilizer(
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        RecognitionStabilizer.Prediction first = active(0, "MOCK_ACTIVE", 0.95);
+        RecognitionStabilizer.Prediction repeated = active(1, "MOCK_ACTIVE", 0.96);
+
+        assertThat(stabilizer.evaluateCompletedGesture(first))
+                .isEqualTo(new RecognitionStabilizer.Final(first, NOW));
+        assertThat(stabilizer.evaluateCompletedGesture(active(0, "OTHER_SIGN", 0.99)))
+                .isSameAs(RecognitionStabilizer.None.INSTANCE);
+        assertThat(stabilizer.evaluateCompletedGesture(repeated))
+                .isEqualTo(new RecognitionStabilizer.Final(repeated, NOW));
+    }
+
+    @Test
+    void completedGesturesImmediatelyRejectNoSignAndLowConfidencePredictions() {
+        RecognitionStabilizer stabilizer = new RecognitionStabilizer(
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        RecognitionStabilizer.Prediction noSign = idle(0);
+        RecognitionStabilizer.Prediction lowConfidence = active(1, "MOCK_ACTIVE", 0.79);
+
+        assertThat(stabilizer.evaluateCompletedGesture(noSign))
+                .isEqualTo(new RecognitionStabilizer.Unknown(
+                        RecognitionStabilizer.UnknownReason.LOW_CONFIDENCE,
+                        noSign,
+                        NOW));
+        assertThat(stabilizer.evaluateCompletedGesture(lowConfidence))
+                .isEqualTo(new RecognitionStabilizer.Unknown(
+                        RecognitionStabilizer.UnknownReason.LOW_CONFIDENCE,
+                        lowConfidence,
+                        NOW));
+    }
+
+    @Test
+    void completedGestureOrderingResetsWithTheStreamPipeline() {
+        RecognitionStabilizer stabilizer = new RecognitionStabilizer(
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        RecognitionStabilizer.Prediction first = active(0, "MOCK_ACTIVE", 0.95);
+
+        assertThat(stabilizer.evaluateCompletedGesture(first))
+                .isEqualTo(new RecognitionStabilizer.Final(first, NOW));
+
+        stabilizer.reset();
+
+        assertThat(stabilizer.evaluateCompletedGesture(first))
+                .isEqualTo(new RecognitionStabilizer.Final(first, NOW));
+    }
+
+    @Test
     void resetClearsPendingOccurrenceDeduplicationAndUnknownRateState() {
         RecognitionStabilizer stabilizer = new RecognitionStabilizer(
                 Clock.fixed(NOW, ZoneOffset.UTC));

@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 declare global {
   interface Window {
-    __signConnectCompletionTimes?: number[];
+    __signConnectGestureDispatchTimes?: number[];
     __signConnectCaptionRenderTimes?: number[];
   }
 }
@@ -10,6 +10,7 @@ declare global {
 const WARMUP_CYCLES = 1;
 const MEASURED_CYCLES = 20;
 const LATENCY_BUDGET_MS = 1_000;
+const COMPLETED_GESTURE_FRAME_COUNT = 30;
 
 function nearestRank(values: number[], percentile: number): number {
   if (values.length === 0) throw new Error("Cannot calculate a percentile without samples");
@@ -20,13 +21,33 @@ function nearestRank(values: number[], percentile: number): number {
 
 test("@performance renders synthetic caption finals below the nearest-rank p95 budget", async ({ page, browserName }, testInfo) => {
   test.setTimeout(120_000);
-  await page.addInitScript(() => {
-    const completionTimes: number[] = [];
+  await page.addInitScript(({ completedGestureFrameCount }) => {
+    const gestureDispatchTimes: number[] = [];
     const captionRenderTimes: number[] = [];
+    const dispatchedFramesByStream = new Map<string, number>();
     let observedCaptionCount = 0;
-    window.addEventListener("signconnect:e2e-fixture-completion", () => {
-      completionTimes.push(performance.now());
-    });
+    const nativeSend = window.WebSocket.prototype.send;
+    window.WebSocket.prototype.send = function send(data): void {
+      nativeSend.call(this, data);
+      if (typeof data !== "string") return;
+      try {
+        const event = JSON.parse(data) as Record<string, unknown>;
+        if (event.type !== "landmark.chunk"
+          || typeof event.streamId !== "string"
+          || !Array.isArray(event.frames)) {
+          return;
+        }
+        const priorFrameCount = dispatchedFramesByStream.get(event.streamId) ?? 0;
+        const nextFrameCount = priorFrameCount + event.frames.length;
+        dispatchedFramesByStream.set(event.streamId, nextFrameCount);
+        if (priorFrameCount < completedGestureFrameCount
+          && nextFrameCount >= completedGestureFrameCount) {
+          gestureDispatchTimes.push(performance.now());
+        }
+      } catch {
+        // Non-JSON WebSocket traffic is outside the recognition timing seam.
+      }
+    };
     const observer = new MutationObserver(() => {
       const captionCount = document.querySelectorAll('[aria-label="Live transcript"] article').length;
       while (observedCaptionCount < captionCount) {
@@ -37,15 +58,15 @@ test("@performance renders synthetic caption finals below the nearest-rank p95 b
     window.addEventListener("DOMContentLoaded", () => {
       observer.observe(document.documentElement, { childList: true, subtree: true });
     }, { once: true });
-    Object.defineProperty(window, "__signConnectCompletionTimes", {
+    Object.defineProperty(window, "__signConnectGestureDispatchTimes", {
       configurable: false,
-      value: completionTimes
+      value: gestureDispatchTimes
     });
     Object.defineProperty(window, "__signConnectCaptionRenderTimes", {
       configurable: false,
       value: captionRenderTimes
     });
-  });
+  }, { completedGestureFrameCount: COMPLETED_GESTURE_FRAME_COUNT });
 
   await page.goto("/");
   await expect(page.getByTestId("e2e-fixture-capture-notice")).toBeVisible();
@@ -59,21 +80,31 @@ test("@performance renders synthetic caption finals below the nearest-rank p95 b
   const transcript = page.getByRole("region", { name: "Live transcript" });
   for (let cycle = 0; cycle < totalCycles; cycle += 1) {
     await page.getByRole("button", { name: "Start recognition" }).click();
+    await expect.poll(
+      () => page.evaluate(() => window.__signConnectGestureDispatchTimes?.length ?? 0),
+      { message: `completed gesture ${cycle + 1} was dispatched`, timeout: 10_000 }
+    ).toBe(cycle + 1);
     await expect(transcript.getByRole("article")).toHaveCount(cycle + 1, { timeout: 10_000 });
-    const timing = await page.evaluate((expectedCompletions) => {
-      const completionTimes = window.__signConnectCompletionTimes ?? [];
+    await expect.poll(
+      () => page.evaluate(() => window.__signConnectCaptionRenderTimes?.length ?? 0),
+      { message: `caption ${cycle + 1} was rendered`, timeout: 10_000 }
+    ).toBe(cycle + 1);
+    const timing = await page.evaluate((sampleIndex) => {
+      const dispatchTimes = window.__signConnectGestureDispatchTimes ?? [];
       const renderTimes = window.__signConnectCaptionRenderTimes ?? [];
-      if (completionTimes.length !== expectedCompletions || renderTimes.length !== expectedCompletions) {
+      const dispatchedAt = dispatchTimes[sampleIndex];
+      const renderedAt = renderTimes[sampleIndex];
+      if (dispatchedAt === undefined || renderedAt === undefined) {
         throw new Error(
-          `Expected ${expectedCompletions} completion/render markers, received ${completionTimes.length}/${renderTimes.length}`
+          `Missing dispatch/render markers for sample ${sampleIndex + 1}; received ${dispatchTimes.length}/${renderTimes.length}`
         );
       }
       return {
-        completionAt: completionTimes.at(-1)!,
-        renderedAt: renderTimes.at(-1)!
+        dispatchedAt,
+        renderedAt
       };
-    }, cycle + 1);
-    const durationMs = timing.renderedAt - timing.completionAt;
+    }, cycle);
+    const durationMs = timing.renderedAt - timing.dispatchedAt;
     expect(durationMs).toBeGreaterThanOrEqual(0);
     if (cycle >= WARMUP_CYCLES) samples.push(durationMs);
 
@@ -84,6 +115,8 @@ test("@performance renders synthetic caption finals below the nearest-rank p95 b
   expect(samples).toHaveLength(MEASURED_CYCLES);
   const summary = {
     method: "nearest-rank",
+    measurementStart: "completed-gesture-dispatch",
+    measurementEnd: "caption-dom-render",
     percentile: 95,
     sampleCount: samples.length,
     warmupCycles: WARMUP_CYCLES,

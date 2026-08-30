@@ -27,6 +27,8 @@ public final class RecognitionStabilizer {
     private Instant lastFinalAt;
     private int unknownFailureCount;
     private Instant lastUnknownAt;
+    private UUID completedGestureStreamId;
+    private long lastCompletedGestureWindowSequence = -1;
 
     public RecognitionStabilizer(Clock clock) {
         this(clock, Settings.defaults());
@@ -62,6 +64,29 @@ public final class RecognitionStabilizer {
     }
 
     /**
+     * Evaluates one gesture whose temporal boundary has already been confirmed by the browser.
+     * Each strictly newer completed-gesture window is an independent occurrence, so rolling votes,
+     * idle finalization, rate limiting, and label cooldown do not apply. Replayed or out-of-order
+     * windows cannot create a second observable outcome for an already-consumed gesture boundary.
+     */
+    public synchronized Outcome evaluateCompletedGesture(Prediction prediction) {
+        Objects.requireNonNull(prediction, "prediction");
+        if (prediction.streamId().equals(completedGestureStreamId)
+                && prediction.windowSequence() <= lastCompletedGestureWindowSequence) {
+            return None.INSTANCE;
+        }
+        completedGestureStreamId = prediction.streamId();
+        lastCompletedGestureWindowSequence = prediction.windowSequence();
+        Instant occurredAt = Instant.now(clock);
+        if (NO_SIGN.equals(prediction.labelId())
+                || prediction.confidence() < settings.confidenceThreshold()
+                || prediction.captionText() == null) {
+            return new Unknown(UnknownReason.LOW_CONFIDENCE, prediction, occurredAt);
+        }
+        return new Final(prediction, occurredAt);
+    }
+
+    /**
      * Clears every piece of connection/stream-local stabilization state.
      */
     public synchronized void reset() {
@@ -73,6 +98,8 @@ public final class RecognitionStabilizer {
         lastFinalAt = null;
         unknownFailureCount = 0;
         lastUnknownAt = null;
+        completedGestureStreamId = null;
+        lastCompletedGestureWindowSequence = -1;
     }
 
     private Outcome evaluateActive(Prediction prediction) {
