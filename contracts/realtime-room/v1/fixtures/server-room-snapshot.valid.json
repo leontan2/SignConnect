@@ -8,12 +8,14 @@
       {
         "participantId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         "displayName": "Leon",
-        "role": "HOST"
+        "role": "HOST",
+        "activeSigner": false
       },
       {
         "participantId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
         "displayName": "Ari",
-        "role": "GUEST"
+        "role": "GUEST",
+        "activeSigner": false
       }
     ]
   },

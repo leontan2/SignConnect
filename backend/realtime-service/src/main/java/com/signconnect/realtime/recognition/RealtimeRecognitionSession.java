@@ -136,13 +136,18 @@ public final class RealtimeRecognitionSession {
         return outbound.asFlux();
     }
 
-    public synchronized void acceptText(String message, int byteCount) {
+    /**
+     * Accepts one recognition message.
+     *
+     * @return true only when this message validly stopped the active stream
+     */
+    public synchronized boolean acceptText(String message, int byteCount) {
         if (closed) {
-            return;
+            return false;
         }
         if (byteCount > properties.getMaxMessageSize().toBytes()) {
             emitProtocolStatus(null, "INVALID_EVENT", "Recognition message exceeded the allowed size.");
-            return;
+            return false;
         }
 
         JsonNode root;
@@ -150,39 +155,40 @@ public final class RealtimeRecognitionSession {
             root = objectMapper.reader().readTree(message);
         } catch (JsonProcessingException exception) {
             emitProtocolStatus(null, "INVALID_EVENT", "Recognition input was rejected.");
-            return;
+            return false;
         }
         if (root == null || !root.isObject() || !root.path("type").isTextual()) {
             emitProtocolStatus(streamIdFrom(root), "INVALID_EVENT", "Recognition input was rejected.");
-            return;
+            return false;
         }
 
         String type = root.path("type").asText();
         if ("recognition.result".equals(type)) {
             handleSimulator(root);
-            return;
+            return false;
         }
         if (!root.path("schemaVersion").isIntegralNumber()) {
             emitProtocolStatus(streamIdFrom(root), "INVALID_EVENT", "Recognition input was rejected.");
-            return;
+            return false;
         }
         if (root.path("schemaVersion").asInt() != LandmarkChunkEvent.SCHEMA_VERSION) {
             emitProtocolStatus(streamIdFrom(root), "UNSUPPORTED_VERSION", "Recognition version is unsupported.");
-            return;
+            return false;
         }
 
         try {
-            switch (type) {
-                case "recognition.control" -> handleControl(
-                        objectMapper.treeToValue(root, RecognitionControlEvent.class));
-                case "landmark.chunk" -> handleChunk(
-                        objectMapper.treeToValue(root, LandmarkChunkEvent.class));
-                default -> emitProtocolStatus(
-                        streamIdFrom(root), "INVALID_EVENT", "Recognition event type is unsupported.");
+            if ("recognition.control".equals(type)) {
+                return handleControl(objectMapper.treeToValue(root, RecognitionControlEvent.class));
+            }
+            if ("landmark.chunk".equals(type)) {
+                handleChunk(objectMapper.treeToValue(root, LandmarkChunkEvent.class));
+            } else {
+                emitProtocolStatus(streamIdFrom(root), "INVALID_EVENT", "Recognition event type is unsupported.");
             }
         } catch (JsonProcessingException | IllegalArgumentException exception) {
             emitProtocolStatus(streamIdFrom(root), "INVALID_EVENT", "Recognition input was rejected.");
         }
+        return false;
     }
 
     public synchronized void acceptNonText() {
@@ -200,20 +206,32 @@ public final class RealtimeRecognitionSession {
         outbound.tryEmitComplete();
     }
 
-    private void handleControl(RecognitionControlEvent control) {
+    public synchronized void releaseOwnership() {
+        if (closed) {
+            return;
+        }
+        resetPipeline();
+        recognitionActive = false;
+        currentStreamId = null;
+        lastFrameSequence = null;
+        lastFrameTimestamp = null;
+        lastChunkReceivedAt = null;
+    }
+
+    private boolean handleControl(RecognitionControlEvent control) {
         if (!control.hasValidContract()) {
             emitProtocolStatus(control.streamId(), "INVALID_EVENT", "Recognition control was rejected.");
-            return;
+            return false;
         }
         if ("start".equals(control.action())) {
             if (control.sequence() != 0) {
                 emitProtocolStatus(control.streamId(), "OUT_OF_ORDER", "Recognition control is out of order.");
-                return;
+                return false;
             }
             startStream(control);
-        } else {
-            stopStream(control);
+            return false;
         }
+        return stopStream(control);
     }
 
     private void startStream(RecognitionControlEvent control) {
@@ -238,13 +256,13 @@ public final class RealtimeRecognitionSession {
                 null);
     }
 
-    private void stopStream(RecognitionControlEvent control) {
+    private boolean stopStream(RecognitionControlEvent control) {
         if (!recognitionActive
                 || !control.streamId().equals(currentStreamId)
                 || control.sequence() != lastControlSequence + 1
                 || control.timestampMs() <= lastControlTimestamp) {
             emitProtocolStatus(control.streamId(), "OUT_OF_ORDER", "Recognition control is out of order.");
-            return;
+            return false;
         }
         UUID stoppedStream = currentStreamId;
         emitStatus(
@@ -260,6 +278,7 @@ public final class RealtimeRecognitionSession {
         lastFrameSequence = null;
         lastFrameTimestamp = null;
         lastChunkReceivedAt = null;
+        return true;
     }
 
     private void handleChunk(LandmarkChunkEvent chunk) {

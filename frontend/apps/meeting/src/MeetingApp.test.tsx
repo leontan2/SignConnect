@@ -7,6 +7,7 @@ import captionFixture from "../../../../contracts/sign-recognition/v1/fixtures/s
 import readyFixture from "../../../../contracts/sign-recognition/v1/fixtures/server-recognition-status-ready.valid.json";
 import unavailableFixture from "../../../../contracts/sign-recognition/v1/fixtures/server-recognition-status-unavailable.valid.json";
 import unknownFixture from "../../../../contracts/sign-recognition/v1/fixtures/server-recognition-unknown.valid.json";
+import roomNotFoundFixture from "../../../../contracts/realtime-room/v1/fixtures/server-room-error-room-not-found.valid.json";
 import MeetingApp, * as meetingModule from "./MeetingApp";
 
 const meeting = {
@@ -59,6 +60,7 @@ class FakeSocket {
   onerror: SocketHandler = null;
   onmessage: MessageHandler = null;
   readonly sent: string[] = [];
+  failNextSendForType: string | null = null;
   readonly close = vi.fn(() => {
     this.readyState = FakeSocket.CLOSED;
   });
@@ -69,6 +71,11 @@ class FakeSocket {
   }
 
   send(data: string): void {
+    const event = JSON.parse(data) as { type?: string };
+    if (event.type === this.failNextSendForType) {
+      this.failNextSendForType = null;
+      throw new Error(`Failed to send ${event.type}`);
+    }
     this.sent.push(data);
   }
 
@@ -188,6 +195,10 @@ class ManualRetryScheduler {
     this.callbacks.delete(entry[0]);
     entry[1]();
   }
+
+  get pendingCount(): number {
+    return this.callbacks.size;
+  }
 }
 
 type MeetingAppFactory = (options?: Record<string, unknown>) => React.ComponentType;
@@ -197,7 +208,9 @@ type Harness = {
   captureScheduler: ManualScheduler;
   retryScheduler: ManualRetryScheduler;
   clock: { value: number };
+  roomSequence: { value: number };
   track: FakeMediaTrack;
+  getUserMedia: ReturnType<typeof vi.fn>;
   unmount(): void;
   video: HTMLVideoElement;
 };
@@ -206,9 +219,14 @@ function makeHarness(): Harness {
   const captureScheduler = new ManualScheduler();
   const retryScheduler = new ManualRetryScheduler();
   const clock = { value: 0 };
+  const roomSequence = { value: 1 };
   const streamIds = [
     "11111111-1111-4111-8111-111111111111",
     "33333333-3333-4333-8333-333333333333"
+  ];
+  const requestIds = [
+    "77777777-7777-4777-8777-777777777777",
+    "88888888-8888-4888-8888-888888888888"
   ];
   const track = new FakeMediaTrack();
   const stream = { getTracks: () => [track] } as unknown as MediaStream;
@@ -242,6 +260,7 @@ function makeHarness(): Harness {
       }
     },
     clock: { now: () => clock.value },
+    requestIdFactory: () => requestIds.shift() ?? "99999999-9999-4999-8999-999999999999",
     trackingAnnouncementDelayMs: 20
   }) ?? MeetingApp;
   const rendered = render(<App />);
@@ -257,7 +276,9 @@ function makeHarness(): Harness {
     captureScheduler,
     retryScheduler,
     clock,
+    roomSequence,
     track,
+    getUserMedia,
     unmount: rendered.unmount,
     video
   };
@@ -307,6 +328,27 @@ async function connectSession(harness: Harness): Promise<FakeSocket> {
   return socket;
 }
 
+async function grantPendingSigner(harness: Harness, socket: FakeSocket): Promise<Record<string, unknown>> {
+  const signerRequest = await waitFor(() => {
+    const request = socket.parsedSent().filter((event) => event.type === "signer.request").at(-1);
+    expect(request).toBeDefined();
+    return request!;
+  });
+  act(() => socket.message({
+    schemaVersion: 1,
+    type: "signer.granted",
+    meetingId: meeting.id,
+    participantId: meetingSession.participant.id,
+    sequence: ++harness.roomSequence.value,
+    payload: {
+      requestId: signerRequest.requestId,
+      streamId: signerRequest.streamId
+    },
+    occurredAt: meeting.createdAt
+  }));
+  return signerRequest;
+}
+
 async function startRecognition(harness: Harness, socket: FakeSocket): Promise<FakeWorker> {
   const start = await screen.findByRole("button", { name: "Start recognition" });
   start.focus();
@@ -314,6 +356,9 @@ async function startRecognition(harness: Harness, socket: FakeSocket): Promise<F
   await waitFor(() => expect(FakeWorker.instances).toHaveLength(1));
   const worker = FakeWorker.instances[0];
   act(() => worker.emit({ type: "worker.ready" }));
+  await waitFor(() => expect(socket.parsedSent().some((event) => event.type === "signer.request")).toBe(true));
+  expect(socket.parsedSent().filter((event) => event.type === "recognition.control")).toHaveLength(0);
+  await grantPendingSigner(harness, socket);
   await waitFor(() => expect(socket.parsedSent()).toContainEqual(expect.objectContaining({
     schemaVersion: 1,
     type: "recognition.control",
@@ -375,9 +420,19 @@ describe("Meeting recognition product UX", () => {
   it("keeps camera preview separate from keyboard-operated recognition consent", async () => {
     const harness = makeHarness();
     await enableCamera(harness);
+    expect(harness.getUserMedia).toHaveBeenCalledWith({
+      video: {
+        width: { ideal: 1280 },
+        height: { ideal: 960 },
+        aspectRatio: { ideal: 4 / 3 },
+        facingMode: "user"
+      },
+      audio: false
+    });
     const socket = await connectSession(harness);
 
-    expect(socket.parsedSent().filter((event) => event.type !== "room.join")).toHaveLength(0);
+    expect(socket.parsedSent().filter((event) => event.type === "recognition.control"
+      || event.type === "landmark.chunk")).toHaveLength(0);
     expect(FakeWorker.instances).toHaveLength(0);
     expect(screen.getByRole("button", { name: "Start recognition" }))
       .toHaveAccessibleDescription(/transient hand and body landmark transmission.*raw video is not transmitted/i);
@@ -398,6 +453,320 @@ describe("Meeting recognition product UX", () => {
     })));
     expect(screen.getByRole("button", { name: "Turn camera off" })).toBeEnabled();
     expect(worker.terminate).toHaveBeenCalledOnce();
+    expect(socket.parsedSent().filter((event) => event.type === "signer.release")).toHaveLength(0);
+    const signerCommands = socket.parsedSent().filter((event) =>
+      event.type === "signer.request" || event.type === "signer.release"
+    );
+    expect(signerCommands).toHaveLength(1);
+    expect(signerCommands[0].sequence).toBe(0);
+  });
+
+  it("releases signer ownership when tracking initialization fails after a grant", async () => {
+    const harness = makeHarness();
+    await enableCamera(harness);
+    const socket = await connectSession(harness);
+
+    await harness.user.click(screen.getByRole("button", { name: "Start recognition" }));
+    const worker = FakeWorker.instances[0];
+    await waitFor(() => expect(socket.parsedSent().some((event) => event.type === "signer.request")).toBe(true));
+    await grantPendingSigner(harness, socket);
+    act(() => worker.emit({
+      type: "worker.error",
+      code: "MODEL_UNAVAILABLE",
+      message: "model fetch failed",
+      fatal: true
+    }));
+
+    await waitFor(() => expect(socket.parsedSent()).toContainEqual(expect.objectContaining({
+      type: "signer.release",
+      streamId: "11111111-1111-4111-8111-111111111111",
+      reason: "recognition_stopped"
+    })));
+    expect(screen.getByRole("button", { name: "Start recognition" })).toBeEnabled();
+    expect(socket.parsedSent().filter((event) => event.type === "recognition.control")).toHaveLength(0);
+  });
+
+  it("does not process pre-grant frames and starts transmitted chunk sequencing at zero", async () => {
+    const harness = makeHarness();
+    await enableCamera(harness);
+    const socket = await connectSession(harness);
+
+    await harness.user.click(screen.getByRole("button", { name: "Start recognition" }));
+    const worker = FakeWorker.instances[0];
+    act(() => worker.emit({ type: "worker.ready" }));
+    await waitFor(() => expect(socket.parsedSent().some((event) => event.type === "signer.request")).toBe(true));
+
+    for (let index = 0; index < 10; index += 1) {
+      act(() => {
+        harness.clock.value += 40;
+        harness.captureScheduler.step(harness.clock.value);
+      });
+    }
+    expect(worker.posted.filter((message) => message.type === "frame.process")).toHaveLength(0);
+
+    await grantPendingSigner(harness, socket);
+    await waitFor(() => expect(socket.parsedSent()).toContainEqual(expect.objectContaining({
+      type: "recognition.control",
+      action: "start"
+    })));
+    for (let index = 0; index < 5; index += 1) {
+      await emitAcceptedFrame(harness, worker);
+    }
+
+    expect(socket.parsedSent()).toContainEqual(expect.objectContaining({
+      type: "landmark.chunk",
+      sequence: 0
+    }));
+  });
+
+  it("fails closed and reconnects when recognition start cannot be sent after a grant", async () => {
+    const harness = makeHarness();
+    await enableCamera(harness);
+    const socket = await connectSession(harness);
+
+    await harness.user.click(screen.getByRole("button", { name: "Start recognition" }));
+    const worker = FakeWorker.instances[0];
+    act(() => worker.emit({ type: "worker.ready" }));
+    await waitFor(() => expect(socket.parsedSent().some((event) => event.type === "signer.request")).toBe(true));
+    socket.failNextSendForType = "recognition.control";
+    await grantPendingSigner(harness, socket);
+
+    await waitFor(() => expect(socket.close).toHaveBeenCalledWith(4001, "Essential realtime send failed"));
+    expect(screen.getByText("Reconnecting in 250 ms")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Start recognition" })).toBeDisabled();
+    expect(worker.terminate).toHaveBeenCalledOnce();
+  });
+
+  it("keeps recognition private until signer access is granted and explains denial", async () => {
+    const harness = makeHarness();
+    await enableCamera(harness);
+    const socket = await connectSession(harness);
+
+    await harness.user.click(screen.getByRole("button", { name: "Start recognition" }));
+    const worker = FakeWorker.instances[0];
+    act(() => worker.emit({ type: "worker.ready" }));
+    const signerRequest = await waitFor(() => {
+      const request = socket.parsedSent().find((event) => event.type === "signer.request");
+      expect(request).toBeDefined();
+      return request!;
+    });
+    expect(screen.getByRole("button", { name: "Cancel signer request" })).toBeEnabled();
+    expect(socket.parsedSent().filter((event) => event.type === "recognition.control")).toHaveLength(0);
+
+    act(() => socket.message({
+      schemaVersion: 1,
+      type: "signer.denied",
+      meetingId: meeting.id,
+      streamId: signerRequest.streamId,
+      sequence: 2,
+      payload: {
+        requestId: signerRequest.requestId,
+        reason: "SIGNER_UNAVAILABLE"
+      },
+      occurredAt: meeting.createdAt
+    }));
+
+    await within(screen.getByRole("contentinfo", { name: "Capture controls" }))
+      .findByText(/another participant is the active signer/i);
+    expect(screen.getByRole("button", { name: "Start recognition" })).toBeEnabled();
+    expect(worker.terminate).toHaveBeenCalledOnce();
+    expect(socket.parsedSent().filter((event) => event.type === "recognition.control")).toHaveLength(0);
+
+    await harness.user.click(screen.getByRole("button", { name: "Start recognition" }));
+    const retryWorker = FakeWorker.instances[1];
+    act(() => retryWorker.emit({ type: "worker.ready" }));
+    const requests = await waitFor(() => {
+      const sent = socket.parsedSent().filter((event) => event.type === "signer.request");
+      expect(sent).toHaveLength(2);
+      return sent;
+    });
+    expect(requests[1].sequence).toBe(1);
+    expect(requests[1].timestampMs).toBeGreaterThan(requests[0].timestampMs as number);
+  });
+
+  it("keeps public room state ordered and inserts a stable caption only once", async () => {
+    const harness = makeHarness();
+    const socket = await connectSession(harness);
+    const guestId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const captionId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const roomCaption = {
+      ...captionFixture,
+      participantId: guestId,
+      captionId,
+      sequence: 4,
+      payload: {
+        ...captionFixture.payload,
+        sourceDisplayName: "Ari"
+      }
+    };
+
+    act(() => {
+      socket.message({
+        schemaVersion: 1,
+        type: "participant.joined",
+        meetingId: meeting.id,
+        participantId: guestId,
+        sequence: 3,
+        payload: { displayName: "Ari", role: "GUEST", activeSigner: false },
+        occurredAt: meeting.createdAt
+      });
+      socket.message({
+        schemaVersion: 1,
+        type: "room.snapshot",
+        meetingId: meeting.id,
+        sequence: 2,
+        payload: { participants: [] },
+        occurredAt: meeting.createdAt
+      });
+      socket.message(roomCaption);
+      socket.message({ ...roomCaption, sequence: 5 });
+    });
+
+    expect(within(screen.getByLabelText("People in this room")).getByText("Ari")).toBeVisible();
+    expect(screen.getByText(/room updates arrived out of order/i)).toBeVisible();
+    const transcript = screen.getByRole("region", { name: "Live transcript" });
+    expect(within(transcript).getAllByRole("article")).toHaveLength(1);
+    expect(within(transcript).getByText("Synthetic active gesture")).toBeVisible();
+  });
+
+  it("accepts a forward room sequence after a snapshot without reporting false disorder", async () => {
+    const harness = makeHarness();
+    const socket = await connectSession(harness);
+
+    act(() => socket.message({
+      schemaVersion: 1,
+      type: "participant.joined",
+      meetingId: meeting.id,
+      participantId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      sequence: 3,
+      payload: { displayName: "Ari", role: "GUEST", activeSigner: false },
+      occurredAt: meeting.createdAt
+    }));
+
+    expect(within(screen.getByLabelText("People in this room")).getByText("Ari")).toBeVisible();
+    expect(screen.queryByText(/room updates arrived out of order/i)).not.toBeInTheDocument();
+  });
+
+  it("distinguishes an expired realtime ticket from a temporary reconnect", async () => {
+    const harness = makeHarness();
+    const socket = await connectSession(harness);
+
+    act(() => socket.message({
+      ...captionFixture,
+      participantId: meetingSession.participant.id,
+      captionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      sequence: 2,
+      payload: {
+        ...captionFixture.payload,
+        sourceDisplayName: "You"
+      }
+    }));
+    expect(screen.getByText("Synthetic active gesture")).toBeVisible();
+    expect(screen.getByText(/mock integration model/i)).toBeVisible();
+
+    act(() => socket.message({
+      schemaVersion: 1,
+      type: "room.error",
+      meetingId: meeting.id,
+      sequence: 3,
+      payload: { code: "TICKET_EXPIRED", message: "Ticket expired." },
+      occurredAt: meeting.createdAt
+    }));
+
+    expect(screen.getByLabelText("Meeting error")).toHaveTextContent(/realtime ticket expired.*rejoin/i);
+    expect(screen.getByText("Not connected")).toBeVisible();
+    expect(screen.queryByText("Synthetic active gesture")).not.toBeInTheDocument();
+    expect(screen.queryByText(/mock integration model/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("0 final captions")).toBeVisible();
+  });
+
+  it("surfaces a missing room after resume and returns to a clean room entry", async () => {
+    const harness = makeHarness();
+    const socket = await connectSession(harness);
+    await enableCamera(harness);
+    expect(harness.video.srcObject).not.toBeNull();
+
+    act(() => {
+      socket.message({
+        schemaVersion: 1,
+        type: "room.joined",
+        meetingId: meeting.id,
+        participantId: meetingSession.participant.id,
+        resumeToken: "short-lived-resume-token",
+        resumeExpiresAt: "2026-08-30T14:00:00Z",
+        sequence: 0,
+        payload: { displayName: "You", role: "HOST", activeSigner: false },
+        occurredAt: meeting.createdAt
+      });
+      socket.message({
+        ...captionFixture,
+        participantId: meetingSession.participant.id,
+        captionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        sequence: 2,
+        payload: {
+          ...captionFixture.payload,
+          sourceDisplayName: "You"
+        }
+      });
+    });
+    expect(screen.getByText("Synthetic active gesture")).toBeVisible();
+    expect(screen.getByText(/mock integration model/i)).toBeVisible();
+
+    act(() => socket.failClose());
+    expect(screen.getByText("Reconnecting in 250 ms")).toBeVisible();
+    act(() => harness.retryScheduler.runNext());
+    const resumedSocket = FakeSocket.instances[1];
+    act(() => resumedSocket.open());
+    expect(resumedSocket.parsedSent()).toContainEqual({
+      schemaVersion: 1,
+      type: "room.join",
+      resumeToken: "short-lived-resume-token"
+    });
+
+    act(() => resumedSocket.message(roomNotFoundFixture));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/room no longer exists/i);
+    expect(document.querySelectorAll("[aria-live]")).toHaveLength(1);
+    expect(screen.getByRole("region", { name: "Open a shared room" })).toBeVisible();
+    expect(screen.queryByText("Synthetic active gesture")).not.toBeInTheDocument();
+    expect(screen.queryByText(/mock integration model/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("0 final captions")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Turn camera on" })).toBeEnabled();
+    expect(harness.video.srcObject).toBeNull();
+    expect(harness.track.stop).toHaveBeenCalledOnce();
+    expect(harness.retryScheduler.pendingCount).toBe(0);
+
+    act(() => resumedSocket.failClose());
+    expect(harness.retryScheduler.pendingCount).toBe(0);
+  });
+
+  it("keeps caption announcements available after invite copying fails", async () => {
+    const harness = makeHarness();
+    const socket = await connectSession(harness);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn(async () => { throw new Error("Clipboard denied"); }) }
+    });
+
+    await harness.user.click(screen.getByRole("button", { name: "Copy room invitation" }));
+    expect(await screen.findByLabelText("Meeting error")).toHaveTextContent(`Copy this room code: ${meeting.joinCode}`);
+    const announcement = screen.getByRole("status", { name: "Meeting announcements" });
+    expect(document.querySelectorAll("[aria-live]")).toHaveLength(1);
+
+    act(() => socket.message({
+      ...captionFixture,
+      participantId: meetingSession.participant.id,
+      captionId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      sequence: 2,
+      payload: {
+        ...captionFixture.payload,
+        sourceDisplayName: "You"
+      }
+    }));
+
+    await waitFor(() => expect(announcement).toHaveTextContent(/caption from you: synthetic active gesture/i));
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(document.querySelectorAll("[aria-live]")).toHaveLength(1);
   });
 
   it("routes only validated final captions to the transcript and discloses mock metadata", async () => {
@@ -469,6 +838,7 @@ describe("Meeting recognition product UX", () => {
     await waitFor(() => expect(FakeWorker.instances).toHaveLength(2));
     const secondWorker = FakeWorker.instances[1];
     act(() => secondWorker.emit({ type: "worker.ready" }));
+    await grantPendingSigner(harness, secondSocket);
 
     await waitFor(() => expect(secondSocket.parsedSent()).toContainEqual(expect.objectContaining({
       type: "recognition.control",
@@ -496,9 +866,11 @@ describe("Meeting recognition product UX", () => {
     const start = screen.getByRole("button", { name: "Start recognition" });
     await harness.user.click(start);
     expect(screen.getByText(/mediapipe model is loading/i)).toBeVisible();
-    expect(socket.parsedSent().filter((event) => event.type !== "room.join")).toHaveLength(0);
+    expect(socket.parsedSent().filter((event) => event.type === "recognition.control"
+      || event.type === "landmark.chunk")).toHaveLength(0);
     const worker = FakeWorker.instances[0];
     act(() => worker.emit({ type: "worker.ready" }));
+    await grantPendingSigner(harness, socket);
     await screen.findByText(/tracking is ready/i);
 
     await emitAcceptedFrame(harness, worker, "idle");
@@ -519,12 +891,12 @@ describe("Meeting recognition product UX", () => {
     await screen.findByText(/tracking quality is low/i);
 
     act(() => socket.message(unavailableFixture));
-    expect(screen.getByRole("status", { name: "Recognition service status" })).toHaveTextContent(/timed out|temporarily unavailable/i);
+    expect(screen.getByLabelText("Recognition service status")).toHaveTextContent(/timed out|temporarily unavailable/i);
     act(() => socket.message({
       ...readyFixture,
       payload: { ...readyFixture.payload, reason: "RECOVERED", message: "Recognition is available again." }
     }));
-    expect(screen.getByRole("status", { name: "Recognition service status" })).toHaveTextContent(/available again|recovered/i);
+    expect(screen.getByLabelText("Recognition service status")).toHaveTextContent(/available again|recovered/i);
     expect(screen.queryAllByRole("article")).toHaveLength(0);
 
     act(() => worker.emit({
@@ -568,8 +940,8 @@ describe("Meeting recognition product UX", () => {
     expect(harness.track.endedListenerCount).toBe(1);
     act(() => harness.track.end());
 
-    await screen.findByRole("alert");
-    expect(screen.getByRole("alert")).toHaveTextContent(/camera.*disconnected|permission.*revoked/i);
+    await screen.findByLabelText("Meeting error");
+    expect(screen.getByLabelText("Meeting error")).toHaveTextContent(/camera.*disconnected|permission.*revoked/i);
     expect(screen.getByRole("button", { name: "Turn camera on" })).toBeEnabled();
     expect(harness.video.srcObject).toBeNull();
     expect(worker.terminate).toHaveBeenCalledOnce();
@@ -616,7 +988,7 @@ describe("Meeting recognition product UX", () => {
     act(() => firstTrack.end());
 
     expect(screen.getByRole("button", { name: "Turn camera off" })).toBeEnabled();
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Meeting error")).not.toBeInTheDocument();
     expect(secondTrack.stop).not.toHaveBeenCalled();
     rendered.unmount();
   });
@@ -641,12 +1013,13 @@ describe("Meeting recognition product UX", () => {
         message: "Stream stopped."
       }
     }));
-    expect(screen.getByRole("status", { name: "Recognition service status" }))
+    expect(screen.getByLabelText("Recognition service status"))
       .toHaveTextContent(/^Recognition stopped\.$/i);
 
     await harness.user.click(screen.getByRole("button", { name: "Start recognition" }));
     const nextWorker = FakeWorker.instances[1];
     act(() => nextWorker.emit({ type: "worker.ready" }));
+    await grantPendingSigner(harness, socket);
     await waitFor(() => expect(socket.parsedSent()).toContainEqual(expect.objectContaining({
       type: "recognition.control",
       streamId: "33333333-3333-4333-8333-333333333333",
@@ -659,7 +1032,7 @@ describe("Meeting recognition product UX", () => {
       sequence: 3,
       payload: { ...readyFixture.payload, message: "New stream ready." }
     }));
-    expect(screen.getByRole("status", { name: "Recognition service status" }))
+    expect(screen.getByLabelText("Recognition service status"))
       .toHaveTextContent("New stream ready.");
 
     act(() => {
@@ -676,7 +1049,7 @@ describe("Meeting recognition product UX", () => {
       });
       socket.message(captionFixture);
     });
-    expect(screen.getByRole("status", { name: "Recognition service status" }))
+    expect(screen.getByLabelText("Recognition service status"))
       .toHaveTextContent("New stream ready.");
     expect(screen.queryByText("Synthetic active gesture")).not.toBeInTheDocument();
   });
@@ -878,9 +1251,10 @@ describe("Meeting recognition product UX", () => {
     await emitAcceptedFrame(harness, worker, "active");
     await emitAcceptedFrame(harness, worker, "idle");
 
-    const announcement = screen.getByRole("status", { name: "Tracking announcement" });
+    const announcement = screen.getByRole("status", { name: "Meeting announcements" });
     await waitFor(() => expect(announcement).toHaveTextContent(/no hands detected/i));
-    expect(screen.getAllByRole("status", { name: "Tracking announcement" })).toHaveLength(1);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(document.querySelectorAll("[aria-live]")).toHaveLength(1);
   });
 
   it("keeps every capture status accessible without duplicating live announcements", async () => {
@@ -892,7 +1266,7 @@ describe("Meeting recognition product UX", () => {
 
     expectAccessibleStatus(/^Recognition stopped\.$/i);
     await enableCamera(harness);
-    await connectSession(harness);
+    const socket = await connectSession(harness);
     Object.defineProperty(harness.video, "readyState", {
       configurable: true,
       value: HTMLMediaElement.HAVE_NOTHING
@@ -914,6 +1288,11 @@ describe("Meeting recognition product UX", () => {
       await Promise.resolve();
     });
     expectAccessibleStatus(/tracking is ready/i);
+    await grantPendingSigner(harness, socket);
+    await waitFor(() => expect(socket.parsedSent()).toContainEqual(expect.objectContaining({
+      type: "recognition.control",
+      action: "start"
+    })));
 
     await emitAcceptedFrame(harness, firstWorker, "active");
     expectAccessibleStatus(/hands are being tracked/i);
@@ -956,7 +1335,7 @@ describe("Meeting recognition product UX", () => {
     await screen.findByText(/mediapipe model is unavailable/i);
     expectAccessibleStatus(/mediapipe model is unavailable/i);
 
-    expect(screen.getAllByRole("status", { name: "Tracking announcement" })).toHaveLength(1);
-    expect(screen.getByRole("status", { name: "Tracking announcement" })).toBeEmptyDOMElement();
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.getByRole("status", { name: "Meeting announcements" })).toHaveTextContent(/recognition model unavailable/i);
   });
 });

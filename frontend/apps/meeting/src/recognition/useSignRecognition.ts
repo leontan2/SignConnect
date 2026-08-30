@@ -22,10 +22,16 @@ export interface UseSignRecognitionOptions {
   realtimeState: RealtimeConnectionState;
   send(event: RecognitionControlEvent | LandmarkChunk): boolean;
   isUnderPressure(): boolean;
+  /** Landmark and control delivery remain blocked until the room grants this stream ownership. */
+  signerGranted?: boolean;
   captureOptions?: Omit<UseLandmarkCaptureOptions, "consumer" | "onStatus">;
   clock?: RecognitionClock;
   trackingAnnouncementDelayMs?: number;
   onStreamChange?: (streamId: string | null) => void;
+  onOwnershipReleaseNeeded?: (
+    streamId: string,
+    reason: "recognition_stopped" | "user_request"
+  ) => void;
 }
 
 export interface UseSignRecognitionResult {
@@ -37,6 +43,7 @@ export interface UseSignRecognitionResult {
   trackingAnnouncement: string;
   start(): boolean;
   stop(): void;
+  revoke(): void;
   cameraOff(): void;
 }
 
@@ -87,6 +94,7 @@ export function useSignRecognition(options: UseSignRecognitionOptions): UseSignR
       isUnderPressure: () => !enabledRef.current
         || activeStreamRef.current === null
         || serverStartedStreamRef.current !== activeStreamRef.current
+        || optionsRef.current.signerGranted === false
         || optionsRef.current.isUnderPressure(),
       send: (chunk) => {
         if (!enabledRef.current
@@ -100,6 +108,7 @@ export function useSignRecognition(options: UseSignRecognitionOptions): UseSignR
   const startCapture = capture.start;
   const stopCapture = capture.stop;
   const cameraOffCapture = capture.cameraOff;
+  const resumeCapture = capture.resumeCapture;
 
   const setActiveStream = useCallback((streamId: string | null) => {
     activeStreamRef.current = streamId;
@@ -125,7 +134,7 @@ export function useSignRecognition(options: UseSignRecognitionOptions): UseSignR
       return false;
     }
 
-    const streamId = startCapture(video);
+    const streamId = startCapture(video, true);
     if (!streamId) return false;
     lastControlTimestampRef.current = Number.NEGATIVE_INFINITY;
     setActiveStream(streamId);
@@ -146,7 +155,11 @@ export function useSignRecognition(options: UseSignRecognitionOptions): UseSignR
     return false;
   }, [beginStream]);
 
-  const stopStream = useCallback((preserveIntent: boolean, notifyServer: boolean) => {
+  const stopStream = useCallback((
+    preserveIntent: boolean,
+    notifyServer: boolean,
+    releaseReason?: "recognition_stopped" | "user_request"
+  ) => {
     const streamId = activeStreamRef.current;
     const serverStarted = streamId !== null && serverStartedStreamRef.current === streamId;
     if (!preserveIntent) {
@@ -162,12 +175,15 @@ export function useSignRecognition(options: UseSignRecognitionOptions): UseSignR
         timestampMs: timestamp(),
         action: "stop"
       });
+    } else if (streamId && !serverStarted && releaseReason) {
+      optionsRef.current.onOwnershipReleaseNeeded?.(streamId, releaseReason);
     }
     setActiveStream(null);
     stopCapture();
   }, [setActiveStream, stopCapture, timestamp]);
 
-  const stop = useCallback(() => stopStream(false, true), [stopStream]);
+  const stop = useCallback(() => stopStream(false, true, "recognition_stopped"), [stopStream]);
+  const revoke = useCallback(() => stopStream(false, false), [stopStream]);
   const cameraOff = useCallback(() => {
     const streamId = activeStreamRef.current;
     const serverStarted = streamId !== null && serverStartedStreamRef.current === streamId;
@@ -182,6 +198,8 @@ export function useSignRecognition(options: UseSignRecognitionOptions): UseSignR
         timestampMs: timestamp(),
         action: "stop"
       });
+    } else if (streamId) {
+      optionsRef.current.onOwnershipReleaseNeeded?.(streamId, "user_request");
     }
     setActiveStream(null);
     cameraOffCapture();
@@ -197,6 +215,7 @@ export function useSignRecognition(options: UseSignRecognitionOptions): UseSignR
       || !enabledRef.current
       || !streamId
       || serverStartedStreamRef.current === streamId
+      || options.signerGranted === false
       || !options.cameraEnabled
       || options.realtimeState.status !== "connected") {
       return;
@@ -212,10 +231,12 @@ export function useSignRecognition(options: UseSignRecognitionOptions): UseSignR
     };
     if (optionsRef.current.send(control)) {
       serverStartedStreamRef.current = streamId;
+      resumeCapture();
     } else {
+      optionsRef.current.onOwnershipReleaseNeeded?.(streamId, "recognition_stopped");
       stopStream(false, false);
     }
-  }, [captureStatus, options.cameraEnabled, options.realtimeState.status, stopStream, timestamp]);
+  }, [captureStatus, options.cameraEnabled, options.realtimeState.status, options.signerGranted, resumeCapture, stopStream, timestamp]);
 
   useEffect(() => {
     if (options.realtimeState.status === "reconnecting" && activeStreamRef.current) {
@@ -239,7 +260,7 @@ export function useSignRecognition(options: UseSignRecognitionOptions): UseSignR
   useEffect(() => {
     if ((captureStatus === "unavailable" || captureStatus === "error")
       && activeStreamRef.current) {
-      stopStream(false, true);
+      stopStream(false, true, "recognition_stopped");
     }
   }, [captureStatus, stopStream]);
 
@@ -282,6 +303,7 @@ export function useSignRecognition(options: UseSignRecognitionOptions): UseSignR
     trackingAnnouncement,
     start,
     stop,
+    revoke,
     cameraOff
   };
 }

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.signconnect.dev/realtime-room/v1/signer-request.schema.json",
+  "title": "SignConnect active-signer request v1",
+  "description": "Connection-private command requesting the room's single active-signer lease for one fresh recognition stream.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "type", "requestId", "streamId", "sequence", "timestampMs"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "type": { "type": "string", "const": "signer.request" },
+    "requestId": { "$ref": "#/$defs/uuid" },
+    "streamId": { "$ref": "#/$defs/uuid" },
+    "sequence": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Contiguous command sequence shared by signer.request and signer.release on this connection; the first command is zero."
+    },
+    "timestampMs": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Finite non-negative command timestamp that must be strictly greater than the preceding signer command timestamp on this connection."
+    }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    }
+  }
+}

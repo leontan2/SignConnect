@@ -62,9 +62,7 @@ export function ToastViewport({
         <section
           className={`sc-toast sc-toast--${toast.tone}`}
           key={toast.id}
-          role="status"
-          aria-live="polite"
-          aria-atomic="true"
+          aria-label={`${toast.title} notification`}
         >
           <span className="sc-toast__icon"><ToastIcon tone={toast.tone} /></span>
           <span className="sc-toast__content">

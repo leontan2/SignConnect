@@ -13,7 +13,7 @@ Recognition is opt-in and separate from camera preview. The user must explicitly
 | Raw camera frames, pixels, and browser frame objects | Browser camera/preview and MediaPipe worker only; release immediately after processing | WebSocket, HTTP, logs, analytics, traces, metrics, persistence, fixtures captured from users, or any server |
 | Landmark values and flattened frame features | Transient browser buffers, the submitting WebSocket, transient realtime stream/window state, and the inference request | Databases, files, object storage, caches, queues, replay/dead-letter systems, logs, exception text, traces, metric labels, analytics, or room broadcast |
 | 30-by-224 windows and ONNX tensors | Transient realtime request state and inference-process memory for the active call | Persistence, request/response-body logging, dumps, diagnostic output, traces, metric labels, analytics, or training-data collection |
-| Prediction and caption payloads | Inference response, the submitting WebSocket connection, and the current client transcript | Room broadcast, server-side caption persistence, late-join replay, or claims that mock output is validated SGSL |
+| Prediction and caption payloads | Inference response and recognition feedback on the submitting WebSocket; finalized captions in the authenticated current room and participant transcripts | Cross-room broadcast, server-side caption persistence, late-join replay, or claims that mock output is validated SGSL |
 | Aggregate operational measurements | Fixed-dimension counters and latency histograms, such as result codes and inference duration | Coordinates, tensors, serialized payloads, caption text, `meetingId`, `streamId`, or other unbounded/user-specific metric labels |
 
 Raw media and derived values are separate classes, but both are sensitive. Calling landmarks "derived" or "normalized" does not make them safe to retain or observe.
@@ -27,7 +27,7 @@ Raw media and derived values are separate classes, but both are sensitive. Calli
 5. The realtime service holds data in memory per connection and `streamId`, builds a 30-frame rolling window, and evaluates at five-frame strides. It permits one inference call in flight and keeps only the newest pending complete window.
 6. The realtime service sends the selected window to `POST /api/v1/predictions` over the configured internal HTTP boundary. The live request has a 500 ms timeout and stale windows are not retried.
 7. The inference service creates a transient `[1,30,224]` tensor for its singleton ONNX Runtime Java session. Its response returns `labelId`, nullable `captionText`, `confidence`, `modelVersion`, `inferenceLatencyMs`, and `mockModel`, never input values.
-8. The realtime service stabilizes the response and returns public events only to the submitting WebSocket. It does not persist or broadcast landmark state, tensors, predictions, or captions.
+8. The realtime service keeps landmark state, tensors, predictions, recognition status, and unknown-sign feedback private to the submitting connection. After stabilization, it adds bounded source metadata and broadcasts only the finalized caption to authenticated participants in the same ephemeral room. Captions are not persisted or replayed to late joiners.
 
 This is the complete authorized data path. Live recognition payloads are not an implied source of training data, test fixtures, analytics, support attachments, or product research.
 
@@ -75,11 +75,13 @@ Permitted observability uses fixed, low-cardinality dimensions, such as event ty
 
 Inference timeout/unavailability and recovery are sent to the client as typed status events. A timeout never becomes a caption. Malformed inputs are rejected safely without including their contents in an exception or response.
 
-## Same-Client and Product Boundaries
+## Connection-Local and Room-Shared Boundaries
 
-Recognition state is scoped to one WebSocket connection and one `streamId`. Stable `caption.final`, rate-limited `recognition.unknown`, and typed recognition status/control events return only to that connection. Unknown events do not enter the transcript. Room broadcast, multiple signer streams, caption persistence, and late-join replay are deferred.
+Recognition state is scoped to one WebSocket connection and one `streamId`. Rate-limited `recognition.unknown` and typed recognition status/control events return only to that connection, and unknown events do not enter the transcript. A stabilized `caption.final` is source-attributed and broadcast only to authenticated participants in the same room. Caption persistence, cross-room delivery, and late-join replay remain prohibited.
 
-The final-caption envelope is limited to `schemaVersion`, `type`, `meetingId`, `streamId`, non-negative connection-scoped `sequence`, `payload`, and `occurredAt`. Its payload is limited to `labelId`, `text`, `confidence`, `modelVersion`, `inferenceLatencyMs`, and `mockModel`; it never contains a landmark, window, tensor, raw-frame field, or inference request body.
+Realtime tickets and short-lived resume tokens are private credentials. Resume tokens are single-use: a successful resume atomically rotates the credential, stores only its SHA-256 fingerprint in ephemeral room memory, and rejects replay of the consumed token. Credentials are accepted only during room join, never included in room snapshots or public events, and must not enter logs, traces, metrics, analytics, browser storage, or invitation links. Active-signer ownership authorizes a single participant to upload landmarks; denial and release do not disclose landmark or prediction data.
+
+The room-shared final-caption envelope is limited to `schemaVersion`, `type`, `meetingId`, source `participantId`, stable `captionId`, `streamId`, non-negative room-public `sequence`, `payload`, and `occurredAt`. Its payload is limited to `labelId`, `text`, `confidence`, `modelVersion`, `inferenceLatencyMs`, `mockModel`, and the source participant's `sourceDisplayName`; it never contains a landmark, window, tensor, raw-frame field, or inference request body.
 
 The deterministic synthetic model is identified with a mock-model marker in inference and caption metadata and visibly in the product. Neither its output nor the pending vocabulary may be described as linguistically approved SGSL recognition. The development simulator is available only when both the explicit client build flag and server development profile are enabled.
 
@@ -91,6 +93,6 @@ Automated checks must:
 - prove that outbound browser network payloads contain no raw frames or pixels;
 - inject recognizable sentinel landmark/tensor values and prove those values are absent from captured frontend, realtime, inference, access, exception, trace, and metric output;
 - exercise stop, reconnect, discontinuity, timeout, latest-wins replacement, and shutdown cleanup paths;
-- prove that production/default simulator handling is disabled and that captions return only to the submitting connection.
+- prove that production/default simulator handling is disabled, connection-local recognition events stay private, finalized captions reach the current room exactly once, and neither credentials nor events cross into another room.
 
 Any future proposal to retain, broadcast, analyze, replay, or train on raw media, landmarks, tensors, predictions, or captions changes this boundary. It requires a separate reviewed decision, explicit consent and usage terms where applicable, retention/deletion controls, access controls, and an updated privacy disclosure before implementation.

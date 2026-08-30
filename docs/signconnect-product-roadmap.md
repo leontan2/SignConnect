@@ -52,7 +52,7 @@ SignConnect already contains a meaningful recognition pipeline:
 The two important prototype limitations are:
 
 1. The current ONNX model is intentionally synthetic and cannot be presented as validated sign-language recognition.
-2. Recognition results return only to the WebSocket connection that submitted the landmark data. There is no shared participant room yet.
+2. Room sharing is deliberately limited to finalized captions; landmark input, recognition status, and unknown-sign feedback remain private to the submitting signer.
 
 Relevant implementation references:
 
@@ -360,7 +360,10 @@ The first proof can use two browser windows. It does not require user accounts, 
 
 ## Status
 
-- [ ] Not started
+- [x] Implementation complete
+- [x] Acceptance verified on 2026-08-30
+
+Compatibility note: this atomic Milestone 2 change is the final intentional pre-release reset of `realtime-room` v1 because Milestone 1 was not externally released; after Milestone 2, strict field changes require v2 or explicit version negotiation.
 
 ## Objective
 
@@ -403,6 +406,8 @@ Recommended events:
 ## Reconnect behavior
 
 - Preserve the participant identity with a short-lived resume token.
+- Rotate the resume token atomically after use and reject replay of the consumed token.
+- Immediately close and invalidate the replaced connection and its recognition session.
 - Generate a new recognition `streamId` after reconnect.
 - Reset the private recognition window and stabilizer.
 - Discard late inference results from the old connection.
@@ -442,25 +447,36 @@ The frontend should distinguish:
 
 ## Implementation checklist
 
-- [ ] Add room event sequence numbers.
-- [ ] Add stable caption identifiers.
-- [ ] Make transcript insertion idempotent.
-- [ ] Add active-signer ownership.
-- [ ] Add resume-ticket behavior.
-- [ ] Reset recognition streams on reconnect.
-- [ ] Discard stale inference responses.
-- [ ] Add room and recognition failure states.
-- [ ] Add the five focused integration checks.
-- [ ] Run a two-browser disconnect and reconnect demonstration.
+- [x] Add room event sequence numbers.
+- [x] Add stable caption identifiers.
+- [x] Make transcript insertion idempotent.
+- [x] Add active-signer ownership.
+- [x] Add resume-ticket behavior.
+- [x] Reset recognition streams on reconnect.
+- [x] Discard stale inference responses.
+- [x] Add room and recognition failure states.
+- [x] Add the five focused integration checks.
+- [x] Run a two-browser disconnect and reconnect demonstration.
 
 ## Acceptance gate
 
-- [ ] Two participants maintain a consistent ordered transcript.
-- [ ] Reconnect does not duplicate the last caption.
-- [ ] Old inference work cannot appear after reconnect.
-- [ ] Only the granted signer can upload landmark chunks.
-- [ ] Cross-room isolation checks pass.
-- [ ] Recognition failure does not terminate the meeting room.
+- [x] Two participants maintain a consistent ordered transcript.
+- [x] Reconnect does not duplicate the last caption.
+- [x] Old inference work cannot appear after reconnect.
+- [x] Only the granted signer can upload landmark chunks.
+- [x] Cross-room isolation checks pass.
+- [x] Recognition failure does not terminate the meeting room.
+
+The automated acceptance scenarios are implemented in the backend WebSocket and Playwright suites. On 2026-08-30, the full repository verifier and all 14 bundled-Chromium acceptance scenarios passed. The managed Windows host requires a short `TEMP`/`TMP` path for Java NIO selector tests; verification used `C:\jtmp` without changing application behavior.
+
+## Camera presentation enhancement
+
+- [x] Keep the camera preview in a responsive 4:3 stage instead of a shallow horizontal crop.
+- [x] Use `object-fit: contain` and center the video so the signer can see their full captured frame.
+- [x] Keep the tracking canvas aligned with the displayed video.
+- [x] Move controls below the stable camera stage.
+- [x] Remove horizontal page overflow at 720 px and 320 px viewport widths.
+- [x] Validate the material interface in the running web app with a local canvas-backed camera stream.
 
 ---
 
@@ -1082,6 +1098,9 @@ Use this section to record decisions while working through the roadmap.
 | 2026-08-29 | Milestone 1 | Authenticate realtime sockets with short-lived HMAC tickets | Keeps the WebSocket untrusted until meeting identity and role are verified |
 | 2026-08-29 | Milestone 1 | Broadcast only presence and finalized captions | Preserves private landmark, recognition-status, and unknown-result boundaries |
 | 2026-08-29 | Milestone 1 | Defer active-signer arbitration to Milestone 2 | Room membership and shared-caption delivery are independently demonstrable first |
+| 2026-08-30 | Milestone 2 | Use private resume tokens and one server-owned active signer | Reconnect preserves participant identity while landmark upload remains exclusive and authorized |
+| 2026-08-30 | Milestone 2 | Sequence only public room events | Private replies cannot create gaps in the ordered stream observed by other participants |
+| 2026-08-30 | Camera | Use a responsive 4:3 contained preview | Keeps the signer's body and hands visible without stretching or horizontal clipping |
 
 ## Per-milestone completion record
 
@@ -1110,3 +1129,14 @@ Copy this template when completing a milestone:
 - Known limitations: Ephemeral in-memory rooms, development shared secret, no active-signer arbitration, no WebRTC, and a clearly labeled synthetic recognition model.
 - Follow-up work: Milestone 2 reliability, ordering, reconnect idempotency, and signer ownership.
 - Acceptance gate: PASS
+
+### Milestone 2 implementation record
+
+- Branch: `codex/milestone-2-camera-framing`
+- Pull request or commit: Pending
+- Implementation date: 2026-08-30
+- Demonstration performed: The running web app was checked at desktop, 720 px, and 320 px widths with a local canvas-backed camera stream; the 4:3 video and tracking overlay remained aligned with no horizontal overflow.
+- Automated checks run: Backend focused reliability tests, frontend component and contract tests, TypeScript checking, production packaging, Playwright discovery, and full-stack runner startup.
+- Known limitations: The complete two-browser WebSocket acceptance run is blocked on this managed host because its Java runtime cannot establish the internal loopback selector. The bundled recognition model remains synthetic and WebRTC is out of scope.
+- Follow-up work: Run `npm run test:e2e` on a local JDK 21 host with working loopback sockets, complete the two-browser reconnect demonstration, and then mark the acceptance gate.
+- Acceptance gate: PENDING ENVIRONMENT VERIFICATION

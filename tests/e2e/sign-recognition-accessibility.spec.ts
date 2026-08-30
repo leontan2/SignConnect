@@ -3,7 +3,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 
 async function openWorkspace(page: Page): Promise<void> {
   await page.goto("/");
-  await expect(page.getByRole("heading", { level: 1, name: "Accessible team sync" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Recognition studio" })).toBeVisible();
   await expect(page.getByRole("note", { name: "Automated fixture capture notice" })).toBeVisible();
 }
 
@@ -55,15 +55,16 @@ test.describe("sign-recognition WCAG 2.2 AA validation", () => {
     await expect(start).toBeDisabled();
     await expect(start).toHaveAccessibleDescription(/turn on the camera and start a session/i);
     await expect(page.getByRole("region", { name: "Live transcript" })).toBeVisible();
-    await expect(page.getByRole("status", { name: "Tracking announcement" })).toHaveAttribute("aria-live", "polite");
-    await expect(page.getByRole("status", { name: "Recognition service status" })).toHaveAttribute("aria-live", "polite");
-    await expect(page.locator(".caption-list")).toHaveAttribute("aria-live", "polite");
+    const announcement = page.getByRole("status", { name: "Meeting announcements" });
+    await expect(announcement).toHaveAttribute("aria-live", "polite");
+    await expect(announcement).toHaveAttribute("aria-atomic", "true");
+    await expect(page.locator("[aria-live]")).toHaveCount(1);
 
     const camera = page.getByRole("button", { name: "Turn camera on" });
     await tabTo(page, camera);
     const focusStyle = await camera.evaluate((element) => {
       const style = getComputedStyle(element);
-      const adjacent = getComputedStyle(element.closest(".video-stage")!);
+      const adjacent = getComputedStyle(element.closest(".capture-console")!);
       return {
         adjacentBackground: adjacent.backgroundColor,
         outline: style.outlineColor,
@@ -93,7 +94,12 @@ test.describe("sign-recognition WCAG 2.2 AA validation", () => {
 
     await page.keyboard.press("Enter");
     await expect(page.getByRole("button", { name: "Stop recognition" })).toBeVisible();
-    await expect(page.getByText("Synthetic active gesture")).toBeVisible({ timeout: 15_000 });
+    await expect(
+      page
+        .getByRole("region", { name: "Live transcript" })
+        .locator("article.caption-entry")
+        .getByText("Synthetic active gesture", { exact: true })
+    ).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole("note").filter({ hasText: "Mock integration model" })).toContainText(
       /not validated SGSL recognition/i
     );
@@ -124,7 +130,7 @@ test.describe("sign-recognition WCAG 2.2 AA validation", () => {
     expect(recognitionBox!.x).toBeGreaterThanOrEqual(0);
     expect(recognitionBox!.x + recognitionBox!.width).toBeLessThanOrEqual(320);
 
-    const transitionDuration = await page.locator(".video-stage video").evaluate((element) =>
+    const transitionDuration = await page.locator(".stage-viewport video").evaluate((element) =>
       Number.parseFloat(getComputedStyle(element).transitionDuration) * 1000
     );
     expect(transitionDuration).toBeLessThanOrEqual(0.1);
@@ -134,7 +140,12 @@ test.describe("sign-recognition WCAG 2.2 AA validation", () => {
     await openWorkspace(page);
     await enableCameraAndSession(page);
     await page.getByRole("button", { name: "Start recognition" }).click();
-    await expect(page.getByText("Synthetic active gesture")).toBeVisible({ timeout: 15_000 });
+    await expect(
+      page
+        .getByRole("region", { name: "Live transcript" })
+        .locator("article.caption-entry")
+        .getByText("Synthetic active gesture", { exact: true })
+    ).toBeVisible({ timeout: 15_000 });
 
     const results = await new AxeBuilder({ page })
       .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"])

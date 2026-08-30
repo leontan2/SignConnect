@@ -15,6 +15,8 @@ public final class RealtimeTicketCodec {
 
     private static final String ALGORITHM = "HmacSHA256";
     private static final String VERSION = "1";
+    private static final String RESUME_VERSION = "3";
+    private static final String RESUME_PURPOSE = "RESUME";
     private static final Base64.Encoder ENCODER = Base64.getUrlEncoder().withoutPadding();
     private static final Base64.Decoder DECODER = Base64.getUrlDecoder();
 
@@ -43,7 +45,31 @@ public final class RealtimeTicketCodec {
         return ENCODER.encodeToString(payloadBytes) + "." + ENCODER.encodeToString(sign(payloadBytes));
     }
 
+    public String issueResume(Claims claims) {
+        validateClaims(claims);
+        String displayName = ENCODER.encodeToString(claims.displayName().getBytes(StandardCharsets.UTF_8));
+        String payload = String.join("|",
+                RESUME_VERSION,
+                RESUME_PURPOSE,
+                UUID.randomUUID().toString(),
+                claims.meetingId().toString(),
+                claims.participantId().toString(),
+                claims.role(),
+                Long.toString(claims.expiresAt().getEpochSecond()),
+                displayName);
+        byte[] payloadBytes = payload.getBytes(StandardCharsets.UTF_8);
+        return ENCODER.encodeToString(payloadBytes) + "." + ENCODER.encodeToString(sign(payloadBytes));
+    }
+
     public Claims verify(String token) {
+        return verify(token, false);
+    }
+
+    public Claims verifyResume(String token) {
+        return verify(token, true);
+    }
+
+    private Claims verify(String token, boolean resume) {
         try {
             if (token == null || token.isBlank() || token.length() > 2048) {
                 throw invalid();
@@ -59,18 +85,11 @@ public final class RealtimeTicketCodec {
             }
 
             String[] claimsParts = new String(payloadBytes, StandardCharsets.UTF_8).split("\\|", -1);
-            if (claimsParts.length != 6 || !VERSION.equals(claimsParts[0])) {
-                throw invalid();
-            }
-            Claims claims = new Claims(
-                    UUID.fromString(claimsParts[1]),
-                    UUID.fromString(claimsParts[2]),
-                    new String(DECODER.decode(claimsParts[5]), StandardCharsets.UTF_8),
-                    claimsParts[3],
-                    Instant.ofEpochSecond(Long.parseLong(claimsParts[4])));
+            Claims claims = resume ? decodeResumeClaims(claimsParts) : decodeRealtimeClaims(claimsParts);
             validateClaims(claims);
             if (!claims.expiresAt().isAfter(clock.instant())) {
-                throw new InvalidTicketException("Realtime ticket has expired");
+                throw new InvalidTicketException(
+                        "Realtime ticket has expired", InvalidTicketException.Reason.EXPIRED);
             }
             return claims;
         } catch (InvalidTicketException exception) {
@@ -78,6 +97,33 @@ public final class RealtimeTicketCodec {
         } catch (IllegalArgumentException exception) {
             throw invalid();
         }
+    }
+
+    private static Claims decodeRealtimeClaims(String[] parts) {
+        if (parts.length != 6 || !VERSION.equals(parts[0])) {
+            throw invalid();
+        }
+        return new Claims(
+                UUID.fromString(parts[1]),
+                UUID.fromString(parts[2]),
+                new String(DECODER.decode(parts[5]), StandardCharsets.UTF_8),
+                parts[3],
+                Instant.ofEpochSecond(Long.parseLong(parts[4])));
+    }
+
+    private static Claims decodeResumeClaims(String[] parts) {
+        if (parts.length != 8
+                || !RESUME_VERSION.equals(parts[0])
+                || !RESUME_PURPOSE.equals(parts[1])) {
+            throw invalid();
+        }
+        UUID.fromString(parts[2]);
+        return new Claims(
+                UUID.fromString(parts[3]),
+                UUID.fromString(parts[4]),
+                new String(DECODER.decode(parts[7]), StandardCharsets.UTF_8),
+                parts[5],
+                Instant.ofEpochSecond(Long.parseLong(parts[6])));
     }
 
     private byte[] sign(byte[] payload) {
@@ -106,7 +152,8 @@ public final class RealtimeTicketCodec {
     }
 
     private static InvalidTicketException invalid() {
-        return new InvalidTicketException("Realtime ticket is invalid");
+        return new InvalidTicketException(
+                "Realtime ticket is invalid", InvalidTicketException.Reason.INVALID);
     }
 
     public record Claims(
@@ -118,8 +165,20 @@ public final class RealtimeTicketCodec {
     }
 
     public static final class InvalidTicketException extends IllegalArgumentException {
-        public InvalidTicketException(String message) {
+        private final Reason reason;
+
+        public InvalidTicketException(String message, Reason reason) {
             super(message);
+            this.reason = reason;
+        }
+
+        public Reason reason() {
+            return reason;
+        }
+
+        public enum Reason {
+            INVALID,
+            EXPIRED
         }
     }
 }

@@ -62,6 +62,21 @@ class RealtimeRoomWebSocketTest {
 
             host.send("""
                     {
+                      "schemaVersion": 1,
+                      "type": "signer.request",
+                      "requestId": "10101010-1010-4010-8010-101010101010",
+                      "streamId": "00000000-0000-4000-8000-000000000000",
+                      "sequence": 0,
+                      "timestampMs": 0
+                    }
+                    """);
+            host.awaitEvent(type("signer.granted"), WAIT);
+            host.awaitEvent(type("participant.updated"), WAIT);
+            guest.awaitEvent(type("signer.granted"), WAIT);
+            guest.awaitEvent(type("participant.updated"), WAIT);
+
+            host.send("""
+                    {
                       "type": "recognition.result",
                       "sequence": 7,
                       "payload": {"text": "Hello everyone", "confidence": 0.93}
@@ -77,6 +92,36 @@ class RealtimeRoomWebSocketTest {
             assertThat(hostCaption.path("payload").path("sourceDisplayName").asText()).isEqualTo("Leon");
             assertThat(hostCaption.path("payload").path("text").asText()).isEqualTo("Hello everyone");
             assertThat(otherRoom.pollEvent(Duration.ofMillis(200))).isNull();
+
+            host.send("""
+                    {
+                      "schemaVersion": 1,
+                      "type": "signer.release",
+                      "streamId": "00000000-0000-4000-8000-000000000000",
+                      "sequence": 1,
+                      "timestampMs": 40,
+                      "reason": "user_request"
+                    }
+                    """);
+            host.awaitEvent(type("signer.released"), WAIT);
+            host.awaitEvent(type("participant.updated"), WAIT);
+            guest.awaitEvent(type("signer.released"), WAIT);
+            guest.awaitEvent(type("participant.updated"), WAIT);
+
+            host.send("""
+                    {
+                      "schemaVersion": 1,
+                      "type": "signer.request",
+                      "requestId": "20202020-2020-4020-8020-202020202020",
+                      "streamId": "11111111-1111-4111-8111-111111111111",
+                      "sequence": 2,
+                      "timestampMs": 80
+                    }
+                    """);
+            host.awaitEvent(type("signer.granted"), WAIT);
+            host.awaitEvent(type("participant.updated"), WAIT);
+            guest.awaitEvent(type("signer.granted"), WAIT);
+            guest.awaitEvent(type("participant.updated"), WAIT);
 
             host.send(RealtimeTestFixtures.fixture("recognition-control-start.valid.json"));
             host.awaitEvent(event -> "STARTED".equals(event.path("payload").path("reason").asText()), WAIT);

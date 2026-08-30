@@ -34,14 +34,33 @@ import landmarkChunkSchema from "../../../../../contracts/sign-recognition/v1/la
 import recognitionControlSchema from "../../../../../contracts/sign-recognition/v1/recognition-control.schema.json";
 import serverEventSchema from "../../../../../contracts/sign-recognition/v1/server-event.schema.json";
 import roomJoin from "../../../../../contracts/realtime-room/v1/fixtures/room-join.valid.json";
+import roomJoinResume from "../../../../../contracts/realtime-room/v1/fixtures/room-join-resume.valid.json";
+import roomJoinBothTokens from "../../../../../contracts/realtime-room/v1/fixtures/room-join-both-tokens.invalid.json";
+import roomJoinWhitespaceToken from "../../../../../contracts/realtime-room/v1/fixtures/room-join-whitespace-token.invalid.json";
+import clientSignerRequest from "../../../../../contracts/realtime-room/v1/fixtures/client-signer-request.valid.json";
+import clientSignerRelease from "../../../../../contracts/realtime-room/v1/fixtures/client-signer-release.valid.json";
 import roomCaptionFinal from "../../../../../contracts/realtime-room/v1/fixtures/server-caption-final.valid.json";
 import participantJoined from "../../../../../contracts/realtime-room/v1/fixtures/server-participant-joined.valid.json";
+import participantUpdated from "../../../../../contracts/realtime-room/v1/fixtures/server-participant-updated.valid.json";
+import participantUpdatedZeroSequence from "../../../../../contracts/realtime-room/v1/fixtures/server-participant-updated-zero-sequence.invalid.json";
 import roomError from "../../../../../contracts/realtime-room/v1/fixtures/server-room-error.valid.json";
+import invalidSignerRoomError from "../../../../../contracts/realtime-room/v1/fixtures/server-room-error-invalid-signer-event.valid.json";
+import participantConnectedRoomError from "../../../../../contracts/realtime-room/v1/fixtures/server-room-error-participant-connected.valid.json";
+import realtimeTicketExpiredRoomError from "../../../../../contracts/realtime-room/v1/fixtures/server-room-error-realtime-ticket-expired.valid.json";
+import roomNotFoundRoomError from "../../../../../contracts/realtime-room/v1/fixtures/server-room-error-room-not-found.valid.json";
+import ticketExpiredRoomError from "../../../../../contracts/realtime-room/v1/fixtures/server-room-error-ticket-expired.valid.json";
 import roomJoined from "../../../../../contracts/realtime-room/v1/fixtures/server-room-joined.valid.json";
+import roomSnapshotActiveSigner from "../../../../../contracts/realtime-room/v1/fixtures/server-room-snapshot-active-signer.valid.json";
 import roomSnapshotExtraLandmarks from "../../../../../contracts/realtime-room/v1/fixtures/server-room-snapshot-extra-landmarks.invalid.json";
 import roomSnapshot from "../../../../../contracts/realtime-room/v1/fixtures/server-room-snapshot.valid.json";
+import signerDenied from "../../../../../contracts/realtime-room/v1/fixtures/server-signer-denied.valid.json";
+import signerGranted from "../../../../../contracts/realtime-room/v1/fixtures/server-signer-granted.valid.json";
+import signerGrantedExtraLandmarks from "../../../../../contracts/realtime-room/v1/fixtures/server-signer-granted-extra-landmarks.invalid.json";
+import signerReleased from "../../../../../contracts/realtime-room/v1/fixtures/server-signer-released.valid.json";
 import roomJoinSchema from "../../../../../contracts/realtime-room/v1/room-join.schema.json";
 import roomServerEventSchema from "../../../../../contracts/realtime-room/v1/server-event.schema.json";
+import signerRequestSchema from "../../../../../contracts/realtime-room/v1/signer-request.schema.json";
+import signerReleaseSchema from "../../../../../contracts/realtime-room/v1/signer-release.schema.json";
 
 type FixtureCase = {
   name: string;
@@ -191,10 +210,34 @@ describe("shared realtime-room v1 contracts", () => {
   it("validates the authenticated room join command", () => {
     const validate = contractValidator(roomJoinSchema as AnySchema);
     expectFixture(validate, { name: "room-join.valid.json", value: roomJoin, valid: true });
+    expectFixture(validate, { name: "room-join-resume.valid.json", value: roomJoinResume, valid: true });
+    expectFixture(validate, {
+      name: "room-join-both-tokens.invalid.json",
+      value: roomJoinBothTokens,
+      valid: false
+    });
+    expectFixture(validate, {
+      name: "room-join-whitespace-token.invalid.json",
+      value: roomJoinWhitespaceToken,
+      valid: false
+    });
     expectFixture(validate, {
       name: "room-join.extra-field.invalid",
       value: { ...roomJoin, meetingId: serverCaptionFinal.meetingId },
       valid: false
+    });
+  });
+
+  it("validates active-signer client commands", () => {
+    expectFixture(contractValidator(signerRequestSchema as AnySchema), {
+      name: "client-signer-request.valid.json",
+      value: clientSignerRequest,
+      valid: true
+    });
+    expectFixture(contractValidator(signerReleaseSchema as AnySchema), {
+      name: "client-signer-release.valid.json",
+      value: clientSignerRelease,
+      valid: true
     });
   });
 
@@ -203,12 +246,36 @@ describe("shared realtime-room v1 contracts", () => {
     const fixtures: FixtureCase[] = [
       { name: "server-room-joined.valid.json", value: roomJoined, valid: true },
       { name: "server-room-snapshot.valid.json", value: roomSnapshot, valid: true },
+      { name: "server-room-snapshot-active-signer.valid.json", value: roomSnapshotActiveSigner, valid: true },
       { name: "server-participant-joined.valid.json", value: participantJoined, valid: true },
+      { name: "server-participant-updated.valid.json", value: participantUpdated, valid: true },
+      {
+        name: "server-participant-updated-zero-sequence.invalid.json",
+        value: participantUpdatedZeroSequence,
+        valid: false
+      },
+      { name: "server-signer-granted.valid.json", value: signerGranted, valid: true },
+      { name: "server-signer-denied.valid.json", value: signerDenied, valid: true },
+      { name: "server-signer-released.valid.json", value: signerReleased, valid: true },
       { name: "server-caption-final.valid.json", value: roomCaptionFinal, valid: true },
       { name: "server-room-error.valid.json", value: roomError, valid: true },
+      { name: "server-room-error-invalid-signer-event.valid.json", value: invalidSignerRoomError, valid: true },
+      { name: "server-room-error-participant-connected.valid.json", value: participantConnectedRoomError, valid: true },
+      {
+        name: "server-room-error-realtime-ticket-expired.valid.json",
+        value: realtimeTicketExpiredRoomError,
+        valid: true
+      },
+      { name: "server-room-error-room-not-found.valid.json", value: roomNotFoundRoomError, valid: true },
+      { name: "server-room-error-ticket-expired.valid.json", value: ticketExpiredRoomError, valid: true },
       {
         name: "server-room-snapshot-extra-landmarks.invalid.json",
         value: roomSnapshotExtraLandmarks,
+        valid: false
+      },
+      {
+        name: "server-signer-granted-extra-landmarks.invalid.json",
+        value: signerGrantedExtraLandmarks,
         valid: false
       }
     ];

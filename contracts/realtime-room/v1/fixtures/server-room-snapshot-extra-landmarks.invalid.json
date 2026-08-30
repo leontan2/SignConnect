@@ -9,6 +9,7 @@
         "participantId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         "displayName": "Leon",
         "role": "HOST",
+        "activeSigner": false,
         "landmarks": [0.1, 0.2]
       }
     ]

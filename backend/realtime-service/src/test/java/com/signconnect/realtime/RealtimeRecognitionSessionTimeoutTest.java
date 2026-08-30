@@ -147,6 +147,23 @@ class RealtimeRecognitionSessionTimeoutTest {
         harness.close();
     }
 
+    @Test
+    void reportsAStopTransitionOnlyForAnAcceptedInOrderControl() throws Exception {
+        Harness harness = new Harness(Mono.never());
+        harness.start();
+
+        JsonNode outOfOrder = harness.objectMapper.readTree(
+                RealtimeTestFixtures.fixture("recognition-control-stop.valid.json"));
+        ((com.fasterxml.jackson.databind.node.ObjectNode) outOfOrder).put("sequence", 2);
+
+        assertThat(harness.accept(outOfOrder.toString())).isFalse();
+        assertThat(harness.accept(RealtimeTestFixtures.fixture(
+                "recognition-control-extra-video.invalid.json"))).isFalse();
+        assertThat(harness.accept(RealtimeTestFixtures.fixture(
+                "recognition-control-stop.valid.json"))).isTrue();
+        harness.close();
+    }
+
     private static InferenceClient.Prediction prediction(
             RollingLandmarkWindow.Window window,
             String labelId,
@@ -204,7 +221,11 @@ class RealtimeRecognitionSessionTimeoutTest {
         }
 
         private void send(String message) {
-            session.acceptText(message, message.getBytes(StandardCharsets.UTF_8).length);
+            accept(message);
+        }
+
+        private boolean accept(String message) {
+            return session.acceptText(message, message.getBytes(StandardCharsets.UTF_8).length);
         }
 
         private List<JsonNode> eventsOfType(String type) {

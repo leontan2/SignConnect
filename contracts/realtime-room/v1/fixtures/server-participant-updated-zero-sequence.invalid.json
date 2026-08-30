@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "type": "participant.updated",
+  "meetingId": "22222222-2222-4222-8222-222222222222",
+  "participantId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "sequence": 0,
+  "payload": {
+    "displayName": "Leon",
+    "role": "HOST",
+    "activeSigner": true
+  },
+  "occurredAt": "2026-08-29T12:00:00Z"
+}

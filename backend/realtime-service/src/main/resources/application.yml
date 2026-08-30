@@ -17,6 +17,7 @@ signconnect:
     ticket-secret: ${SIGNCONNECT_REALTIME_TICKET_SECRET:signconnect-local-realtime-ticket-secret-2026}
     max-participants: ${SIGNCONNECT_ROOM_MAX_PARTICIPANTS:8}
     require-join: ${SIGNCONNECT_ROOM_REQUIRE_JOIN:true}
+    resume-ticket-ttl: ${SIGNCONNECT_ROOM_RESUME_TICKET_TTL:5m}
   recognition:
     inference-url: ${SIGN_INFERENCE_URL:http://localhost:8083}
     inference-timeout: ${SIGN_INFERENCE_TIMEOUT:500ms}

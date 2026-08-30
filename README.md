@@ -4,7 +4,7 @@ SignConnect is a mock-first accessibility workspace for sending a signer’s cam
 
 > The bundled ONNX model and replay capture are synthetic integration assets. They demonstrate the transport, windowing, inference, and caption experience; they do **not** recognize real Singapore Sign Language (SGSL).
 
-## Implemented milestone
+## Implemented product slice
 
 | Component | Technology | Port | Responsibility |
 | --- | --- | ---: | --- |
@@ -27,7 +27,9 @@ The default path is:
 
 Only landmark coordinates and bounded protocol metadata cross the browser boundary. Raw camera images are not uploaded or retained. Camera permission, meeting start, and recognition start are separate user actions; failure and reconnect states are exposed as text as well as colour.
 
-Creating a room returns a six-character share code and a short-lived signed realtime ticket. Guests join with the share code and a display name. Room membership is currently in memory, supports up to eight connections by default, and is reset when the services restart. Only finalized captions and participant presence are broadcast; recognition status, unknown-sign feedback, and landmark input remain connection-local.
+Creating a room returns a six-character share code and a short-lived signed realtime ticket. Guests join with the share code and a display name. Room membership is currently in memory, supports up to eight connections by default, and is reset when the services restart. Public room events have contiguous server sequence numbers, finalized captions are idempotent, a short-lived private resume token preserves participant identity across reconnects, and the server grants recognition upload to one active signer at a time. Recognition status, unknown-sign feedback, landmark input, and resume tokens remain connection-local.
+
+The camera workspace uses a responsive 4:3 stage with contained, centered video and an aligned tracking overlay. This avoids the shallow horizontal crop while keeping controls in a stable dock below the preview.
 
 ## Run locally
 

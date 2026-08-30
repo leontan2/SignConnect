@@ -21,7 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {
-                "signconnect.recognition.inference-timeout=500ms",
+                "signconnect.recognition.inference-timeout=5s",
                 "signconnect.recognition.stable-active-evaluations=1",
                 "signconnect.recognition.idle-evaluations=1",
                 "signconnect.recognition.max-message-size=32KB",
@@ -59,8 +59,10 @@ class RealtimeBackpressureTest {
 
     @Test
     void keepsOneCallInFlightAndReplacesPendingWorkWithNewestCompleteWindow() throws Exception {
+        TestInferenceBoundary.ResponsePlan firstResponse =
+                TestInferenceBoundary.ResponsePlan.pausedActive();
         INFERENCE.enqueue(
-                TestInferenceBoundary.ResponsePlan.delayedActive(Duration.ofMillis(250)),
+                firstResponse,
                 TestInferenceBoundary.ResponsePlan.active());
         List<String> chunks = RealtimeTestFixtures.generatedChunks(objectMapper, 0, 13, true);
 
@@ -76,6 +78,15 @@ class RealtimeBackpressureTest {
             for (int index = 6; index < chunks.size(); index++) {
                 socket.send(chunks.get(index));
             }
+            socket.send("""
+                    {"schemaVersion":1,"type":"test.barrier"}
+                    """);
+            assertThat(socket.awaitEvent(reason("INVALID_EVENT"), WAIT)).isNotNull();
+            assertThat(INFERENCE.requestCount())
+                    .as("the first response is paused while newer windows replace pending work")
+                    .isEqualTo(1);
+
+            firstResponse.release();
             INFERENCE.awaitCompletedAtLeast(2, WAIT);
 
             assertThat(INFERENCE.maximumInFlight()).isEqualTo(1);
@@ -84,6 +95,8 @@ class RealtimeBackpressureTest {
             assertThat(INFERENCE.requestSummaries().get(1).windowSequence()).isEqualTo(7);
             assertThat(INFERENCE.requestSummaries().get(1).firstFrameSequence()).isEqualTo(35);
             assertThat(INFERENCE.requestSummaries().get(1).lastFrameSequence()).isEqualTo(64);
+        } finally {
+            firstResponse.release();
         }
     }
 

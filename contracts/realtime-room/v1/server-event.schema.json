@@ -1,11 +1,16 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.signconnect.dev/realtime-room/v1/server-event.schema.json",
-  "title": "SignConnect public room event v1",
+  "title": "SignConnect room server event v1",
+  "description": "Ordered public broadcasts consume a room-wide sequence. Join handshakes, snapshots, denials, and errors carry a baseline or private sequence and do not consume public room order.",
   "oneOf": [
     { "$ref": "#/$defs/roomJoined" },
     { "$ref": "#/$defs/roomSnapshot" },
     { "$ref": "#/$defs/participantPresence" },
+    { "$ref": "#/$defs/participantUpdated" },
+    { "$ref": "#/$defs/signerGranted" },
+    { "$ref": "#/$defs/signerDenied" },
+    { "$ref": "#/$defs/signerReleased" },
     { "$ref": "#/$defs/captionFinal" },
     { "$ref": "#/$defs/roomError" }
   ],
@@ -16,7 +21,21 @@
       "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
     },
     "schemaVersion": { "type": "integer", "const": 1 },
-    "sequence": { "type": "integer", "minimum": 0 },
+    "publicSequence": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Strictly increasing sequence shared by ordered public room broadcasts. Every participant receives the same public event with the same sequence."
+    },
+    "baselineSequence": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Latest public room sequence at creation time. This private handshake, snapshot, or denial does not itself consume public room order; zero means no earlier public event or a pre-join denial."
+    },
+    "privateSequence": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Connection-private diagnostic sequence. It must not advance the client's public-room sequence cursor."
+    },
     "occurredAt": { "type": "string", "format": "date-time" },
     "participantPayload": {
       "type": "object",
@@ -24,7 +43,8 @@
       "required": ["displayName", "role"],
       "properties": {
         "displayName": { "type": "string", "minLength": 1, "maxLength": 50 },
-        "role": { "type": "string", "enum": ["HOST", "GUEST"] }
+        "role": { "type": "string", "enum": ["HOST", "GUEST"] },
+        "activeSigner": { "type": "boolean" }
       }
     },
     "roomJoined": {
@@ -36,9 +56,15 @@
         "type": { "type": "string", "const": "room.joined" },
         "meetingId": { "$ref": "#/$defs/uuid" },
         "participantId": { "$ref": "#/$defs/uuid" },
-        "sequence": { "$ref": "#/$defs/sequence" },
+        "resumeToken": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "resumeExpiresAt": { "$ref": "#/$defs/occurredAt" },
+        "sequence": { "$ref": "#/$defs/baselineSequence" },
         "payload": { "$ref": "#/$defs/participantPayload" },
         "occurredAt": { "$ref": "#/$defs/occurredAt" }
+      },
+      "dependentRequired": {
+        "resumeToken": ["resumeExpiresAt"],
+        "resumeExpiresAt": ["resumeToken"]
       }
     },
     "snapshotParticipant": {
@@ -48,7 +74,8 @@
       "properties": {
         "participantId": { "$ref": "#/$defs/uuid" },
         "displayName": { "type": "string", "minLength": 1, "maxLength": 50 },
-        "role": { "type": "string", "enum": ["HOST", "GUEST"] }
+        "role": { "type": "string", "enum": ["HOST", "GUEST"] },
+        "activeSigner": { "type": "boolean" }
       }
     },
     "roomSnapshot": {
@@ -59,7 +86,7 @@
         "schemaVersion": { "$ref": "#/$defs/schemaVersion" },
         "type": { "type": "string", "const": "room.snapshot" },
         "meetingId": { "$ref": "#/$defs/uuid" },
-        "sequence": { "$ref": "#/$defs/sequence" },
+        "sequence": { "$ref": "#/$defs/baselineSequence" },
         "payload": {
           "type": "object",
           "additionalProperties": false,
@@ -84,8 +111,98 @@
         "type": { "type": "string", "enum": ["participant.joined", "participant.left"] },
         "meetingId": { "$ref": "#/$defs/uuid" },
         "participantId": { "$ref": "#/$defs/uuid" },
-        "sequence": { "$ref": "#/$defs/sequence" },
+        "sequence": { "$ref": "#/$defs/publicSequence" },
         "payload": { "$ref": "#/$defs/participantPayload" },
+        "occurredAt": { "$ref": "#/$defs/occurredAt" }
+      }
+    },
+    "participantUpdated": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "type", "meetingId", "participantId", "sequence", "payload", "occurredAt"],
+      "properties": {
+        "schemaVersion": { "$ref": "#/$defs/schemaVersion" },
+        "type": { "type": "string", "const": "participant.updated" },
+        "meetingId": { "$ref": "#/$defs/uuid" },
+        "participantId": { "$ref": "#/$defs/uuid" },
+        "sequence": { "$ref": "#/$defs/publicSequence" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["displayName", "role", "activeSigner"],
+          "properties": {
+            "displayName": { "type": "string", "minLength": 1, "maxLength": 50 },
+            "role": { "type": "string", "enum": ["HOST", "GUEST"] },
+            "activeSigner": { "type": "boolean" }
+          }
+        },
+        "occurredAt": { "$ref": "#/$defs/occurredAt" }
+      }
+    },
+    "signerGranted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "type", "meetingId", "participantId", "sequence", "payload", "occurredAt"],
+      "properties": {
+        "schemaVersion": { "$ref": "#/$defs/schemaVersion" },
+        "type": { "type": "string", "const": "signer.granted" },
+        "meetingId": { "$ref": "#/$defs/uuid" },
+        "participantId": { "$ref": "#/$defs/uuid" },
+        "sequence": { "$ref": "#/$defs/publicSequence" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["requestId", "streamId"],
+          "properties": {
+            "requestId": { "$ref": "#/$defs/uuid" },
+            "streamId": { "$ref": "#/$defs/uuid" }
+          }
+        },
+        "occurredAt": { "$ref": "#/$defs/occurredAt" }
+      }
+    },
+    "signerDenied": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "type", "meetingId", "streamId", "sequence", "payload", "occurredAt"],
+      "properties": {
+        "schemaVersion": { "$ref": "#/$defs/schemaVersion" },
+        "type": { "type": "string", "const": "signer.denied" },
+        "meetingId": { "$ref": "#/$defs/uuid" },
+        "streamId": { "$ref": "#/$defs/uuid" },
+        "sequence": { "$ref": "#/$defs/baselineSequence" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["requestId", "reason"],
+          "properties": {
+            "requestId": { "$ref": "#/$defs/uuid" },
+            "reason": { "type": "string", "enum": ["SIGNER_UNAVAILABLE", "ALREADY_ACTIVE", "NOT_JOINED"] }
+          }
+        },
+        "occurredAt": { "$ref": "#/$defs/occurredAt" }
+      }
+    },
+    "signerReleased": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "type", "meetingId", "participantId", "sequence", "payload", "occurredAt"],
+      "properties": {
+        "schemaVersion": { "$ref": "#/$defs/schemaVersion" },
+        "type": { "type": "string", "const": "signer.released" },
+        "meetingId": { "$ref": "#/$defs/uuid" },
+        "participantId": { "$ref": "#/$defs/uuid" },
+        "sequence": { "$ref": "#/$defs/publicSequence" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["requestId", "streamId", "reason"],
+          "properties": {
+            "requestId": { "$ref": "#/$defs/uuid" },
+            "streamId": { "$ref": "#/$defs/uuid" },
+            "reason": { "type": "string", "enum": ["recognition_stopped", "user_request", "disconnected"] }
+          }
+        },
         "occurredAt": { "$ref": "#/$defs/occurredAt" }
       }
     },
@@ -100,7 +217,7 @@
         "participantId": { "$ref": "#/$defs/uuid" },
         "captionId": { "$ref": "#/$defs/uuid" },
         "streamId": { "$ref": "#/$defs/uuid" },
-        "sequence": { "$ref": "#/$defs/sequence" },
+        "sequence": { "$ref": "#/$defs/publicSequence" },
         "payload": {
           "type": "object",
           "additionalProperties": false,
@@ -126,13 +243,26 @@
         "schemaVersion": { "$ref": "#/$defs/schemaVersion" },
         "type": { "type": "string", "const": "room.error" },
         "meetingId": { "$ref": "#/$defs/uuid" },
-        "sequence": { "$ref": "#/$defs/sequence" },
+        "sequence": { "$ref": "#/$defs/privateSequence" },
         "payload": {
           "type": "object",
           "additionalProperties": false,
           "required": ["code", "message"],
           "properties": {
-            "code": { "type": "string", "enum": ["JOIN_REQUIRED", "INVALID_JOIN", "ALREADY_JOINED", "ROOM_FULL"] },
+            "code": {
+              "type": "string",
+              "enum": [
+                "JOIN_REQUIRED",
+                "INVALID_JOIN",
+                "ALREADY_JOINED",
+                "ROOM_FULL",
+                "ROOM_NOT_FOUND",
+                "REALTIME_TICKET_EXPIRED",
+                "TICKET_EXPIRED",
+                "PARTICIPANT_CONNECTED",
+                "INVALID_SIGNER_EVENT"
+              ]
+            },
             "message": { "type": "string", "minLength": 1, "maxLength": 160 }
           }
         },

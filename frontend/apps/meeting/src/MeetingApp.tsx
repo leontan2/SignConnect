@@ -25,13 +25,18 @@ import {
   type Meeting,
   type Participant,
   type RoomParticipant,
-  type ServerRealtimeEvent
+  type ServerRealtimeEvent,
+  type SignerReleaseEvent
 } from "./api";
 import {
   type RealtimeRetryScheduler,
   type RealtimeSocketLike
 } from "./recognition/RealtimeClient";
 import type { BrowserLocalVisionFrame, LandmarkCaptureStatus } from "./recognition/contracts";
+import {
+  observeCanvasBackingStore,
+  synchronizeCanvasBackingStore
+} from "./recognition/overlayCanvas";
 import type { UseLandmarkCaptureOptions } from "./recognition/useLandmarkCapture";
 import { useRealtimeSession } from "./recognition/useRealtimeSession";
 import RecognitionSimulator from "./recognition/RecognitionSimulator";
@@ -50,28 +55,34 @@ type ProductState = {
   recognitionFeedback: string | null;
   serviceStatus: string;
   protocolFeedback: string | null;
+  signerFeedback: string | null;
   mockModelActive: boolean;
 };
 
 type ProductAction =
   | { type: "server-event"; event: ServerRealtimeEvent }
   | { type: "parse-issue"; reason: "malformed" | "unsupported" }
-  | { type: "reset-feedback" };
+  | { type: "room-order-issue" }
+  | { type: "signer-feedback"; message: string | null }
+  | { type: "reset-session" };
 
 const INITIAL_PRODUCT_STATE: ProductState = {
   captions: [],
   recognitionFeedback: null,
   serviceStatus: "Recognition service is waiting.",
   protocolFeedback: null,
+  signerFeedback: null,
   mockModelActive: false
 };
 
 const SIMULATOR_ENABLED = process.env.RECOGNITION_SIMULATOR_ENABLED === "true";
 
 function productReducer(state: ProductState, action: ProductAction): ProductState {
-  if (action.type === "reset-feedback") {
-    return { ...state, recognitionFeedback: null, protocolFeedback: null };
+  if (action.type === "reset-session") return { ...INITIAL_PRODUCT_STATE };
+  if (action.type === "room-order-issue") {
+    return { ...state, protocolFeedback: "Some room updates arrived out of order. The newest room state is shown." };
   }
+  if (action.type === "signer-feedback") return { ...state, signerFeedback: action.message };
   if (action.type === "parse-issue") {
     const protocolFeedback = action.reason === "unsupported"
       ? "Unsupported realtime event was ignored."
@@ -128,6 +139,7 @@ export interface MeetingAppComposition {
   captureOptions?: Omit<UseLandmarkCaptureOptions, "consumer" | "onStatus">;
   clock?: RecognitionClock;
   trackingAnnouncementDelayMs?: number;
+  requestIdFactory?: () => string;
 }
 
 function cameraFailure(error: unknown): { state: CameraState; message: string } {
@@ -149,14 +161,36 @@ function recognitionDisabledReason(cameraState: CameraState, connected: boolean)
   return "Recognition is ready to start.";
 }
 
-function connectionLabel(status: string, recovered: boolean, retryDelayMs?: number): string {
+function connectionLabel(status: string, recovered: boolean, hasMeeting: boolean, retryDelayMs?: number): string {
   if (status === "connected") return recovered ? "Connection recovered" : "Connected";
   if (status === "joining") return "Joining room";
   if (status === "connecting") return "Connecting";
   if (status === "reconnecting") {
     return retryDelayMs === undefined ? "Reconnecting" : `Reconnecting in ${retryDelayMs} ms`;
   }
-  return "Not connected";
+  return hasMeeting ? "Room disconnected" : "Not connected";
+}
+
+type SignerOwnershipState = {
+  status: "idle" | "requesting" | "granted" | "denied";
+  requestId: string | null;
+  streamId: string | null;
+};
+
+const INITIAL_SIGNER_STATE: SignerOwnershipState = {
+  status: "idle",
+  requestId: null,
+  streamId: null
+};
+
+function isOrderedRoomEvent(event: ServerRealtimeEvent): boolean {
+  return event.type === "room.snapshot"
+    || event.type === "participant.joined"
+    || event.type === "participant.updated"
+    || event.type === "participant.left"
+    || event.type === "signer.granted"
+    || event.type === "signer.released"
+    || (event.type === "caption.final" && event.participantId !== undefined);
 }
 
 function captureHealthLabel(status: LandmarkCaptureStatus): string {
@@ -212,27 +246,21 @@ function drawBrowserLocalOverlay(
 ): void {
   const width = canvas.clientWidth;
   const height = canvas.clientHeight;
+  synchronizeCanvasBackingStore(canvas);
   if (width <= 0 || height <= 0 || video.videoWidth <= 0 || video.videoHeight <= 0) {
     clearOverlay(canvas);
     return;
   }
 
   const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
-  const targetWidth = Math.round(width * pixelRatio);
-  const targetHeight = Math.round(height * pixelRatio);
-  if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
-    canvas.width = targetWidth;
-    canvas.height = targetHeight;
-  }
-
   const context = canvas.getContext("2d");
   if (!context) return;
   context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
   context.clearRect(0, 0, width, height);
 
-  const coverScale = Math.max(width / video.videoWidth, height / video.videoHeight);
-  const renderedWidth = video.videoWidth * coverScale;
-  const renderedHeight = video.videoHeight * coverScale;
+  const containScale = Math.min(width / video.videoWidth, height / video.videoHeight);
+  const renderedWidth = video.videoWidth * containScale;
+  const renderedHeight = video.videoHeight * containScale;
   const offsetX = (width - renderedWidth) / 2;
   const offsetY = (height - renderedHeight) / 2;
   const project = (point: { x: number; y: number }) => ({
@@ -292,10 +320,18 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
     const [cameraState, setCameraState] = useState<CameraState>("off");
     const [error, setError] = useState<string | null>(null);
     const [demoGesture, setDemoGesture] = useState<DemoGesture | null>(null);
+    const [signerOwnership, setSignerOwnership] = useState<SignerOwnershipState>(INITIAL_SIGNER_STATE);
+    const [liveAnnouncement, setLiveAnnouncement] = useState("");
     const [product, dispatch] = useReducer(productReducer, INITIAL_PRODUCT_STATE);
     const { toasts, pushToast, dismissToast } = useToastQueue();
+    const announce = useCallback((message: string) => setLiveAnnouncement(message), []);
+    const notify = useCallback((notice: Parameters<typeof pushToast>[0]) => {
+      pushToast(notice);
+      announce(`${notice.title}. ${notice.message}`);
+    }, [announce, pushToast]);
     const videoRef = useRef<HTMLVideoElement>(null);
     const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
+    const browserLocalFrameRef = useRef<BrowserLocalVisionFrame | null>(null);
     const mediaStreamRef = useRef<MediaStream | null>(null);
     const mediaTrackEndedListenersRef = useRef(new Map<MediaStreamTrack, EventListener>());
     const recognitionStreamRef = useRef<string | null>(null);
@@ -304,20 +340,47 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
     const cameraRequestGenerationRef = useRef(0);
     const meetingRequestGenerationRef = useRef(0);
     const lastStableGestureTimestampRef = useRef(Number.NEGATIVE_INFINITY);
+    const roomGenerationRef = useRef(0);
+    const lastRoomSequenceRef = useRef(-1);
+    const signerCommandGenerationRef = useRef(-1);
+    const signerCommandSequenceRef = useRef(0);
+    const signerCommandTimestampRef = useRef(-1);
+    const signerOwnershipRef = useRef(signerOwnership);
+    const currentParticipantRef = useRef(currentParticipant);
+    const revokeRecognitionRef = useRef<() => void>(() => undefined);
+    const stopMediaRef = useRef<() => void>(() => undefined);
 
-    const acceptServerEvent = useCallback((event: ServerRealtimeEvent) => {
+    signerOwnershipRef.current = signerOwnership;
+    currentParticipantRef.current = currentParticipant;
+
+    const acceptServerEvent = useCallback((event: ServerRealtimeEvent, generation: number) => {
+      if (roomGenerationRef.current !== generation) {
+        roomGenerationRef.current = generation;
+        lastRoomSequenceRef.current = -1;
+      }
+      if (isOrderedRoomEvent(event)) {
+        if (event.sequence < lastRoomSequenceRef.current) {
+          dispatch({ type: "room-order-issue" });
+          return;
+        }
+        if (event.sequence === lastRoomSequenceRef.current) return;
+        lastRoomSequenceRef.current = event.sequence;
+      }
       if (event.type === "room.snapshot") {
         setParticipants(event.payload.participants);
         return;
       }
-      if (event.type === "participant.joined" || event.type === "participant.left") {
-        if (event.type === "participant.joined") {
+      if (event.type === "participant.joined"
+        || event.type === "participant.updated"
+        || event.type === "participant.left") {
+        if (event.type !== "participant.left") {
           setParticipants((current) => [
             ...current.filter((participant) => participant.participantId !== event.participantId),
             {
               participantId: event.participantId,
               displayName: event.payload.displayName,
-              role: event.payload.role
+              role: event.payload.role,
+              activeSigner: event.payload.activeSigner
             }
           ]);
         } else {
@@ -328,13 +391,73 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
         return;
       }
       if (event.type === "room.error") {
-        setError(event.payload.message);
+        if (event.payload.code === "INVALID_SIGNER_EVENT") {
+          signerOwnershipRef.current = INITIAL_SIGNER_STATE;
+          setSignerOwnership(INITIAL_SIGNER_STATE);
+          revokeRecognitionRef.current();
+          dispatch({
+            type: "signer-feedback",
+            message: "The signer request was rejected. Start recognition again to retry."
+          });
+          return;
+        }
+        const message = event.payload.code === "ROOM_NOT_FOUND"
+          ? "This room no longer exists. Start or join another room."
+          : event.payload.code === "REALTIME_TICKET_EXPIRED" || event.payload.code === "TICKET_EXPIRED"
+            ? "The realtime ticket expired. Rejoin the room to continue."
+            : event.payload.code === "PARTICIPANT_CONNECTED"
+              ? "This participant is already connected in another window."
+            : event.payload.message;
+        setError(message);
         setMeeting(null);
         setCurrentParticipant(null);
         setParticipants([]);
+        signerOwnershipRef.current = INITIAL_SIGNER_STATE;
+        setSignerOwnership(INITIAL_SIGNER_STATE);
+        revokeRecognitionRef.current();
+        stopMediaRef.current();
+        setCameraState("off");
+        dispatch({ type: "reset-session" });
         return;
       }
       if (event.type === "room.joined") return;
+      if (event.type === "signer.granted") {
+        const pending = signerOwnershipRef.current;
+        if (event.participantId === currentParticipantRef.current?.id
+          && pending.status === "requesting"
+          && event.payload.requestId === pending.requestId
+          && event.payload.streamId === pending.streamId) {
+          setSignerOwnership({ ...pending, status: "granted" });
+          dispatch({ type: "signer-feedback", message: null });
+        }
+        return;
+      }
+      if (event.type === "signer.denied") {
+        const pending = signerOwnershipRef.current;
+        if (pending.status === "requesting"
+          && event.payload.requestId === pending.requestId
+          && event.streamId === pending.streamId) {
+          const message = event.payload.reason === "ALREADY_ACTIVE"
+            ? "You already control the active signer stream."
+            : event.payload.reason === "NOT_JOINED"
+              ? "Join the room again before starting recognition."
+              : "Another participant is the active signer. Try again when they stop.";
+          setSignerOwnership({ ...pending, status: "denied" });
+          dispatch({ type: "signer-feedback", message });
+          revokeRecognitionRef.current();
+        }
+        return;
+      }
+      if (event.type === "signer.released") {
+        const ownership = signerOwnershipRef.current;
+        if (event.participantId === currentParticipantRef.current?.id
+          && event.payload.streamId === ownership.streamId) {
+          setSignerOwnership(INITIAL_SIGNER_STATE);
+          revokeRecognitionRef.current();
+          dispatch({ type: "signer-feedback", message: "Signer access was released." });
+        }
+        return;
+      }
       if (event.type === "caption.final" && event.participantId !== undefined) {
         dispatch({ type: "server-event", event });
         return;
@@ -358,6 +481,25 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       onParseIssue: (issue) => dispatch({ type: "parse-issue", reason: issue.reason })
     });
 
+    function nextSignerCommandOrder(): { sequence: number; timestampMs: number } {
+      if (signerCommandGenerationRef.current !== realtime.state.generation) {
+        signerCommandGenerationRef.current = realtime.state.generation;
+        signerCommandSequenceRef.current = 0;
+        signerCommandTimestampRef.current = -1;
+      }
+      const sampledTimestamp = composition.clock?.now() ?? performance.now();
+      const normalizedTimestamp = Number.isFinite(sampledTimestamp) && sampledTimestamp >= 0
+        ? sampledTimestamp
+        : 0;
+      const timestampMs = Math.max(normalizedTimestamp, signerCommandTimestampRef.current + 0.001);
+      return { sequence: signerCommandSequenceRef.current, timestampMs };
+    }
+
+    function commitSignerCommandOrder(timestampMs: number): void {
+      signerCommandSequenceRef.current += 1;
+      signerCommandTimestampRef.current = timestampMs;
+    }
+
     const recognition = useSignRecognition({
       cameraEnabled: cameraState === "on",
       getVideo: () => videoRef.current,
@@ -366,6 +508,8 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       isUnderPressure: realtime.isUnderPressure,
       captureOptions: composition.captureOptions,
       clock: composition.clock,
+      signerGranted: signerOwnership.status === "granted"
+        && signerOwnership.streamId === recognitionStreamRef.current,
       trackingAnnouncementDelayMs: composition.trackingAnnouncementDelayMs,
       onStreamChange: (streamId) => {
         const previousStreamId = recognitionStreamRef.current;
@@ -375,8 +519,55 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
           recentlyStoppedStreamRef.current = null;
         }
         recognitionStreamRef.current = streamId;
-      }
+      },
+      onOwnershipReleaseNeeded: releaseSigner
     });
+    browserLocalFrameRef.current = recognition.browserLocalFrame;
+    revokeRecognitionRef.current = recognition.revoke;
+
+    useEffect(() => {
+      const streamId = recognition.streamId;
+      if (!recognition.enabledByUser
+        || !streamId
+        || realtime.state.status !== "connected") return;
+
+      const current = signerOwnershipRef.current;
+      if (current.streamId === streamId
+        && (current.status === "requesting" || current.status === "granted")) return;
+
+      let requestId: string;
+      try {
+        requestId = composition.requestIdFactory?.() ?? crypto.randomUUID();
+      } catch {
+        recognition.revoke();
+        dispatch({ type: "signer-feedback", message: "Signer access could not be requested. Try again." });
+        return;
+      }
+      const commandOrder = nextSignerCommandOrder();
+      const next: SignerOwnershipState = {
+        status: "requesting",
+        requestId,
+        streamId
+      };
+      signerOwnershipRef.current = next;
+      setSignerOwnership(next);
+      dispatch({ type: "signer-feedback", message: null });
+      const sent = realtime.send({
+        schemaVersion: 1,
+        type: "signer.request",
+        requestId,
+        streamId,
+        sequence: commandOrder.sequence,
+        timestampMs: commandOrder.timestampMs
+      });
+      if (sent) commitSignerCommandOrder(commandOrder.timestampMs);
+      if (!sent) {
+        signerOwnershipRef.current = { ...next, status: "denied" };
+        setSignerOwnership({ ...next, status: "denied" });
+        recognition.revoke();
+        dispatch({ type: "signer-feedback", message: "Signer access could not be requested. Check the room connection and try again." });
+      }
+    }, [recognition.enabledByUser, recognition.streamId, realtime.state.generation, realtime.state.status]);
 
     const previousRealtimeStatusRef = useRef(realtime.state.status);
     useEffect(() => {
@@ -384,7 +575,7 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       const currentStatus = realtime.state.status;
 
       if (currentStatus === "connected" && previousStatus !== "connected") {
-        pushToast({
+        notify({
           key: "realtime-connection",
           tone: "success",
           title: realtime.state.recovered || previousStatus === "reconnecting"
@@ -393,7 +584,9 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
           message: meeting ? `Room ${meeting.id.slice(0, 8)} is ready.` : "The realtime session is ready."
         });
       } else if (currentStatus === "reconnecting" && previousStatus === "connected") {
-        pushToast({
+        signerOwnershipRef.current = INITIAL_SIGNER_STATE;
+        setSignerOwnership(INITIAL_SIGNER_STATE);
+        notify({
           key: "realtime-connection",
           tone: "info",
           title: "Connection interrupted",
@@ -402,7 +595,60 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       }
 
       previousRealtimeStatusRef.current = currentStatus;
-    }, [meeting, pushToast, realtime.state.recovered, realtime.state.status]);
+    }, [meeting, notify, realtime.state.recovered, realtime.state.status]);
+
+    useEffect(() => {
+      if (recognition.trackingAnnouncement) {
+        announce(recognition.trackingAnnouncement);
+      } else if (recognition.captureStatus === "unavailable") {
+        announce("Recognition model unavailable.");
+      } else if (recognition.captureStatus === "error") {
+        announce("Recognition tracking stopped unexpectedly.");
+      }
+    }, [announce, recognition.captureStatus, recognition.trackingAnnouncement]);
+
+    const previousProductAnnouncementRef = useRef({
+      recognitionFeedback: INITIAL_PRODUCT_STATE.recognitionFeedback,
+      serviceStatus: INITIAL_PRODUCT_STATE.serviceStatus,
+      protocolFeedback: INITIAL_PRODUCT_STATE.protocolFeedback,
+      signerFeedback: INITIAL_PRODUCT_STATE.signerFeedback
+    });
+    useEffect(() => {
+      const previous = previousProductAnnouncementRef.current;
+      const feedback = product.signerFeedback !== previous.signerFeedback
+        ? product.signerFeedback
+        : product.protocolFeedback !== previous.protocolFeedback
+          ? product.protocolFeedback
+          : product.recognitionFeedback !== previous.recognitionFeedback
+            ? product.recognitionFeedback
+            : product.serviceStatus !== previous.serviceStatus
+              ? product.serviceStatus
+              : null;
+      if (feedback) announce(feedback);
+      previousProductAnnouncementRef.current = {
+        recognitionFeedback: product.recognitionFeedback,
+        serviceStatus: product.serviceStatus,
+        protocolFeedback: product.protocolFeedback,
+        signerFeedback: product.signerFeedback
+      };
+    }, [announce, product.protocolFeedback, product.recognitionFeedback, product.serviceStatus, product.signerFeedback]);
+
+    useEffect(() => {
+      if (error && meeting) announce(error);
+    }, [announce, error, meeting]);
+
+    const lastAnnouncedCaptionRef = useRef<string | null>(null);
+    useEffect(() => {
+      const caption = product.captions.at(-1);
+      if (!caption) {
+        lastAnnouncedCaptionRef.current = null;
+        return;
+      }
+      const identity = caption.captionId ?? `${caption.streamId}-${caption.sequence}`;
+      if (lastAnnouncedCaptionRef.current === identity) return;
+      lastAnnouncedCaptionRef.current = identity;
+      announce(`Caption from ${caption.payload.sourceDisplayName ?? "participant"}: ${caption.payload.text}`);
+    }, [announce, product.captions]);
 
     useEffect(() => {
       const frame = recognition.browserLocalFrame;
@@ -436,6 +682,17 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       }
     }, [recognition.browserLocalFrame, recognition.enabledByUser]);
 
+    useEffect(() => {
+      const canvas = overlayCanvasRef.current;
+      if (!canvas) return;
+      return observeCanvasBackingStore(canvas, () => {
+        const frame = browserLocalFrameRef.current;
+        const video = videoRef.current;
+        if (frame && video) drawBrowserLocalOverlay(canvas, video, frame);
+        else clearOverlay(canvas);
+      });
+    }, []);
+
     const stopMedia = useCallback(() => {
       cameraRequestGenerationRef.current += 1;
       const stream = mediaStreamRef.current;
@@ -450,6 +707,26 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       lastStableGestureTimestampRef.current = Number.NEGATIVE_INFINITY;
       setDemoGesture(null);
     }, []);
+    stopMediaRef.current = stopMedia;
+
+    function releaseSigner(streamId: string, reason: SignerReleaseEvent["reason"]): void {
+      const ownership = signerOwnershipRef.current;
+      if (ownership.streamId !== streamId) return;
+      if (realtime.state.status === "connected") {
+        const commandOrder = nextSignerCommandOrder();
+        const sent = realtime.send({
+          schemaVersion: 1,
+          type: "signer.release",
+          streamId,
+          sequence: commandOrder.sequence,
+          timestampMs: commandOrder.timestampMs,
+          reason
+        });
+        if (sent) commitSignerCommandOrder(commandOrder.timestampMs);
+      }
+      signerOwnershipRef.current = INITIAL_SIGNER_STATE;
+      setSignerOwnership(INITIAL_SIGNER_STATE);
+    }
 
     useEffect(() => {
       mountedRef.current = true;
@@ -466,7 +743,7 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
         recognition.cameraOff();
         stopMedia();
         setCameraState("off");
-        pushToast({
+        notify({
           key: "camera",
           tone: "info",
           title: "Camera turned off",
@@ -480,7 +757,15 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       setCameraState("requesting");
       setError(null);
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 1280 },
+            height: { ideal: 960 },
+            aspectRatio: { ideal: 4 / 3 },
+            facingMode: "user"
+          },
+          audio: false
+        });
         if (!mountedRef.current || requestGeneration !== cameraRequestGenerationRef.current) {
           stream.getTracks().forEach((track) => track.stop());
           return;
@@ -497,7 +782,7 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
             stopMedia();
             setCameraState("error");
             setError("The camera disconnected or its permission was revoked.");
-            pushToast({
+            notify({
               key: "camera",
               tone: "error",
               title: "Camera disconnected",
@@ -509,7 +794,7 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
         });
         if (videoRef.current) videoRef.current.srcObject = stream;
         setCameraState("on");
-        pushToast({
+        notify({
           key: "camera",
           tone: "success",
           title: "Camera ready",
@@ -520,7 +805,7 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
         const failure = cameraFailure(cameraError);
         setCameraState(failure.state);
         setError(failure.message);
-        pushToast({
+        notify({
           key: "camera",
           tone: "error",
           title: "Camera unavailable",
@@ -530,9 +815,12 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
     }
 
     function activateMeetingSession(session: Awaited<ReturnType<typeof createMeeting>>) {
+      dispatch({ type: "reset-session" });
       setMeeting(session.meeting);
       setCurrentParticipant(session.participant);
       setParticipants([]);
+      signerOwnershipRef.current = INITIAL_SIGNER_STATE;
+      setSignerOwnership(INITIAL_SIGNER_STATE);
       realtime.connect(session.meeting.id, session.realtimeTicket);
     }
 
@@ -550,7 +838,7 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       const requestGeneration = ++meetingRequestGenerationRef.current;
       setMeetingRequestPending(true);
       setError(null);
-      dispatch({ type: "reset-feedback" });
+      dispatch({ type: "reset-session" });
       try {
         const createdSession = await createMeeting("Accessible team sync", normalizedName);
         if (!mountedRef.current || requestGeneration !== meetingRequestGenerationRef.current) return;
@@ -558,7 +846,7 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       } catch (failure) {
         if (!mountedRef.current || requestGeneration !== meetingRequestGenerationRef.current) return;
         setError(meetingFailureMessage(failure));
-        pushToast({
+        notify({
           key: "realtime-connection",
           tone: "error",
           title: "Session could not start",
@@ -585,7 +873,7 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       const requestGeneration = ++meetingRequestGenerationRef.current;
       setMeetingRequestPending(true);
       setError(null);
-      dispatch({ type: "reset-feedback" });
+      dispatch({ type: "reset-session" });
       try {
         const joinedSession = await joinMeeting(normalizedCode, normalizedName);
         if (!mountedRef.current || requestGeneration !== meetingRequestGenerationRef.current) return;
@@ -593,7 +881,7 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       } catch (failure) {
         if (!mountedRef.current || requestGeneration !== meetingRequestGenerationRef.current) return;
         setError(meetingFailureMessage(failure));
-        pushToast({
+        notify({
           key: "realtime-connection",
           tone: "error",
           title: "Room could not be joined",
@@ -613,7 +901,7 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       const invite = `${window.location.origin}${window.location.pathname}?room=${meeting.joinCode}`;
       try {
         await navigator.clipboard.writeText(invite);
-        pushToast({
+        notify({
           key: "room-invite",
           tone: "success",
           title: "Invitation copied",
@@ -627,18 +915,18 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
     function toggleRecognition() {
       if (recognition.enabledByUser) {
         recognition.stop();
-        pushToast({
+        notify({
           key: "recognition",
           tone: "info",
           title: "Capture ended",
           message: "Recognition is no longer running."
         });
       } else if (recognition.start()) {
-        pushToast({
+        notify({
           key: "recognition",
-          tone: "success",
-          title: "Recognition live",
-          message: "Hold a supported sign inside the camera guide."
+          tone: "info",
+          title: "Signer access requested",
+          message: "Recognition will start after the room grants signer access."
         });
       }
     }
@@ -650,12 +938,18 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
     const currentConnectionLabel = connectionLabel(
       realtime.state.status,
       realtime.state.recovered,
+      meeting !== null,
       realtime.state.retryDelayMs
     );
     const cameraEnabled = cameraState === "on";
+    const signerRequestPending = recognition.enabledByUser && signerOwnership.status === "requesting";
+    const signerGranted = recognition.enabledByUser && signerOwnership.status === "granted";
+    const activeSigner = participants.find((participant) => participant.activeSigner);
     const mockNoticeVisible = recognition.enabledByUser || product.mockModelActive;
     const browserLocalFrame = recognition.browserLocalFrame;
     const trackedHandCount = browserLocalFrame?.hands.length ?? 0;
+    const trackingLost = recognition.enabledByUser
+      && (recognition.captureStatus === "no-hands" || recognition.captureStatus === "low-quality");
     const localModelLabel = !recognition.enabledByUser
       ? "Loads when recognition starts"
       : browserLocalFrame?.gestureModel === "ready"
@@ -674,7 +968,7 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
           </div>
 
           <div className="session-cluster">
-            <div className={`connection-state ${realtime.state.status}`} aria-live="polite">
+            <div className={`connection-state ${realtime.state.status}`}>
               {(realtime.state.status === "connecting"
                 || realtime.state.status === "joining"
                 || realtime.state.status === "reconnecting") && (
@@ -700,7 +994,13 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
 
         <div className="workspace-notices">
           {error && (
-            <div className="meeting-alert" role="alert">
+            <div
+              className="meeting-alert"
+              role={meeting ? undefined : "alert"}
+              aria-label="Meeting error"
+              aria-live={meeting ? undefined : "assertive"}
+              aria-atomic={meeting ? undefined : "true"}
+            >
               <CircleAlert size={16} aria-hidden="true" />
               <span>{error}</span>
             </div>
@@ -793,6 +1093,7 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
                     <span>{roomParticipant.displayName}</span>
                     {roomParticipant.participantId === currentParticipant?.id && <em>You</em>}
                     {roomParticipant.role === "HOST" && <small>Host</small>}
+                    {roomParticipant.activeSigner && <small>Signer</small>}
                   </li>
                 ))}
               </ul>
@@ -809,7 +1110,7 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
               </div>
             </header>
 
-            <div className={`stage-viewport${recognition.enabledByUser ? " is-recognizing" : ""}`}>
+            <div className={`stage-viewport${signerGranted ? " is-recognizing" : ""}`}>
               <video ref={videoRef} autoPlay muted playsInline className={cameraEnabled ? "visible" : ""} />
               <canvas ref={overlayCanvasRef} className="landmark-overlay" aria-hidden="true" />
               <span className="recognition-scan" aria-hidden="true" />
@@ -842,24 +1143,32 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
                 {cameraEnabled && (
                   <span className={trackedHandCount > 0 ? "tracking-badge active" : "tracking-badge"}>
                     <Hand size={13} aria-hidden="true" />
-                    {trackedHandCount > 0 ? `${trackedHandCount} hand${trackedHandCount === 1 ? "" : "s"} tracked` : "Waiting for hands"}
+                    {trackedHandCount > 0
+                      ? `${trackedHandCount} hand${trackedHandCount === 1 ? "" : "s"} tracked`
+                      : trackingLost
+                        ? "Tracking lost"
+                        : "Waiting for hands"}
                   </span>
                 )}
               </div>
 
-              <div className="gesture-overlay" role="status" aria-live="polite" aria-atomic="true">
+              <div className="gesture-overlay">
                 <span>Local interpretation</span>
                 <strong>
                   {demoGesture
                     ? demoGesture.displayName
-                    : recognition.enabledByUser
+                    : signerRequestPending
+                      ? "Waiting for signer access"
+                      : recognition.enabledByUser
                       ? "Show a clear hand gesture"
                       : "Recognition is ready"}
                 </strong>
                 <p>
                   {demoGesture
                     ? `${Math.round(demoGesture.confidence * 100)}% confidence${demoGesture.handedness ? `, ${demoGesture.handedness} hand` : ""}`
-                    : recognition.enabledByUser
+                    : signerRequestPending
+                      ? "The room must grant ownership before landmarks are transmitted."
+                      : recognition.enabledByUser
                       ? "Hold the gesture steady inside the guide."
                       : "Enable the camera and recognition to begin."}
                 </p>
@@ -897,24 +1206,43 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
 
                 <button
                   type="button"
-                  className={recognition.enabledByUser
+                  className={signerGranted
                     ? "sc-button sc-button--accent recognition-toggle active"
+                    : signerRequestPending
+                      ? "sc-button sc-button--secondary recognition-toggle"
                     : "sc-button sc-button--signal recognition-toggle"}
                   onClick={toggleRecognition}
                   disabled={recognitionControlDisabled}
                   aria-describedby="recognition-disabled-reason recognition-disclosure"
+                  aria-label={signerRequestPending ? "Cancel signer request" : undefined}
                 >
-                  {recognition.enabledByUser
+                  {signerGranted
                     ? <Square size={12} fill="currentColor" aria-hidden="true" />
+                    : signerRequestPending
+                      ? <LoaderCircle size={15} className="spin" aria-hidden="true" />
                     : <ScanLine size={15} aria-hidden="true" />}
                   <span className="sc-button__label">
-                    {recognition.enabledByUser ? "Stop recognition" : "Start recognition"}
+                    {signerGranted
+                      ? "Stop recognition"
+                      : signerRequestPending
+                        ? "Requesting access…"
+                        : "Start recognition"}
                   </span>
                 </button>
               </div>
 
-              <span id="recognition-disabled-reason" className="control-explanation">
-                {recognition.enabledByUser ? "Landmark transmission is active." : disabledReason}
+              <span
+                id="recognition-disabled-reason"
+                className="control-explanation"
+              >
+                {signerGranted
+                  ? "Landmark transmission is active."
+                  : signerRequestPending
+                    ? "Waiting for the room to grant active-signer access."
+                    : product.signerFeedback
+                      ?? (activeSigner && activeSigner.participantId !== currentParticipant?.id
+                        ? `${activeSigner.displayName} is the active signer.`
+                        : disabledReason)}
               </span>
             </footer>
           </section>
@@ -938,7 +1266,7 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
               </div>
             )}
 
-            <div className="caption-list" aria-live="polite">
+            <div className="caption-list">
               {product.captions.length === 0 ? (
                 <div className="caption-empty">
                   <span className="caption-empty-icon"><Captions size={21} strokeWidth={1.5} aria-hidden="true" /></span>
@@ -988,15 +1316,25 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
                 </div>
                 <div>
                   <dt>Inference service</dt>
-                  <dd role="status" aria-label="Recognition service status" aria-live="polite">{product.serviceStatus}</dd>
+                  <dd aria-label="Recognition service status">{product.serviceStatus}</dd>
+                </div>
+                <div>
+                  <dt>Signer access</dt>
+                  <dd>{signerGranted
+                    ? "Granted to you"
+                    : signerRequestPending
+                      ? "Awaiting room grant"
+                      : activeSigner
+                        ? `${activeSigner.displayName} is signing`
+                        : "Available"}</dd>
                 </div>
               </dl>
               <div className="demo-disclosure">
                 <CircleAlert size={14} aria-hidden="true" />
                 <span><strong>Generic gesture preview.</strong> This is not validated SGSL recognition.</span>
               </div>
-              {product.recognitionFeedback && <div className="recognition-feedback" role="status">{product.recognitionFeedback}</div>}
-              {product.protocolFeedback && <div className="protocol-feedback" role="status">{product.protocolFeedback}</div>}
+              {product.recognitionFeedback && <div className="recognition-feedback">{product.recognitionFeedback}</div>}
+              {product.protocolFeedback && <div className="protocol-feedback">{product.protocolFeedback}</div>}
             </section>
 
           </aside>
@@ -1005,9 +1343,11 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
         <p id="recognition-disclosure" className="sr-only">
           Starting recognition consents to transient hand and body landmark transmission; raw video is not transmitted.
         </p>
-        <div className="sr-only" role="status" aria-label="Tracking announcement" aria-live="polite">
-          {recognition.trackingAnnouncement}
-        </div>
+        {(meeting || !error) && (
+          <div className="sr-only" role="status" aria-label="Meeting announcements" aria-live="polite" aria-atomic="true">
+            {liveAnnouncement}
+          </div>
+        )}
 
         {SIMULATOR_ENABLED && <RecognitionSimulator connected={connected} send={realtime.send} />}
       </section>

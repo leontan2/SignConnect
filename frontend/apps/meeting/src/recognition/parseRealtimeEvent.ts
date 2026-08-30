@@ -38,6 +38,18 @@ const PARTICIPANT_EVENT_KEYS = [
   "occurredAt"
 ] as const;
 
+const ROOM_JOINED_WITH_RESUME_KEYS = [
+  "schemaVersion",
+  "type",
+  "meetingId",
+  "participantId",
+  "resumeToken",
+  "resumeExpiresAt",
+  "sequence",
+  "payload",
+  "occurredAt"
+] as const;
+
 const ROOM_EVENT_KEYS = [
   "schemaVersion",
   "type",
@@ -78,9 +90,14 @@ const STATUS_PAYLOAD_KEYS = [
 ] as const;
 
 const PARTICIPANT_PAYLOAD_KEYS = ["displayName", "role"] as const;
+const PARTICIPANT_STATUS_PAYLOAD_KEYS = ["displayName", "role", "activeSigner"] as const;
 const SNAPSHOT_PAYLOAD_KEYS = ["participants"] as const;
 const SNAPSHOT_PARTICIPANT_KEYS = ["participantId", "displayName", "role"] as const;
+const SNAPSHOT_PARTICIPANT_STATUS_KEYS = ["participantId", "displayName", "role", "activeSigner"] as const;
 const ROOM_ERROR_PAYLOAD_KEYS = ["code", "message"] as const;
+const SIGNER_GRANT_PAYLOAD_KEYS = ["requestId", "streamId"] as const;
+const SIGNER_DENIED_PAYLOAD_KEYS = ["requestId", "reason"] as const;
+const SIGNER_RELEASED_PAYLOAD_KEYS = ["requestId", "streamId", "reason"] as const;
 
 const SUPPORTED_EVENT_TYPES = new Set([
   "caption.final",
@@ -90,11 +107,27 @@ const SUPPORTED_EVENT_TYPES = new Set([
   "room.snapshot",
   "participant.joined",
   "participant.left",
+  "participant.updated",
+  "signer.granted",
+  "signer.denied",
+  "signer.released",
   "room.error"
 ]);
 
 const PARTICIPANT_ROLES = new Set(["HOST", "GUEST"]);
-const ROOM_ERROR_CODES = new Set(["JOIN_REQUIRED", "INVALID_JOIN", "ALREADY_JOINED", "ROOM_FULL"]);
+const ROOM_ERROR_CODES = new Set([
+  "JOIN_REQUIRED",
+  "INVALID_JOIN",
+  "ALREADY_JOINED",
+  "ROOM_FULL",
+  "ROOM_NOT_FOUND",
+  "REALTIME_TICKET_EXPIRED",
+  "TICKET_EXPIRED",
+  "PARTICIPANT_CONNECTED",
+  "INVALID_SIGNER_EVENT"
+]);
+const SIGNER_DENIED_REASONS = new Set(["SIGNER_UNAVAILABLE", "ALREADY_ACTIVE", "NOT_JOINED"]);
+const SIGNER_RELEASED_REASONS = new Set(["recognition_stopped", "user_request", "disconnected"]);
 
 const UNKNOWN_REASONS = new Set([
   "LOW_CONFIDENCE",
@@ -245,7 +278,9 @@ function hasValidRoomEnvelope(event: JsonObject, type: string, keys: readonly st
 }
 
 function hasValidParticipantPayload(payload: JsonObject): boolean {
-  return hasExactKeys(payload, PARTICIPANT_PAYLOAD_KEYS)
+  return (hasExactKeys(payload, PARTICIPANT_PAYLOAD_KEYS)
+      || (hasExactKeys(payload, PARTICIPANT_STATUS_PAYLOAD_KEYS)
+        && typeof payload.activeSigner === "boolean"))
     && hasStringLength(payload.displayName, 1, 50)
     && typeof payload.role === "string"
     && PARTICIPANT_ROLES.has(payload.role);
@@ -300,9 +335,21 @@ function isValidRecognitionStatus(event: JsonObject): boolean {
 }
 
 function isValidRoomJoined(event: JsonObject): boolean {
-  return hasValidRoomEnvelope(event, "room.joined", PARTICIPANT_EVENT_KEYS)
+  const standard = hasValidRoomEnvelope(event, "room.joined", PARTICIPANT_EVENT_KEYS);
+  const resumed = hasValidRoomEnvelope(event, "room.joined", ROOM_JOINED_WITH_RESUME_KEYS)
+    && hasStringLength(event.resumeToken, 1, 2048)
+    && isRfc3339DateTime(event.resumeExpiresAt);
+  return (standard || resumed)
     && isUuid(event.participantId)
     && hasValidParticipantPayload(event.payload as JsonObject);
+}
+
+function hasValidParticipantStatusPayload(payload: JsonObject): boolean {
+  return hasExactKeys(payload, PARTICIPANT_STATUS_PAYLOAD_KEYS)
+    && hasStringLength(payload.displayName, 1, 50)
+    && typeof payload.role === "string"
+    && PARTICIPANT_ROLES.has(payload.role)
+    && typeof payload.activeSigner === "boolean";
 }
 
 function isValidRoomSnapshot(event: JsonObject): boolean {
@@ -314,7 +361,9 @@ function isValidRoomSnapshot(event: JsonObject): boolean {
     return false;
   }
   return payload.participants.every((participant) => isJsonObject(participant)
-    && hasExactKeys(participant, SNAPSHOT_PARTICIPANT_KEYS)
+    && (hasExactKeys(participant, SNAPSHOT_PARTICIPANT_KEYS)
+      || (hasExactKeys(participant, SNAPSHOT_PARTICIPANT_STATUS_KEYS)
+        && typeof participant.activeSigner === "boolean"))
     && isUuid(participant.participantId)
     && hasStringLength(participant.displayName, 1, 50)
     && typeof participant.role === "string"
@@ -322,10 +371,42 @@ function isValidRoomSnapshot(event: JsonObject): boolean {
 }
 
 function isValidParticipantPresence(event: JsonObject): boolean {
+  if (!isUuid(event.participantId)) return false;
+  if (hasValidRoomEnvelope(event, "participant.updated", PARTICIPANT_EVENT_KEYS)) {
+    return hasValidParticipantStatusPayload(event.payload as JsonObject);
+  }
   return (hasValidRoomEnvelope(event, "participant.joined", PARTICIPANT_EVENT_KEYS)
       || hasValidRoomEnvelope(event, "participant.left", PARTICIPANT_EVENT_KEYS))
-    && isUuid(event.participantId)
     && hasValidParticipantPayload(event.payload as JsonObject);
+}
+
+function isValidSignerGranted(event: JsonObject): boolean {
+  if (!hasValidRoomEnvelope(event, "signer.granted", PARTICIPANT_EVENT_KEYS)
+    || !isUuid(event.participantId)) return false;
+  const payload = event.payload as JsonObject;
+  return hasExactKeys(payload, SIGNER_GRANT_PAYLOAD_KEYS)
+    && isUuid(payload.requestId)
+    && isUuid(payload.streamId);
+}
+
+function isValidSignerDenied(event: JsonObject): boolean {
+  if (!hasValidEnvelope(event, "signer.denied", false)) return false;
+  const payload = event.payload as JsonObject;
+  return hasExactKeys(payload, SIGNER_DENIED_PAYLOAD_KEYS)
+    && isUuid(payload.requestId)
+    && typeof payload.reason === "string"
+    && SIGNER_DENIED_REASONS.has(payload.reason);
+}
+
+function isValidSignerReleased(event: JsonObject): boolean {
+  if (!hasValidRoomEnvelope(event, "signer.released", PARTICIPANT_EVENT_KEYS)
+    || !isUuid(event.participantId)) return false;
+  const payload = event.payload as JsonObject;
+  return hasExactKeys(payload, SIGNER_RELEASED_PAYLOAD_KEYS)
+    && isUuid(payload.requestId)
+    && isUuid(payload.streamId)
+    && typeof payload.reason === "string"
+    && SIGNER_RELEASED_REASONS.has(payload.reason);
 }
 
 function isValidRoomError(event: JsonObject): boolean {
@@ -375,7 +456,17 @@ export function parseRealtimeEvent(input: unknown): ParseRealtimeEventResult {
         break;
       case "participant.joined":
       case "participant.left":
+      case "participant.updated":
         valid = isValidParticipantPresence(candidate);
+        break;
+      case "signer.granted":
+        valid = isValidSignerGranted(candidate);
+        break;
+      case "signer.denied":
+        valid = isValidSignerDenied(candidate);
+        break;
+      case "signer.released":
+        valid = isValidSignerReleased(candidate);
         break;
       case "room.error":
         valid = isValidRoomError(candidate);

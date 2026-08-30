@@ -9,9 +9,11 @@ public record RoomJoinedEvent(
         UUID meetingId,
         UUID participantId,
         long sequence,
+        String resumeToken,
+        Instant resumeExpiresAt,
         Payload payload,
         Instant occurredAt
 ) {
-    public record Payload(String displayName, String role) {
+    public record Payload(String displayName, String role, boolean activeSigner) {
     }
 }

@@ -3,6 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 type PrivacySummary = {
   type: string;
   sequence?: number;
+  action?: "start" | "stop";
   frameCount?: number;
   featureCounts?: number[];
   violations: string[];
@@ -11,6 +12,14 @@ type PrivacySummary = {
 
 const EVENT_KEYS = new Set(["schemaVersion", "type", "streamId", "sequence", "frames"]);
 const CONTROL_KEYS = new Set(["schemaVersion", "type", "streamId", "sequence", "timestampMs", "action"]);
+const ROOM_JOIN_TICKET_KEYS = new Set(["schemaVersion", "type", "ticket"]);
+const ROOM_JOIN_RESUME_KEYS = new Set(["schemaVersion", "type", "resumeToken"]);
+const SIGNER_REQUEST_KEYS = new Set([
+  "schemaVersion", "type", "requestId", "streamId", "sequence", "timestampMs"
+]);
+const SIGNER_RELEASE_KEYS = new Set([
+  "schemaVersion", "type", "streamId", "sequence", "timestampMs", "reason"
+]);
 const FRAME_KEYS = new Set(["sequence", "timestampMs", "features"]);
 const SENSITIVE_FIELD = /(?:video|image|pixel|blob|base64|mediaStream|dataUrl|frameData)/i;
 const UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
@@ -20,6 +29,7 @@ const MAX_VIOLATION_DIAGNOSTICS = 16;
 type PrivacyDiagnostics = {
   summaries: PrivacySummary[];
   typeCounts: Record<string, number>;
+  controlActionCounts: Record<"start" | "stop", number>;
   outboundCount: number;
   violationCount: number;
   violations: string[];
@@ -64,6 +74,42 @@ function inspectOutbound(payload: string | Buffer): PrivacySummary {
   };
   findSensitiveKeys(event, "event");
 
+  if (type === "room.join") {
+    if (!exactKeys(event, ROOM_JOIN_TICKET_KEYS) && !exactKeys(event, ROOM_JOIN_RESUME_KEYS)) {
+      violations.push("room.join keys do not match the v1 schema");
+    }
+    if (event.schemaVersion !== 1) violations.push("room.join schemaVersion is not 1");
+    const credential = typeof event.ticket === "string" ? event.ticket : event.resumeToken;
+    if (typeof credential !== "string" || credential.length < 1 || credential.length > 2048) {
+      violations.push("room.join credential is invalid");
+    }
+    return summary;
+  }
+
+  if (type === "signer.request" || type === "signer.release") {
+    const expectedKeys = type === "signer.request" ? SIGNER_REQUEST_KEYS : SIGNER_RELEASE_KEYS;
+    if (!exactKeys(event, expectedKeys)) violations.push(`${type} keys do not match the v1 schema`);
+    if (event.schemaVersion !== 1) violations.push(`${type} schemaVersion is not 1`);
+    if (typeof event.streamId !== "string" || !UUID.test(event.streamId)) {
+      violations.push(`${type} streamId is invalid`);
+    }
+    if (type === "signer.request"
+      && (typeof event.requestId !== "string" || !UUID.test(event.requestId))) {
+      violations.push("signer.request requestId is invalid");
+    }
+    if (!Number.isInteger(event.sequence) || (event.sequence as number) < 0) {
+      violations.push(`${type} sequence is invalid`);
+    }
+    if (typeof event.timestampMs !== "number" || !Number.isFinite(event.timestampMs) || event.timestampMs < 0) {
+      violations.push(`${type} timestamp is invalid`);
+    }
+    if (type === "signer.release"
+      && event.reason !== "recognition_stopped" && event.reason !== "user_request") {
+      violations.push("signer.release reason is invalid");
+    }
+    return summary;
+  }
+
   if (type === "recognition.control") {
     if (!exactKeys(event, CONTROL_KEYS)) violations.push("recognition.control keys do not match the v1 schema");
     if (event.schemaVersion !== 1) violations.push("recognition.control schemaVersion is not 1");
@@ -77,6 +123,7 @@ function inspectOutbound(payload: string | Buffer): PrivacySummary {
       violations.push("recognition.control timestamp is invalid");
     }
     if (event.action !== "start" && event.action !== "stop") violations.push("recognition.control action is invalid");
+    if (event.action === "start" || event.action === "stop") summary.action = event.action;
     return summary;
   }
 
@@ -143,6 +190,7 @@ function collectPrivacyDiagnostics(page: Page): PrivacyDiagnostics {
   const diagnostics: PrivacyDiagnostics = {
     summaries: [],
     typeCounts: {},
+    controlActionCounts: { start: 0, stop: 0 },
     outboundCount: 0,
     violationCount: 0,
     violations: []
@@ -152,6 +200,7 @@ function collectPrivacyDiagnostics(page: Page): PrivacyDiagnostics {
       const summary = inspectOutbound(payload);
       diagnostics.outboundCount += 1;
       diagnostics.typeCounts[summary.type] = (diagnostics.typeCounts[summary.type] ?? 0) + 1;
+      if (summary.action) diagnostics.controlActionCounts[summary.action] += 1;
       diagnostics.violationCount += summary.violations.length;
       for (const violation of summary.violations) {
         if (diagnostics.violations.length >= MAX_VIOLATION_DIAGNOSTICS) break;
@@ -173,16 +222,22 @@ test("outbound recognition traffic contains normalized numeric landmarks and no 
   await expect(page.getByRole("button", { name: "Turn camera off" })).toBeEnabled();
   await page.getByRole("button", { name: "Start session" }).click();
   await expect(page.getByRole("button", { name: "Session active" })).toBeVisible();
-  expect(diagnostics.outboundCount).toBe(0);
+  expect(diagnostics.typeCounts["landmark.chunk"] ?? 0).toBe(0);
+  expect(diagnostics.typeCounts["recognition.control"] ?? 0).toBe(0);
+  expect(diagnostics.typeCounts["signer.request"] ?? 0).toBe(0);
 
   await page.getByRole("button", { name: "Start recognition" }).click();
   await expect(page.getByText("Synthetic active gesture")).toBeVisible({ timeout: 15_000 });
   await page.getByRole("button", { name: "Stop recognition" }).click();
+  await expect.poll(() => diagnostics.typeCounts["landmark.chunk"] ?? 0).toBeGreaterThanOrEqual(10);
+  await expect.poll(() => diagnostics.typeCounts["recognition.control"] ?? 0).toBeGreaterThanOrEqual(2);
+  await expect.poll(() => diagnostics.typeCounts["signer.request"] ?? 0).toBeGreaterThanOrEqual(1);
 
   const chunks = diagnostics.summaries.filter((summary) => summary.type === "landmark.chunk");
-  expect(diagnostics.typeCounts["landmark.chunk"] ?? 0).toBeGreaterThanOrEqual(10);
-  expect(diagnostics.typeCounts["recognition.control"] ?? 0).toBeGreaterThanOrEqual(2);
   expect(diagnostics.violationCount, JSON.stringify(diagnostics)).toBe(0);
+  expect(diagnostics.controlActionCounts.start).toBeGreaterThanOrEqual(1);
+  expect(diagnostics.controlActionCounts.stop).toBeGreaterThanOrEqual(1);
+  expect(diagnostics.typeCounts["signer.release"] ?? 0).toBe(0);
   expect(chunks.every((summary) => summary.frameCount === 5)).toBe(true);
   expect(chunks.every((summary) => summary.featureCounts?.every((count) => count === 224))).toBe(true);
   expect(JSON.stringify(diagnostics)).not.toContain("-0.45");

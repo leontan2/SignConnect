@@ -12,6 +12,6 @@ public record ParticipantPresenceEvent(
         Payload payload,
         Instant occurredAt
 ) {
-    public record Payload(String displayName, String role) {
+    public record Payload(String displayName, String role, boolean activeSigner) {
     }
 }

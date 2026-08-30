@@ -39,6 +39,7 @@ export interface RealtimeClientOptions {
 }
 
 const SOCKET_OPEN = 1;
+const SOCKET_CLOSING = 2;
 const DEFAULT_MAXIMUM_BUFFERED_AMOUNT = 256 * 1024;
 const RETRY_DELAYS_MS = [250, 500, 1000, 2000, 5000] as const;
 
@@ -65,6 +66,7 @@ export class RealtimeClient {
   private active = false;
   private hasOpened = false;
   private roomReady = false;
+  private resumeToken: string | null = null;
 
   constructor(options: RealtimeClientOptions) {
     this.meetingId = options.meetingId;
@@ -125,12 +127,44 @@ export class RealtimeClient {
 
   send(event: ClientRealtimeEvent): boolean {
     const socket = this.socket;
-    if (this.isUnderPressure() || !socket) return false;
+    if (!this.active || !socket || !this.roomReady || socket.readyState !== SOCKET_OPEN) return false;
+    if (socket.bufferedAmount >= this.maximumBufferedAmount) {
+      if (this.isEssentialEvent(event)) {
+        this.failCurrentSocket(socket, "Essential realtime send blocked");
+      }
+      return false;
+    }
     try {
       socket.send(JSON.stringify(event));
       return true;
     } catch {
+      if (this.isEssentialEvent(event)) {
+        this.failCurrentSocket(socket, "Essential realtime send failed");
+      }
       return false;
+    }
+  }
+
+  private isEssentialEvent(event: ClientRealtimeEvent): boolean {
+    return event.type === "recognition.control"
+      || event.type === "signer.request"
+      || event.type === "signer.release";
+  }
+
+  private failCurrentSocket(socket: RealtimeSocketLike, reason: string): void {
+    if (!this.active || this.socket !== socket) return;
+    this.socket = null;
+    this.roomReady = false;
+    socket.onopen = null;
+    socket.onclose = null;
+    socket.onerror = null;
+    socket.onmessage = null;
+    try {
+      if (socket.readyState < SOCKET_CLOSING) socket.close(4001, reason);
+    } catch {
+      // The socket is already detached locally; reconnect still releases ownership server-side.
+    } finally {
+      this.scheduleReconnect();
     }
   }
 
@@ -157,16 +191,21 @@ export class RealtimeClient {
 
     socket.onopen = () => {
       if (!this.isCurrent(socket, generation)) return;
-      if (this.realtimeTicket) {
+      const joinCredential = this.resumeToken
+        ? { resumeToken: this.resumeToken }
+        : this.realtimeTicket
+          ? { ticket: this.realtimeTicket }
+          : null;
+      if (joinCredential) {
         try {
           socket.send(JSON.stringify({
             schemaVersion: 1,
             type: "room.join",
-            ticket: this.realtimeTicket
+            ...joinCredential
           }));
           this.emitState({ status: "joining", generation, recovered: false });
         } catch {
-          socket.close();
+          this.failCurrentSocket(socket, "Room join send failed");
         }
         return;
       }
@@ -176,10 +215,14 @@ export class RealtimeClient {
       if (!this.isCurrent(socket, generation)) return;
       const parsed = parseRealtimeEvent(message.data);
       if (parsed.ok) {
+        if (parsed.event.type === "room.joined" && parsed.event.resumeToken) {
+          this.resumeToken = parsed.event.resumeToken;
+        }
         this.onEvent?.(parsed.event, generation);
         if (parsed.event.type === "room.joined") {
           this.markReady(generation);
-        } else if (parsed.event.type === "room.error") {
+        } else if (parsed.event.type === "room.error"
+          && parsed.event.payload.code !== "INVALID_SIGNER_EVENT") {
           this.disconnect();
         }
       } else {
@@ -188,11 +231,7 @@ export class RealtimeClient {
     };
     socket.onerror = () => {
       if (!this.isCurrent(socket, generation)) return;
-      try {
-        socket.close();
-      } catch {
-        this.scheduleReconnect();
-      }
+      this.failCurrentSocket(socket, "Realtime socket error");
     };
     socket.onclose = () => {
       if (!this.isCurrent(socket, generation)) return;

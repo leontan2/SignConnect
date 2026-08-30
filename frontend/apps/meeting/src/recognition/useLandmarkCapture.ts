@@ -23,10 +23,11 @@ export interface UseLandmarkCaptureResult {
   status: LandmarkCaptureStatus;
   streamId: string | null;
   browserLocalFrame: BrowserLocalVisionFrame | null;
-  start(video: HTMLVideoElement): string | null;
+  start(video: HTMLVideoElement, capturePaused?: boolean): string | null;
   stop(): void;
   restart(video: HTMLVideoElement): string | null;
   cameraOff(): void;
+  resumeCapture(): void;
   drainPendingChunk(): boolean;
   getDroppedChunkCount(): number;
 }
@@ -66,8 +67,8 @@ export function useLandmarkCapture(options: UseLandmarkCaptureOptions): UseLandm
     return () => controller?.dispose();
   }, []);
 
-  const start = useCallback((video: HTMLVideoElement) => {
-    const nextStreamId = controllerRef.current!.start(video);
+  const start = useCallback((video: HTMLVideoElement, capturePaused = false) => {
+    const nextStreamId = controllerRef.current!.start(video, capturePaused);
     setStreamId(nextStreamId);
     return nextStreamId;
   }, []);
@@ -88,6 +89,10 @@ export function useLandmarkCapture(options: UseLandmarkCaptureOptions): UseLandm
     setStreamId(null);
   }, []);
 
+  const resumeCapture = useCallback(() => {
+    controllerRef.current!.resumeCapture();
+  }, []);
+
   const drainPendingChunk = useCallback(() => controllerRef.current!.drainPendingChunk(), []);
   const getDroppedChunkCount = useCallback(() => controllerRef.current!.stats.droppedChunks, []);
 
@@ -99,6 +104,7 @@ export function useLandmarkCapture(options: UseLandmarkCaptureOptions): UseLandm
     stop,
     restart,
     cameraOff,
+    resumeCapture,
     drainPendingChunk,
     getDroppedChunkCount
   };

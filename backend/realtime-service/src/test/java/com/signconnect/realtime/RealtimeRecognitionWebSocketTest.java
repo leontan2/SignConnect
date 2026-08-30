@@ -518,6 +518,10 @@ final class WebSocketProbe implements AutoCloseable {
         }
     }
 
+    void awaitClosed(Duration timeout) {
+        awaitLatch(closed, timeout, "WebSocket did not close");
+    }
+
     @Override
     public void close() {
         outbound.tryEmitComplete();
@@ -672,7 +676,7 @@ final class TestInferenceBoundary implements AutoCloseable {
                 ? Mono.just(0L)
                 : Mono.delay(selected.delay());
 
-        return delay.then(Mono.defer(() -> {
+        return selected.releaseSignal().then(delay).then(Mono.defer(() -> {
                     response.status(selected.status());
                     response.header("Content-Type", "application/json");
                     String responseBody = selected.status() == 200
@@ -789,39 +793,58 @@ final class TestInferenceBoundary implements AutoCloseable {
             String captionText,
             double confidence,
             Duration delay,
-            boolean nonCanonicalIds) {
+            boolean nonCanonicalIds,
+            Sinks.Empty<Void> releaseGate) {
 
         static ResponsePlan active() {
-            return new ResponsePlan(200, "MOCK_ACTIVE", "Synthetic active gesture", 0.95, Duration.ZERO, false);
+            return new ResponsePlan(
+                    200, "MOCK_ACTIVE", "Synthetic active gesture", 0.95, Duration.ZERO, false, null);
+        }
+
+        static ResponsePlan pausedActive() {
+            return new ResponsePlan(
+                    200, "MOCK_ACTIVE", "Synthetic active gesture", 0.95, Duration.ZERO, false,
+                    Sinks.empty());
         }
 
         static ResponsePlan idle() {
-            return new ResponsePlan(200, "NO_SIGN", null, 0.99, Duration.ZERO, false);
+            return new ResponsePlan(200, "NO_SIGN", null, 0.99, Duration.ZERO, false, null);
         }
 
         static ResponsePlan lowConfidence() {
-            return new ResponsePlan(200, "MOCK_ACTIVE", "Synthetic active gesture", 0.42, Duration.ZERO, false);
+            return new ResponsePlan(
+                    200, "MOCK_ACTIVE", "Synthetic active gesture", 0.42, Duration.ZERO, false, null);
         }
 
         static ResponsePlan label(String labelId, String captionText) {
-            return new ResponsePlan(200, labelId, captionText, 0.95, Duration.ZERO, false);
+            return new ResponsePlan(200, labelId, captionText, 0.95, Duration.ZERO, false, null);
         }
 
         static ResponsePlan delayedActive(Duration delay) {
-            return new ResponsePlan(200, "MOCK_ACTIVE", "Synthetic active gesture", 0.95, delay, false);
+            return new ResponsePlan(200, "MOCK_ACTIVE", "Synthetic active gesture", 0.95, delay, false, null);
         }
 
         static ResponsePlan delayedLabel(String labelId, String captionText, Duration delay) {
-            return new ResponsePlan(200, labelId, captionText, 0.95, delay, false);
+            return new ResponsePlan(200, labelId, captionText, 0.95, delay, false, null);
         }
 
         static ResponsePlan unavailable() {
-            return new ResponsePlan(503, "NO_SIGN", null, 0.0, Duration.ZERO, false);
+            return new ResponsePlan(503, "NO_SIGN", null, 0.0, Duration.ZERO, false, null);
         }
 
         static ResponsePlan withNonCanonicalIds() {
             return new ResponsePlan(
-                    200, "MOCK_ACTIVE", "Synthetic active gesture", 0.95, Duration.ZERO, true);
+                    200, "MOCK_ACTIVE", "Synthetic active gesture", 0.95, Duration.ZERO, true, null);
+        }
+
+        Mono<Void> releaseSignal() {
+            return releaseGate == null ? Mono.empty() : releaseGate.asMono();
+        }
+
+        void release() {
+            if (releaseGate != null) {
+                releaseGate.tryEmitEmpty();
+            }
         }
     }
 }

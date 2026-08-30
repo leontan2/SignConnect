@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "type": "room.join",
+  "ticket": "signed-realtime-ticket",
+  "resumeToken": "signed-resume-token"
+}

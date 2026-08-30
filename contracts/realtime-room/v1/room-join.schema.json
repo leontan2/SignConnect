@@ -4,10 +4,39 @@
   "title": "SignConnect room join event v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "type", "ticket"],
+  "required": ["schemaVersion", "type"],
   "properties": {
     "schemaVersion": { "type": "integer", "const": 1 },
     "type": { "type": "string", "const": "room.join" },
-    "ticket": { "type": "string", "minLength": 1, "maxLength": 2048 }
-  }
+    "ticket": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "pattern": "\\S",
+      "description": "Initial short-lived realtime ticket. It is mutually exclusive with resumeToken."
+    },
+    "resumeToken": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "pattern": "\\S",
+      "description": "Short-lived reconnect credential. It is mutually exclusive with ticket and remains connection-private."
+    }
+  },
+  "oneOf": [
+    {
+      "required": ["ticket"],
+      "properties": {
+        "ticket": true,
+        "resumeToken": false
+      }
+    },
+    {
+      "required": ["resumeToken"],
+      "properties": {
+        "ticket": false,
+        "resumeToken": true
+      }
+    }
+  ]
 }

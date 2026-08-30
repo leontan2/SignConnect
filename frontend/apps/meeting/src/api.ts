@@ -23,10 +23,32 @@ export type MeetingSession = {
   realtimeTicketExpiresAt: string;
 };
 
-export type RoomJoinEvent = {
+type RoomJoinBase = {
   schemaVersion: 1;
   type: "room.join";
-  ticket: string;
+};
+
+export type RoomJoinEvent = RoomJoinBase & (
+  | { ticket: string; resumeToken?: never }
+  | { ticket?: never; resumeToken: string }
+);
+
+export type SignerRequestEvent = {
+  schemaVersion: 1;
+  type: "signer.request";
+  requestId: string;
+  streamId: string;
+  sequence: number;
+  timestampMs: number;
+};
+
+export type SignerReleaseEvent = {
+  schemaVersion: 1;
+  type: "signer.release";
+  streamId: string;
+  sequence: number;
+  timestampMs: number;
+  reason: "recognition_stopped" | "user_request";
 };
 
 export type RecognitionControlEvent = {
@@ -50,6 +72,8 @@ export type LegacyRecognitionResultEvent = {
 export type ClientRealtimeEvent =
   | LandmarkChunk
   | RecognitionControlEvent
+  | SignerRequestEvent
+  | SignerReleaseEvent
   | LegacyRecognitionResultEvent
   | RoomJoinEvent;
 
@@ -116,14 +140,18 @@ export type RoomParticipant = {
   participantId: string;
   displayName: string;
   role: ParticipantRole;
+  activeSigner?: boolean;
 };
 
 export type RoomJoinedEvent = ServerEventEnvelope & {
   type: "room.joined";
   participantId: string;
+  resumeToken?: string;
+  resumeExpiresAt?: string;
   payload: {
     displayName: string;
     role: ParticipantRole;
+    activeSigner?: boolean;
   };
 };
 
@@ -139,14 +167,62 @@ type ParticipantEvent = ServerEventEnvelope & {
   payload: {
     displayName: string;
     role: ParticipantRole;
+    activeSigner?: boolean;
   };
 };
 
 export type ParticipantPresenceEvent =
   | (ParticipantEvent & { type: "participant.joined" })
-  | (ParticipantEvent & { type: "participant.left" });
+  | (ParticipantEvent & { type: "participant.left" })
+  | (Omit<ParticipantEvent, "payload"> & {
+      type: "participant.updated";
+      payload: {
+        displayName: string;
+        role: ParticipantRole;
+        activeSigner: boolean;
+      };
+    });
 
-export type RoomErrorCode = "JOIN_REQUIRED" | "INVALID_JOIN" | "ALREADY_JOINED" | "ROOM_FULL";
+export type SignerDeniedReason = "SIGNER_UNAVAILABLE" | "ALREADY_ACTIVE" | "NOT_JOINED";
+
+export type SignerGrantedEvent = ServerEventEnvelope & {
+  type: "signer.granted";
+  participantId: string;
+  payload: {
+    requestId: string;
+    streamId: string;
+  };
+};
+
+export type SignerDeniedEvent = ServerEventEnvelope & {
+  type: "signer.denied";
+  streamId: string;
+  payload: {
+    requestId: string;
+    reason: SignerDeniedReason;
+  };
+};
+
+export type SignerReleasedEvent = ServerEventEnvelope & {
+  type: "signer.released";
+  participantId: string;
+  payload: {
+    requestId: string;
+    streamId: string;
+    reason: "recognition_stopped" | "user_request" | "disconnected";
+  };
+};
+
+export type RoomErrorCode =
+  | "JOIN_REQUIRED"
+  | "INVALID_JOIN"
+  | "ALREADY_JOINED"
+  | "ROOM_FULL"
+  | "ROOM_NOT_FOUND"
+  | "REALTIME_TICKET_EXPIRED"
+  | "TICKET_EXPIRED"
+  | "PARTICIPANT_CONNECTED"
+  | "INVALID_SIGNER_EVENT";
 
 export type RoomErrorEvent = ServerEventEnvelope & {
   type: "room.error";
@@ -163,6 +239,9 @@ export type ServerRealtimeEvent =
   | RoomJoinedEvent
   | RoomSnapshotEvent
   | ParticipantPresenceEvent
+  | SignerGrantedEvent
+  | SignerDeniedEvent
+  | SignerReleasedEvent
   | RoomErrorEvent;
 export type CaptionEvent = CaptionFinalEvent;
 

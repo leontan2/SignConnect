@@ -215,6 +215,7 @@ export class LandmarkCaptureController {
   private batcher: LandmarkBatcher | null = null;
   private animationHandle: number | null = null;
   private active = false;
+  private capturePaused = false;
   private modelReady = false;
   private creatingFrame = false;
   private inFlightRequestId: number | null = null;
@@ -261,7 +262,7 @@ export class LandmarkCaptureController {
     return this.batcher?.stats ?? { bufferedFrames: 0, pendingChunks: 0, droppedChunks: 0 };
   }
 
-  start(video: HTMLVideoElement): string | null {
+  start(video: HTMLVideoElement, capturePaused = false): string | null {
     if (this.active || this.worker) this.teardown("stopped");
 
     let streamId: string;
@@ -275,6 +276,7 @@ export class LandmarkCaptureController {
     }
     this.generation += 1;
     this.active = true;
+    this.capturePaused = capturePaused;
     this.modelReady = false;
     this.creatingFrame = false;
     this.inFlightRequestId = null;
@@ -316,6 +318,16 @@ export class LandmarkCaptureController {
     return this.start(video);
   }
 
+  resumeCapture(): void {
+    if (!this.active || !this.streamIdValue || !this.capturePaused) return;
+    this.capturePaused = false;
+    this.batcher = new LandmarkBatcher({
+      streamId: this.streamIdValue,
+      consumer: this.consumer
+    });
+    this.lastCaptureTimestampMs = Number.NEGATIVE_INFINITY;
+  }
+
   cameraOff(): void {
     this.stop();
   }
@@ -346,6 +358,7 @@ export class LandmarkCaptureController {
       return;
     }
     if (this.statusValue === "camera-waiting") this.setStatus("ready");
+    if (this.capturePaused) return;
     if (this.creatingFrame || this.inFlightRequestId !== null) return;
 
     const timestampMs = this.clock.now();
@@ -440,6 +453,7 @@ export class LandmarkCaptureController {
 
   private teardown(finalStatus: LandmarkCaptureStatus): void {
     this.active = false;
+    this.capturePaused = false;
     this.modelReady = false;
     this.generation += 1;
     this.clearInitializationWatchdog();

@@ -130,6 +130,7 @@ Buttons must use active, specific labels such as “Start session,” “Turn ca
 ### Recognition console
 
 - Camera is the dominant working surface.
+- Present camera video and its tracking overlay in the same responsive 4:3 stage. Preserve the full captured frame with centered `object-fit: contain`; do not stretch or shallow-crop the signer.
 - Keep controls in a stable dock below the video so state changes do not move the capture area.
 - Use the primary action for starting recognition and the accent action while recognition is active.
 - Use the selected variant while the camera is enabled.

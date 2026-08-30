@@ -41,8 +41,32 @@ class RealtimeTicketCodecTest {
 
         assertThatThrownBy(() -> codec.verify(expiredTicket))
                 .isInstanceOf(RealtimeTicketCodec.InvalidTicketException.class)
-                .hasMessageContaining("expired");
+                .hasMessageContaining("expired")
+                .satisfies(error -> assertThat(
+                        ((RealtimeTicketCodec.InvalidTicketException) error).reason())
+                        .isEqualTo(RealtimeTicketCodec.InvalidTicketException.Reason.EXPIRED));
         assertThatThrownBy(() -> codec.verify(expiredTicket.substring(0, expiredTicket.length() - 1) + "A"))
+                .isInstanceOf(RealtimeTicketCodec.InvalidTicketException.class);
+    }
+
+    @Test
+    void keepsShortLivedResumeCredentialsPurposeBound() {
+        RealtimeTicketCodec codec = codec();
+        RealtimeTicketCodec.Claims claims = new RealtimeTicketCodec.Claims(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                "Returning guest",
+                "GUEST",
+                NOW.plusSeconds(120));
+        String resumeToken = codec.issueResume(claims);
+        String rotatedResumeToken = codec.issueResume(claims);
+
+        assertThat(codec.verifyResume(resumeToken)).isEqualTo(claims);
+        assertThat(rotatedResumeToken).isNotEqualTo(resumeToken);
+        assertThat(codec.verifyResume(rotatedResumeToken)).isEqualTo(claims);
+        assertThatThrownBy(() -> codec.verify(resumeToken))
+                .isInstanceOf(RealtimeTicketCodec.InvalidTicketException.class);
+        assertThatThrownBy(() -> codec.verifyResume(codec.issue(claims)))
                 .isInstanceOf(RealtimeTicketCodec.InvalidTicketException.class);
     }
 

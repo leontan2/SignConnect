@@ -18,6 +18,6 @@ public record RoomSnapshotEvent(
         }
     }
 
-    public record Participant(UUID participantId, String displayName, String role) {
+    public record Participant(UUID participantId, String displayName, String role, boolean activeSigner) {
     }
 }

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.signconnect.dev/realtime-room/v1/signer-release.schema.json",
+  "title": "SignConnect active-signer release v1",
+  "description": "Connection-private command releasing the active-signer lease owned by the specified recognition stream.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "type", "streamId", "sequence", "timestampMs", "reason"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "type": { "type": "string", "const": "signer.release" },
+    "streamId": { "$ref": "#/$defs/uuid" },
+    "sequence": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Contiguous command sequence shared by signer.request and signer.release on this connection; it follows the grant request sequence."
+    },
+    "timestampMs": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Finite non-negative command timestamp that must be strictly greater than the preceding signer command timestamp on this connection."
+    },
+    "reason": { "type": "string", "enum": ["recognition_stopped", "user_request"] }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    }
+  }
+}

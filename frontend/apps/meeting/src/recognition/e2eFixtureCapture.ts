@@ -11,6 +11,60 @@ const firstIdleFrameIndex = replayFrames.findIndex((frame) =>
   frame.features.slice(0, 168).every((value, index) => index % 4 !== 3 || value === 0)
 );
 let replayCycle = 0;
+let activeFixtureWorker: E2eFixtureWorker | null = null;
+
+export class E2eFixtureReplayGate {
+  private readonly frameCount: number;
+  private reservedStreamId: string | null = null;
+  private authorized = false;
+  private frameIndex = 0;
+
+  constructor(frameCount: number) {
+    if (!Number.isInteger(frameCount) || frameCount <= 0) {
+      throw new RangeError("The E2E fixture replay requires a positive frame count.");
+    }
+    this.frameCount = frameCount;
+  }
+
+  observeSuccessfullySent(data: unknown): boolean {
+    if (typeof data !== "string") return false;
+
+    let event: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(data) as unknown;
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return false;
+      event = parsed as Record<string, unknown>;
+    } catch {
+      return false;
+    }
+
+    if (event.type === "signer.request" && typeof event.streamId === "string") {
+      this.reservedStreamId = event.streamId;
+      this.authorized = false;
+      this.frameIndex = 0;
+      return false;
+    }
+
+    if (event.type !== "recognition.control"
+      || event.action !== "start"
+      || typeof event.streamId !== "string"
+      || event.streamId !== this.reservedStreamId
+      || this.authorized) {
+      return false;
+    }
+
+    this.authorized = true;
+    this.frameIndex = 0;
+    return true;
+  }
+
+  nextSourceIndex(): number {
+    if (!this.authorized) return 0;
+    const sourceIndex = this.frameIndex < this.frameCount ? this.frameIndex : 0;
+    this.frameIndex += 1;
+    return sourceIndex;
+  }
+}
 
 class FixtureFrame implements Pick<ImageBitmap, "close"> {
   close(): void {
@@ -22,9 +76,13 @@ class E2eFixtureWorker implements LandmarkWorkerLike {
   onmessage: ((event: MessageEvent<LandmarkWorkerResult>) => void) | null = null;
   onerror: ((event: ErrorEvent) => void) | null = null;
   private readonly cycle = ++replayCycle;
-  private frameIndex = 0;
+  private readonly replayGate = new E2eFixtureReplayGate(replayFrames.length);
   private terminated = false;
   private announcedCompletion = false;
+
+  constructor() {
+    activeFixtureWorker = this;
+  }
 
   postMessage(message: LandmarkWorkerCommand): void {
     if (this.terminated) return;
@@ -37,11 +95,8 @@ class E2eFixtureWorker implements LandmarkWorkerLike {
       return;
     }
 
-    const sourceIndex = this.frameIndex < replayFrames.length
-      ? this.frameIndex
-      : 0;
+    const sourceIndex = this.replayGate.nextSourceIndex();
     const source = replayFrames[sourceIndex];
-    this.frameIndex += 1;
     message.frame.close();
 
     if (!this.announcedCompletion && sourceIndex === firstIdleFrameIndex) {
@@ -71,6 +126,13 @@ class E2eFixtureWorker implements LandmarkWorkerLike {
 
   terminate(): void {
     this.terminated = true;
+    if (activeFixtureWorker === this) activeFixtureWorker = null;
+  }
+
+  observeSuccessfullySent(data: unknown): void {
+    if (this.replayGate.observeSuccessfullySent(data)) {
+      this.announcedCompletion = false;
+    }
   }
 
   private emit(result: LandmarkWorkerResult): void {
@@ -78,11 +140,22 @@ class E2eFixtureWorker implements LandmarkWorkerLike {
   }
 }
 
+function fixtureSocketFactory(url: string): WebSocket {
+  const socket = new WebSocket(url);
+  const nativeSend = socket.send.bind(socket);
+  socket.send = ((data: string | ArrayBufferLike | Blob | ArrayBufferView) => {
+    nativeSend(data);
+    activeFixtureWorker?.observeSuccessfullySent(data);
+  }) as WebSocket["send"];
+  return socket;
+}
+
 if (!FIXTURE_ENABLED) {
   throw new Error("The E2E fixture adapter was compiled without its test-only build flag.");
 }
 
 const FixtureMeetingApp = createMeetingApp({
+  socketFactory: fixtureSocketFactory,
   captureOptions: {
     workerFactory: () => new E2eFixtureWorker(),
     frameFactory: () => new FixtureFrame() as ImageBitmap

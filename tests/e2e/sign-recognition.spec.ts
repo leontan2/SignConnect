@@ -10,6 +10,7 @@ declare global {
 
 type FrameSummary = {
   direction: "sent" | "received";
+  socketIndex: number;
   type: string;
   streamId?: string;
   sequence?: number;
@@ -30,7 +31,7 @@ const SIMULATOR_ENABLED = process.env.SIGNCONNECT_E2E_SIMULATOR === "true";
 function collectSocketDiagnostics(page: Page): SocketDiagnostics {
   const diagnostics: SocketDiagnostics = { urls: [], frames: [] };
   page.on("websocket", (socket) => {
-    diagnostics.urls.push(socket.url());
+    const socketIndex = diagnostics.urls.push(socket.url()) - 1;
     const summarize = (direction: FrameSummary["direction"], payload: string | Buffer) => {
       if (diagnostics.frames.length >= 64) return;
       try {
@@ -40,6 +41,7 @@ function collectSocketDiagnostics(page: Page): SocketDiagnostics {
           : undefined;
         diagnostics.frames.push({
           direction,
+          socketIndex,
           type: typeof parsed.type === "string" ? parsed.type : "malformed",
           streamId: typeof parsed.streamId === "string" ? parsed.streamId : undefined,
           sequence: typeof parsed.sequence === "number" ? parsed.sequence : undefined,
@@ -48,7 +50,7 @@ function collectSocketDiagnostics(page: Page): SocketDiagnostics {
           mockModel: typeof body?.mockModel === "boolean" ? body.mockModel : undefined
         });
       } catch {
-        diagnostics.frames.push({ direction, type: "non-json" });
+        diagnostics.frames.push({ direction, socketIndex, type: "non-json" });
       }
     };
     socket.on("framesent", ({ payload }) => summarize("sent", payload));
@@ -128,10 +130,16 @@ test.describe("sign-recognition full-stack milestone", () => {
     await enableCameraAndSession(page);
 
     await expect(page.locator("video.visible")).toBeVisible();
-    await expect(page.getByText(/derived hand and body landmarks are transmitted temporarily/i)).toBeVisible();
-    await expect(page.getByText(/raw video stays in this browser and is never sent/i)).toBeVisible();
-    expect(diagnostics.frames.filter((frame) => frame.direction === "sent").map((frame) => frame.type))
-      .toEqual(["room.join"]);
+    await expect(page.getByText(/starting recognition consents to transient hand and body landmark transmission/i))
+      .toBeVisible();
+    await expect(page.getByText(/raw video is not transmitted/i)).toBeVisible();
+    const sentTypes = diagnostics.frames
+      .filter((frame) => frame.direction === "sent")
+      .map((frame) => frame.type);
+    expect(sentTypes).toContain("room.join");
+    expect(sentTypes.filter((type) => type === "landmark.chunk"
+      || type === "recognition.control"
+      || type === "signer.request")).toEqual([]);
   });
 
   test("keyboard consent produces one shared synthetic final and ignores non-final transcript events", async ({ page, request }) => {
@@ -142,6 +150,8 @@ test.describe("sign-recognition full-stack milestone", () => {
 
     const realtimeUrl = diagnostics.urls.find((url) => url.includes("/ws/v1/realtime/"));
     expect(realtimeUrl).toBeTruthy();
+    const meetingSocketIndex = diagnostics.urls.findIndex((url) => url === realtimeUrl);
+    expect(meetingSocketIndex).toBeGreaterThanOrEqual(0);
     const roomCode = (await page.locator(".room-identity strong").textContent())?.trim();
     expect(roomCode).toMatch(/^[A-Z2-9]{6}$/);
     const joinResponse = await request.post(
@@ -176,12 +186,14 @@ test.describe("sign-recognition full-stack milestone", () => {
     await expect(transcript.getByRole("article")).toHaveCount(1);
     await expect(transcript.getByRole("note")).toContainText(/not validated SGSL recognition/i);
     await expect(transcript.getByText("synthetic-v1")).toBeVisible();
-    await expect(transcript.getByText("Mock integration model", { exact: true })).toBeVisible();
+    await expect(transcript.getByText("Mock integration model.", { exact: true })).toBeVisible();
 
     await page.waitForTimeout(1_800);
     await expect(transcript.getByRole("article")).toHaveCount(1);
     const receivedFinals = diagnostics.frames.filter(
-      (frame) => frame.direction === "received" && frame.type === "caption.final"
+      (frame) => frame.socketIndex === meetingSocketIndex
+        && frame.direction === "received"
+        && frame.type === "caption.final"
     );
     expect(receivedFinals).toHaveLength(1);
     expect(receivedFinals[0]).toMatchObject({
@@ -215,23 +227,23 @@ test.describe("sign-recognition full-stack milestone", () => {
       },
       occurredAt: new Date().toISOString()
     });
-    await expect(page.getByText(/not recognized with enough confidence/i)).toBeVisible();
+    await expect(page.locator(".recognition-feedback")).toContainText(
+      /not recognized with enough confidence/i
+    );
     await expect(transcript.getByRole("article")).toHaveCount(1);
   });
 
-  test("reconnect creates a fresh stream and rejects stale output", async ({ page, request }) => {
-    await exposeNativeSockets(page);
+  test("full realtime restart clears the defunct ephemeral room and reports it missing", async ({ page, request }) => {
     const diagnostics = collectSocketDiagnostics(page);
     await openWorkspace(page);
     await enableCameraAndSession(page);
     await startRecognitionWithKeyboard(page);
-
+    const transcript = page.getByRole("region", { name: "Live transcript" });
+    await expect(transcript.getByRole("article")).toHaveCount(1, { timeout: 15_000 });
+    await expect(transcript.getByRole("note")).toContainText(/mock integration model/i);
     await expect.poll(() => diagnostics.frames.filter(
-      (frame) => frame.direction === "sent" && frame.type === "recognition.control"
-    ).length).toBeGreaterThanOrEqual(1);
-    const firstStream = diagnostics.frames.find(
-      (frame) => frame.direction === "sent" && frame.type === "recognition.control"
-    )!.streamId!;
+      (frame) => frame.direction === "received" && frame.type === "caption.final"
+    ).length).toBe(1);
 
     let realtimeStopped = false;
     try {
@@ -240,37 +252,16 @@ test.describe("sign-recognition full-stack milestone", () => {
       await expect(page.getByText(/^Reconnecting in \d+ ms$/i)).toBeVisible();
       await controlService(request, "realtime", "start");
       realtimeStopped = false;
-      await expect(page.getByText(/Connection recovered/i)).toBeVisible({ timeout: 20_000 });
-      await expect.poll(() => new Set(diagnostics.frames
-        .filter((frame) => frame.direction === "sent" && frame.type === "recognition.control")
-        .map((frame) => frame.streamId)).size).toBe(2);
-
-      const starts = diagnostics.frames.filter(
-        (frame) => frame.direction === "sent" && frame.type === "recognition.control"
-      );
-      const secondStream = starts.find((frame) => frame.streamId !== firstStream)!.streamId!;
-      const meetingId = diagnostics.urls.find((url) => url.includes("/ws/v1/realtime/"))!
-        .split("/").at(-1)!;
-      await injectServerEvent(page, {
-        schemaVersion: 1,
-        type: "caption.final",
-        meetingId,
-        streamId: firstStream,
-        sequence: 99,
-        payload: {
-          labelId: "MOCK_ACTIVE",
-          text: "Stale caption",
-          confidence: 0.99,
-          modelVersion: "synthetic-v1",
-          inferenceLatencyMs: 1,
-          mockModel: true
-        },
-        occurredAt: new Date().toISOString()
-      });
-      await expect(page.getByText("Stale caption")).toHaveCount(0);
-      await expect(page.getByText("Synthetic active gesture")).toBeVisible({ timeout: 15_000 });
-      expect(secondStream).not.toBe(firstStream);
-      await expect(page.getByRole("region", { name: "Live transcript" }).getByRole("article")).toHaveCount(1);
+      await expect(page.getByRole("alert")).toContainText(/room no longer exists/i, { timeout: 20_000 });
+      await expect(page.getByRole("region", { name: "Open a shared room" })).toBeVisible();
+      await page.waitForTimeout(500);
+      await expect(transcript.getByRole("article")).toHaveCount(0);
+      await expect(transcript.getByText("No captions yet", { exact: true })).toBeVisible();
+      await expect(transcript.getByLabel("0 final captions")).toBeVisible();
+      await expect(transcript.getByRole("note")).toHaveCount(0);
+      await expect.poll(() => diagnostics.frames.filter(
+        (frame) => frame.direction === "received" && frame.type === "caption.final"
+      ).length).toBe(1);
     } finally {
       if (realtimeStopped) await controlService(request, "realtime", "start");
     }
@@ -287,13 +278,13 @@ test.describe("sign-recognition full-stack milestone", () => {
     try {
       await controlService(request, "inference", "stop");
       inferenceStopped = true;
-      await expect(page.getByRole("status", { name: "Recognition service status" })).toContainText(
+      await expect(page.getByLabel("Recognition service status")).toContainText(
         /temporarily unavailable/i,
         { timeout: 10_000 }
       );
       await controlService(request, "inference", "start");
       inferenceStopped = false;
-      await expect(page.getByRole("status", { name: "Recognition service status" })).toContainText(
+      await expect(page.getByLabel("Recognition service status")).toContainText(
         /available again|recovered/i,
         { timeout: 15_000 }
       );
