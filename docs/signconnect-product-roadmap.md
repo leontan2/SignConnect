@@ -1145,7 +1145,7 @@ Copy this template when completing a milestone:
 ### Milestone 3 implementation record
 
 - Branch: `codex/gesture-segmentation`
-- Pull request or commit: Pending current implementation commit
+- Pull request or commit: `94af8899178d38d3843482ebe30caec607ebb227`
 - Implementation date: 2026-08-30
 - Demonstration performed: The running fixture-backed app traversed actionable camera-quality, calibration, stationary/dynamic gesture, processing, recognized, and unknown states; the optional overlay remained keyboard-operable and the completed UI reflowed at 320 CSS pixels. A privacy-preserving Windows physical-camera check confirmed the contained 4:3 preview, one-hand tracking, and corrected shoulder-plus-one-hand readiness path without retaining a screenshot or landmark values.
 - Automated checks run: Unified release verifier, 113 meeting tests, 183 backend tests, 225 ML tests inside the verifier plus 228 after the final trust-root review, 23 training-contract fixtures, 20 staged-file guard tests and the real staged scan, typecheck, production builds, release-runner self-test, 16/16 E2E tests in bundled Chromium, installed Chrome, and installed Edge, simulator 1/1, and performance 1/1. Performance evidence is recorded in the AI implementation checklist.
@@ -1156,7 +1156,7 @@ Copy this template when completing a milestone:
 ### Milestone 4 engineering-pipeline record
 
 - Branch: `codex/gesture-segmentation`
-- Pull request or commit: Pending current implementation commit
+- Pull request or commit: `94af8899178d38d3843482ebe30caec607ebb227`
 - Implementation date: 2026-08-30
 - Demonstration performed: Reproducible synthetic TCN training/export/parity and explicit Java loading proved the mechanics without claiming SGSL quality.
 - Automated checks run: Strict contract fixtures, consent/review/retention and exact-digest staged-file privacy guards, duplicate auditing, signer-leak and OOV/reject-accounting checks, clean reproducibility provenance, robustness slices, repository-trusted evidence anchors, evidence-bound promotion/release gates, Python/Java/ONNX parity, measured Java report validation, full unified release verifier, three-browser E2E, and synthetic latency probes.
