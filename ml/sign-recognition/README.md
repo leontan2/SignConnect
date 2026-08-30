@@ -5,6 +5,11 @@ This package is the reproducible training and export lane for the SignConnect
 convolution baseline and a GRU comparison model. It does **not** contain a
 trained Singapore Sign Language (SgSL) model or real participant data.
 
+It also contains the reproducible adapter/export lane for the optional
+OpenHands WLASL SL-GCN research pack. That pack uses genuine ASL data,
+`mockModel: false`, and language tag `ase`, but remains blocked from production
+promotion because WLASL is research-scoped and ASL is not SgSL.
+
 ## Safety and provenance boundary
 
 The included fixture generator creates obvious, separable numeric patterns.
@@ -51,6 +56,27 @@ landmarks in this repository.
 uv venv
 uv sync --extra test
 ```
+
+## Pretrained ASL research pack
+
+Run the repository-level setup command rather than handling upstream files by
+hand:
+
+```powershell
+.\scripts\setup-asl-research-model.ps1
+```
+
+The command downloads and SHA-256-verifies the official OpenHands WLASL
+SL-GCN checkpoint and WLASL metadata, checks out the pinned OpenHands source
+revision, installs the locked `asl-research` dependencies, and exports a
+self-contained ONNX model. Its public boundary remains `[1,30,224]`; the graph
+adapts the v2 SignConnect layout to OpenHands' 27-point graph internally.
+
+The bounded runtime vocabulary is `NO_SIGN` plus Hello, Thank you, Yes, No,
+Help, Repeat, Slower, Understand, Finished, and Goodbye. The adapter aggregates
+audited WLASL gloss aliases and rejects unsupported classes through a frozen
+margin. This is an engineering/research rejection layer, not validated
+open-world accuracy or a universal sign-language model.
 
 ## Offline preprocessing
 

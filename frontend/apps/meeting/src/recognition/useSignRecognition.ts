@@ -250,6 +250,18 @@ export function useSignRecognition(options: UseSignRecognitionOptions): UseSignR
     return false;
   }, [beginStream]);
 
+  useEffect(() => {
+    if (!options.cameraEnabled
+      || enabledRef.current
+      || activeStreamRef.current
+      || options.realtimeState.status !== "connected") {
+      return;
+    }
+    const video = optionsRef.current.getVideo();
+    if (video) startCapture(video, true);
+  }, [options.cameraEnabled, options.realtimeState.generation, options.realtimeState.status,
+    startCapture]);
+
   const stopStream = useCallback((
     preserveIntent: boolean,
     notifyServer: boolean,
@@ -354,10 +366,10 @@ export function useSignRecognition(options: UseSignRecognitionOptions): UseSignR
   }, [beginStream, options.cameraEnabled, options.realtimeState.generation, options.realtimeState.status, stopStream]);
 
   useEffect(() => {
-    if (!options.cameraEnabled && (enabledRef.current || activeStreamRef.current)) {
-      cameraOff();
-    }
-  }, [cameraOff, options.cameraEnabled]);
+    if (options.cameraEnabled) return;
+    if (enabledRef.current || activeStreamRef.current) cameraOff();
+    else cameraOffCapture();
+  }, [cameraOff, cameraOffCapture, options.cameraEnabled]);
 
   useEffect(() => {
     if ((captureStatus === "unavailable" || captureStatus === "error")

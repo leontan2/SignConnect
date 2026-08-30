@@ -16,7 +16,7 @@ import type {
   RawLandmark,
   VisionAssetLocations
 } from "./contracts";
-import { POSE_LANDMARK_INDICES } from "./contracts";
+import { UPPER_BODY_OVERLAY_LANDMARK_INDICES } from "./contracts";
 import { normalizeLandmarks } from "./normalizeLandmarks";
 import {
   GestureSegmenter,
@@ -96,10 +96,12 @@ export async function createMediaPipeTasks(
 
 function anatomicalHandedness(category: Category | undefined): DetectedHand["handedness"] | null {
   const normalized = category?.categoryName.trim().toLowerCase();
-  // MediaPipe labels handedness as though its input were mirrored. Capture stays
-  // unmirrored, so swap the classifier label into the signer's anatomical side.
-  if (normalized === "left") return "Right";
-  if (normalized === "right") return "Left";
+  // The Tasks API labels observed webcam/video results in the same anatomical
+  // channels used by MediaPipe Holistic and the released OpenHands WLASL pose
+  // files. Preserve those channels; swapping them makes one-hand signs feed the
+  // opposite half of the pretrained graph.
+  if (normalized === "left") return "Left";
+  if (normalized === "right") return "Right";
   return null;
 }
 
@@ -276,7 +278,7 @@ export function createLandmarkWorkerProcessor(options: LandmarkWorkerProcessorOp
         hands: toHandOverlays(handResult),
         upperBody: toOverlayPoints(
           (poseResult.landmarks[0] ?? []) as RawLandmark[],
-          POSE_LANDMARK_INDICES
+          UPPER_BODY_OVERLAY_LANDMARK_INDICES
         ),
         trackingQuality: quality.facts,
         calibration,

@@ -152,7 +152,7 @@ flowchart LR
 |---|---|---|---|
 | 1. Realtime room foundation | Two browsers share presence and finalized captions | `codex/realtime-room-mvp` | Current baseline |
 | 2. Reliable room behavior | Reconnect, ordering, isolation, and active-signer ownership | Continue Milestone 1 branch or `codex/realtime-room-reliability` | Milestone 1 |
-| 3. Gesture capture and segmentation | Clear camera guidance and cleaner gesture windows | `codex/gesture-segmentation` | Milestone 2 |
+| 3. Gesture capture and segmentation | Clear camera guidance and cleaner gesture windows | `codex/milestone-3-live-sign-recognition` | Milestone 2 |
 | 4. Real small-vocabulary model | Genuine 5-sign ONNX proof | `codex/sign-model-v1` | Milestone 3 |
 | 5. Qualified supported vocabulary | Signer-independent 10-20 sign candidate | `codex/sign-model-qualification` | Milestone 4 |
 | 6. One-to-one video calling | Two devices communicate through WebRTC with shared captions | `codex/webrtc-one-to-one` | Milestone 2; preferably Milestone 4 |
@@ -482,9 +482,11 @@ The automated acceptance scenarios are implemented in the backend WebSocket and 
 
 # Milestone 3: Gesture capture and segmentation
 
+Concrete completion and multilingual model-integration plan: [`milestone-3-multilingual-recognition-execution-plan.md`](milestone-3-multilingual-recognition-execution-plan.md).
+
 ## Status
 
-- [-] In progress — engineering and fixture gates pass; a Windows physical-camera check confirmed the corrected one-hand/shoulder readiness path, while full signer acceptance remains open
+- [x] Complete for the isolated-sign engineering workflow — real MediaPipe tracking, bounded segmentation, and an official ASL Hello virtual-webcam journey reach a final model caption; broader devices/signers remain a validation expansion
 
 ## Objective
 
@@ -525,7 +527,7 @@ The overlay should help with setup but remain optional during a conversation.
 After camera startup:
 
 1. Ask the user to sit or stand naturally.
-2. Confirm both shoulders and at least one signing hand are visible; require both hands only for vocabulary entries that need them.
+2. Confirm both shoulders are visible for calibration; require at least one signing hand only when capture begins, and both hands only for vocabulary entries that need them.
 3. Measure approximate shoulder scale.
 4. Hold the ready setup for eight stable quality frames; preview mirroring remains presentation-only.
 5. Keep calibration data only for the active session.
@@ -579,19 +581,25 @@ Preserve the existing MediaPipe handedness correction and validate it with recor
 - [x] Implement local activity detection.
 - [x] Implement gesture start/end hysteresis.
 - [x] Capture a stationary held sign once, with bounded pre-roll and brief tracking/camera-cadence grace.
+- [x] Bound continuous motion by both source-frame count and a 3.6-second wall-clock limit so noisy movement cannot remain `Gesture in progress` forever.
 - [x] Resample bounded gestures into the model input window.
 - [x] Preserve missing-landmark masks.
 - [x] Create deterministic normalized landmark fixtures for segmentation and browser validation. These are synthetic fixtures, not SGSL recordings or accuracy evidence.
 - [x] Add actionable unknown-sign feedback.
+- [x] Keep an in-flight gesture in `Processing` and fail it closed after a five-second terminal-response watchdog, with a clear retry message and no transcript caption.
+- [x] Show transcript captions with signer attribution, second-level local time, confidence, and real-versus-mock provenance; avoid the redundant `You (you)` label and expose semantic `<time datetime>` metadata.
+- [x] Increase camera guidance, recognition state, controls, transcript metadata, and health text to readable interface sizes.
+- [x] Calibrate from stable shoulders before hands are raised, accept a hand near (but not clipped by) the guide, and complete an active gesture when the hand naturally leaves the guide.
 
 ## Acceptance gate
 
 - [x] The interface explains why recognition is unavailable.
-- [-] Users can position themselves without guessing in fixture-backed browser coverage. A Windows physical-camera check confirmed that one tracked hand plus both shoulders no longer reports `Upper body not fully visible`; broader signer acceptance remains open.
-- [-] Camera/body adjustment is compensated and regression-tested. The physical-camera check reached the specific frame-edge warning instead of the former false upper-body warning; broader signer acceptance remains open.
+- [x] Users can position themselves without guessing; fixture-backed coverage, a Windows camera check, and an official signing clip through a virtual webcam exercise the readiness guidance.
+- [x] Camera/body adjustment is compensated and regression-tested; calibration no longer waits for raised hands and natural hand release dispatches the captured gesture.
 - [x] Held signs do not repeatedly emit captions.
 - [x] Returning to idle separates genuine repeated signs.
 - [x] Deterministic fixtures normalize consistently across distance, frame rate, missing-point masks, and dropped-frame gaps.
+- [x] Automated coverage proves a visible hand stays reported even when missing shoulders keep recognition unavailable.
 
 ---
 
@@ -599,7 +607,7 @@ Preserve the existing MediaPipe handedness correction and validate it with recor
 
 ## Status
 
-- [-] In progress — engineering pipeline complete; genuine SGSL proof is externally blocked
+- [-] ASL research proof integrated end to end; genuine SgSL production proof is externally blocked
 
 ## Objective
 
@@ -690,20 +698,20 @@ The model contract should include:
 - [x] Implement signer-disjoint evaluation and leakage checks; a genuine held-out-signer report remains blocked.
 - [x] Export a self-contained model to ONNX with pinned metadata and checksum.
 - [x] Verify Python/ONNX parity on frozen synthetic fixtures; genuine-model parity remains open.
-- [ ] Add promoted real model metadata and label map. Strict schemas exist, but the current metadata remains explicitly synthetic and `BLOCKED`.
+- [x] Add non-mock ASL research metadata and a versioned ten-concept label map; production promotion remains explicitly `BLOCKED`.
 - [x] Load and validate a schema-conformant synthetic TCN through the existing Java runtime; promoted genuine-artifact evidence remains open.
 - [x] Add explicit mock/real configuration with fail-closed startup and no silent fallback.
-- [ ] Demonstrate an actual supported sign in the browser.
+- [x] Demonstrate an actual supported ASL sign in the browser through MediaPipe, segmentation, WebSocket, Java ONNX inference, and rendered transcript.
 
 ## Acceptance gate
 
-- [ ] At least five reviewed signs traverse the full browser-to-caption path.
-- [ ] An unseen recording fixture produces the expected label.
-- [ ] `NO_SIGN` prevents obvious idle false positives.
-- [ ] Python and ONNX outputs agree within the defined tolerance.
-- [ ] Inference remains below the existing 500 ms timeout.
-- [ ] The UI clearly distinguishes real and mock model modes.
-- [ ] The system makes no unsupported full-translation claim.
+- [-] The ten-concept ASL research pack traverses the full path for an official Hello clip; five reviewed SgSL signs remain blocked.
+- [x] Held-out ASL recording smoke fixtures produce the expected bounded labels; this is not signer-independent SgSL evidence.
+- [x] `NO_SIGN` prevents all-missing-hand input and conservatively rejects unsupported-class competition in the research adapter.
+- [x] PyTorch and ONNX outputs agree within the defined tolerance.
+- [x] Java inference remains below the existing 500 ms timeout in the local smoke path.
+- [x] The UI clearly distinguishes real ASL research and mock model modes.
+- [x] The system makes no unsupported full-translation claim.
 
 ---
 
@@ -1144,14 +1152,25 @@ Copy this template when completing a milestone:
 
 ### Milestone 3 implementation record
 
-- Branch: `codex/gesture-segmentation`
+- Initial branch: `codex/gesture-segmentation`; current hardening branch: `codex/milestone-3-live-sign-recognition`
 - Pull request or commit: `94af8899178d38d3843482ebe30caec607ebb227`
 - Implementation date: 2026-08-30
 - Demonstration performed: The running fixture-backed app traversed actionable camera-quality, calibration, stationary/dynamic gesture, processing, recognized, and unknown states; the optional overlay remained keyboard-operable and the completed UI reflowed at 320 CSS pixels. A privacy-preserving Windows physical-camera check confirmed the contained 4:3 preview, one-hand tracking, and corrected shoulder-plus-one-hand readiness path without retaining a screenshot or landmark values.
 - Automated checks run: Unified release verifier, 113 meeting tests, 183 backend tests, 225 ML tests inside the verifier plus 228 after the final trust-root review, 23 training-contract fixtures, 20 staged-file guard tests and the real staged scan, typecheck, production builds, release-runner self-test, 16/16 E2E tests in bundled Chromium, installed Chrome, and installed Edge, simulator 1/1, and performance 1/1. Performance evidence is recorded in the AI implementation checklist.
-- Known limitations: Browser fixtures use deterministic normalized landmarks and the bundled classifier is synthetic; this is not SGSL recognition evidence.
+- Known limitations: The production-qualified SgSL lane remains blocked; the optional genuine model is a ten-concept, noncommercial ASL research pack rather than SgSL or universal recognition.
 - Follow-up work: Obtain approved training governance, an SGSL-fluent Deaf reviewer, and consented multi-signer SGSL data before genuine model training.
 - Acceptance gate: PARTIAL — automated engineering/browser gates and a bounded Windows physical-camera check pass; broader device and signer acceptance remains open
+
+#### Milestone 3 hardening loop
+
+- Branch: `codex/milestone-3-live-sign-recognition`
+- Starting commit: `b927c41b29cfc65e9342404a371ce772f1c7f8b3`
+- Implementation date: 2026-08-30
+- Changes: Bounded continuous movement by wall-clock time, preserved active gestures across short real-camera hand occlusion, corrected anatomical MediaPipe handedness, matched the OpenHands 64-frame graph preprocessing, and preloaded paused landmark workers after camera/session connection to reduce first-sign delay. Dispatched gestures remain latched in `Processing`; the latest recognized sign, signer, time, and confidence now remain visible over the video after the temporary status message expires. Transcript rows retain signer attribution and timestamps with seconds.
+- Automated checks run: Typecheck, `127/127` frontend tests, `23/23` training-contract fixtures, `233/233` ML tests with warnings treated as errors, and both production frontend builds passed on 2026-08-31. The fresh Maven reactor passed realtime-contract `3/3` and meeting `4/4`, then its network-dependent realtime classes hit 26 setup errors because the host JDK could not create `Selector.open()` (`Unable to establish loopback connection`). An independent inference run passed 112 tests before the same host fault blocked three web-server/client setup cases. The earlier full reactor result remains `186/186`, but that historical result is not substituted for a current rerun.
+- Pretrained-model audit: OpenHands/WLASL, Microsoft ASL Citizen, SignBart, and the strongest public SgSL-labelled checkpoints were inspected against rights, exact preprocessing, labels, signer independence, open-set rejection, ONNX/Java, and CPU gates. OpenHands WLASL SL-GCN was selected only for a pinned noncommercial ASL research pack; no candidate is eligible as production SgSL. SignBart and the NUS CS3244 lead retain their documented licensing, provenance, and evaluation blockers.
+- ASL research demonstration: Representative WLASL-listed clips for all ten exposed ASL concepts traversed Chromium virtual webcam, browser MediaPipe, six five-frame chunks, Java ONNX inference, and the persistent on-camera result card with `mockModel: false` and `asl-wlasl-slgcn-core-v2` provenance. `Repeat` also passed three additional independent browser runs after the occlusion-boundary fix. This is model-integration evidence, not a signer-independent accuracy claim.
+- Acceptance gate: PARTIAL — the Milestone 3 engineering path and bounded ASL research slice pass, but the required physical-camera supported/unknown/repeat/device matrix remains open. Production SgSL qualification belongs to Milestone 4 and remains blocked.
 
 ### Milestone 4 engineering-pipeline record
 

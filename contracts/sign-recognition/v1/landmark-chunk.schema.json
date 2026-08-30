@@ -58,7 +58,9 @@
     },
     "coordinate": {
       "type": "number",
-      "description": "A finite normalized coordinate. Standard JSON numbers cannot encode NaN or positive/negative infinity."
+      "minimum": -20,
+      "maximum": 20,
+      "description": "A finite, bounded normalized coordinate. Standard JSON numbers cannot encode NaN or positive/negative infinity."
     },
     "presence": {
       "type": "integer",
@@ -66,11 +68,11 @@
         0,
         1
       ],
-      "description": "Point presence: 1 when tracked, otherwise 0. Missing points use x=y=z=0."
+      "description": "Point presence: 1 when tracked, otherwise 0. In the v2 feature layout, missing points retain the bounded normalized raw-image-origin sentinel; this mask is authoritative."
     },
     "frame": {
       "type": "object",
-      "description": "One normalized unmirrored-source frame. Features are left hand landmarks 0-20, right hand landmarks 0-20, then pose landmarks 11-24; each point is x, y, z, presence.",
+      "description": "One normalized unmirrored-source frame. Features are left hand landmarks 0-20, right hand landmarks 0-20, then the 14 v2 pose slots 0,2,5,11-21; each point is x, y, z, presence.",
       "additionalProperties": false,
       "required": [
         "sequence",
@@ -86,7 +88,7 @@
         },
         "features": {
           "type": "array",
-          "description": "Exactly 224 values: offsets 0-83 left hand, 84-167 right hand, and 168-223 pose 11-24. Each four-value group is x, y, z, presence.",
+          "description": "Exactly 224 values: offsets 0-83 left hand, 84-167 right hand, and 168-223 pose slots 0,2,5,11-21. Each four-value group is x, y, z, presence.",
           "minItems": 224,
           "maxItems": 224,
           "prefixItems": [

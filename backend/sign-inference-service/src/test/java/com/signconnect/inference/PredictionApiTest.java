@@ -307,8 +307,9 @@ class PredictionApiTest {
 
     @Test
     void returnsPrivacySafe503WhenDefaultProfileModelIsUnavailable(CapturedOutput output) throws Exception {
+        String boundedSentinel = "13.5792468";
         ObjectNode request = activeFixtureTree();
-        features(request, 0).set(0, DoubleNode.valueOf(Double.parseDouble(SENTINEL)));
+        features(request, 0).set(0, DoubleNode.valueOf(Double.parseDouble(boundedSentinel)));
 
         try (ConfigurableApplicationContext context = new SpringApplicationBuilder(
                 SignInferenceServiceApplication.class)
@@ -330,8 +331,8 @@ class PredictionApiTest {
                     .getResponse()
                     .getContentAsString();
 
-            assertThat(response).doesNotContain(SENTINEL, "features", "tensor", "landmark");
-            assertThat(output.toString()).doesNotContain(SENTINEL, "913579.2468");
+            assertThat(response).doesNotContain(boundedSentinel, "features", "tensor", "landmark");
+            assertThat(output.toString()).doesNotContain(boundedSentinel, "features", "tensor", "landmark");
         }
     }
 

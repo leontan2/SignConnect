@@ -51,20 +51,27 @@ public record ModelContract(
         ProductionPromotionMetadata productionPromotion) {
 
     public static final String FEATURE_LAYOUT_VERSION = "mediapipe-holistic-224-v1";
+    public static final String FEATURE_LAYOUT_VERSION_V2 = "mediapipe-holistic-224-v2";
     public static final String NORMALIZATION_VERSION = "shoulder-midpoint-shoulder-width-v1";
     public static final List<String> FEATURE_ORDER = List.of(
             "LEFT_HAND_0_20_XYZ_PRESENCE",
             "RIGHT_HAND_0_20_XYZ_PRESENCE",
             "POSE_11_24_XYZ_PRESENCE");
+    public static final List<String> FEATURE_ORDER_V2 = List.of(
+            "LEFT_HAND_0_20_XYZ_PRESENCE",
+            "RIGHT_HAND_0_20_XYZ_PRESENCE",
+            "POSE_0_2_5_11_21_XYZ_PRESENCE");
     public static final List<Integer> INPUT_SHAPE = List.of(1, 30, 224);
 
     private static final String INPUT_NAME = "features";
     private static final String OUTPUT_NAME = "probabilities";
     private static final String TENSOR_TYPE = "FLOAT32";
     private static final String OUTPUT_SEMANTICS = "softmax-class-probabilities-v1";
-    private static final String TARGET_LANGUAGE = "sls";
+    private static final Set<String> TARGET_LANGUAGES = Set.of("sls", "ase");
     private static final String RUNTIME_ENGINE = "ONNX_RUNTIME_JAVA";
-    private static final String REVIEWER_ROLE = "SGSL_FLUENT_DEAF_REVIEWER";
+    private static final Map<String, String> REVIEWER_ROLES = Map.of(
+            "sls", "SGSL_FLUENT_DEAF_REVIEWER",
+            "ase", "ASL_FLUENT_DEAF_REVIEWER");
     private static final Pattern LABEL_ID = Pattern.compile("^[A-Z][A-Z0-9_]{0,63}$");
     private static final Pattern ENTITY_ID = Pattern.compile("^[a-z][a-z0-9-]{2,63}$");
     private static final Pattern MODEL_VERSION = Pattern.compile("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$");
@@ -99,7 +106,7 @@ public record ModelContract(
                 || !matches(MODEL_VERSION, modelVersion)
                 || !isTimestamp(generatedAt)
                 || mockModel == null || genuineSignLanguageData == null
-                || !TARGET_LANGUAGE.equals(targetLanguage)
+                || !TARGET_LANGUAGES.contains(targetLanguage)
                 || !matches(SEMANTIC_VERSION, vocabularyVersion)
                 || !matches(SHA256, vocabularySha256)
                 || sourceProvenance == null
@@ -126,7 +133,7 @@ public record ModelContract(
         evaluation.validate(labels, decision.minimumConfidence(), genuineSignLanguageData);
         onnx.validate();
         runtime.validate();
-        sgslReview.validate(labels, labelsById);
+        sgslReview.validate(targetLanguage, labels, labelsById);
         governance.validate();
         productionPromotion.validate(this);
     }
@@ -331,11 +338,16 @@ public record ModelContract(
             if (!INPUT_NAME.equals(name)
                     || !INPUT_SHAPE.equals(shape)
                     || !TENSOR_TYPE.equals(tensorType)
-                    || !FEATURE_LAYOUT_VERSION.equals(featureLayoutVersion)
-                    || !NORMALIZATION_VERSION.equals(normalizationVersion)
-                    || !FEATURE_ORDER.equals(featureOrder)) {
+                    || !isSupportedFeatureLayout(featureLayoutVersion, featureOrder)
+                    || !NORMALIZATION_VERSION.equals(normalizationVersion)) {
                 throw invalidMetadata();
             }
+        }
+
+        private static boolean isSupportedFeatureLayout(String version, List<String> order) {
+            return (FEATURE_LAYOUT_VERSION.equals(version) && FEATURE_ORDER.equals(order))
+                    || (FEATURE_LAYOUT_VERSION_V2.equals(version)
+                    && FEATURE_ORDER_V2.equals(order));
         }
     }
 
@@ -888,8 +900,11 @@ public record ModelContract(
             String reviewArtifactSha256,
             String reviewedAt) {
 
-        private void validate(List<Label> labels, Map<String, Label> labelsById) {
-            if (status == null || !REVIEWER_ROLE.equals(reviewerRole)
+        private void validate(
+                String targetLanguage,
+                List<Label> labels,
+                Map<String, Label> labelsById) {
+            if (status == null || !REVIEWER_ROLES.get(targetLanguage).equals(reviewerRole)
                     || reviewedLabelIds == null
                     || reviewedLabelIds.size() != new HashSet<>(reviewedLabelIds).size()) {
                 throw invalidMetadata();

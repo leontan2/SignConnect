@@ -21,6 +21,16 @@ export = [
   "onnxruntime>=1.19,<1.24",
   "onnxscript>=0.5,<1",
 ]
+asl-research = [
+  "mediapipe==0.10.21",
+  "omegaconf>=2.3,<3",
+  "opencv-contrib-python>=4.11,<5",
+  "transformers>=4.57,<5",
+  "yt-dlp>=2026.8.19",
+  "onnx>=1.16,<2",
+  "onnxruntime>=1.19,<1.24",
+  "onnxscript>=0.5,<1",
+]
 test = [
   "pytest>=8.3,<9",
   "onnx>=1.16,<2",

@@ -34,7 +34,7 @@ class ModelContractTest {
     }
 
     @Test
-    void acceptsOnlyTheIanaSingaporeSignLanguageTag() throws Exception {
+    void acceptsOnlySupportedIanaSignLanguageTags() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
         ObjectNode metadata = authoritativeMetadata(
                 objectMapper, "model-metadata-blocked.valid.json");
@@ -48,6 +48,30 @@ class ModelContractTest {
 
         metadata.put("targetLanguage", "sg-SG");
         assertInvalidMetadata(objectMapper, metadata);
+    }
+
+    @Test
+    void acceptsTheBlockedAslResearchFeatureContract() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        ObjectNode metadata = authoritativeMetadata(
+                objectMapper, "model-metadata-blocked.valid.json");
+        metadata.put("targetLanguage", "ase");
+        metadata.put("vocabularySha256",
+                "a56cc40b23edd966a9c8928154f3daca320cd958576899dfa399496388e01af5");
+        ObjectNode input = (ObjectNode) metadata.path("input");
+        input.put("featureLayoutVersion", "mediapipe-holistic-224-v2");
+        input.withArray("featureOrder").set(2,
+                objectMapper.getNodeFactory().textNode("POSE_0_2_5_11_21_XYZ_PRESENCE"));
+        ((ObjectNode) metadata.path("sgslReview"))
+                .put("reviewerRole", "ASL_FLUENT_DEAF_REVIEWER");
+
+        ModelContract contract = ModelContract.read(
+                objectMapper,
+                new ByteArrayInputStream(objectMapper.writeValueAsBytes(metadata)));
+
+        assertThat(contract.targetLanguage()).isEqualTo("ase");
+        assertThat(contract.input().featureLayoutVersion())
+                .isEqualTo("mediapipe-holistic-224-v2");
     }
 
     @Test

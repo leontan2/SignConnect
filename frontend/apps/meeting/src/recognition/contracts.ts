@@ -1,7 +1,10 @@
 export const LANDMARK_SCHEMA_VERSION = 1 as const;
 export const LANDMARK_CHUNK_TYPE = "landmark.chunk" as const;
 export const HAND_LANDMARK_COUNT = 21;
-export const POSE_LANDMARK_INDICES = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24] as const;
+// v2 keeps the tensor at 224 values while adding the three face anchors used by
+// the OpenHands graph. Shoulders remain present for normalization and quality.
+export const POSE_LANDMARK_INDICES = [0, 2, 5, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21] as const;
+export const UPPER_BODY_OVERLAY_LANDMARK_INDICES = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24] as const;
 export const VALUES_PER_LANDMARK = 4;
 export const LANDMARK_FEATURE_COUNT = 224;
 export const FRAMES_PER_LANDMARK_CHUNK = 5;

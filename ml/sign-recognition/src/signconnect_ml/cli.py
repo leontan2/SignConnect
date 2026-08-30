@@ -40,6 +40,12 @@ def parser() -> argparse.ArgumentParser:
     exporting.add_argument("--claim-genuine-sgsl", action="store_true")
     exporting.add_argument("--verify-parity", action="store_true")
 
+    asl_research = commands.add_parser("prepare-asl-research")
+    asl_research.add_argument("--source-root", required=True, type=Path)
+    asl_research.add_argument("--checkpoint", required=True, type=Path)
+    asl_research.add_argument("--vocabulary", required=True, type=Path)
+    asl_research.add_argument("--output-directory", required=True, type=Path)
+
     inventory = commands.add_parser("lifecycle-inventory")
     inventory.add_argument("--root", required=True, type=Path)
     inventory.add_argument("--index", required=True, type=Path)
@@ -325,6 +331,18 @@ def main(argv: list[str] | None = None) -> int:
             args.output,
             args.claim_genuine_sgsl,
             args.verify_parity,
+        )
+        print(model)
+        print(metadata)
+        return 0
+    if args.command == "prepare-asl-research":
+        from .openhands_asl import export_openhands_asl_research_model
+
+        model, metadata = export_openhands_asl_research_model(
+            source_root=args.source_root,
+            checkpoint_path=args.checkpoint,
+            vocabulary_path=args.vocabulary,
+            output_directory=args.output_directory,
         )
         print(model)
         print(metadata)

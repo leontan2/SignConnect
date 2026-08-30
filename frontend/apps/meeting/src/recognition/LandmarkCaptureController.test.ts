@@ -44,7 +44,7 @@ type WatchdogScheduler = {
 type Controller = {
   readonly status: CaptureStatus;
   readonly streamId: string | null;
-  start(video: HTMLVideoElement): string | null;
+  start(video: HTMLVideoElement, capturePaused?: boolean): string | null;
   stop(): void;
   restart(video: HTMLVideoElement): string | null;
   cameraOff(): void;
@@ -242,6 +242,26 @@ function processMessages(worker: FakeWorker): Array<{ message: WorkerCommand; tr
 }
 
 describe("LandmarkCaptureController", () => {
+  it("reuses a paused warm worker when recognition starts", () => {
+    const LandmarkCaptureController = controllerConstructorFor("warm worker reuse");
+    const worker = new FakeWorker();
+    const scheduler = new ManualScheduler();
+    const now = { value: 0 };
+    const workerFactory = vi.fn(() => worker);
+    const controller = new LandmarkCaptureController(controllerOptions(worker, scheduler, now, {
+      workerFactory
+    }));
+
+    const preparedStreamId = controller.start(readyVideo, true);
+    worker.emit({ type: "worker.ready" });
+    const recognitionStreamId = controller.start(readyVideo, true);
+
+    expect(recognitionStreamId).toBe(preparedStreamId);
+    expect(workerFactory).toHaveBeenCalledOnce();
+    expect(worker.posted.filter(({ message }) => message.type === "worker.initialize")).toHaveLength(1);
+    expect(worker.terminate).not.toHaveBeenCalled();
+  });
+
   it("forwards one completed 30-frame gesture candidate through the browser-local adapter", async () => {
     const LandmarkCaptureController = controllerConstructorFor("gesture candidate adapter");
     const worker = new FakeWorker();
@@ -665,22 +685,35 @@ function landmarkFromFeatureGroup(features: number[], offset: number) {
   };
 }
 
+function canonicalV2Features() {
+  const legacy = activeChunkFixture.frames[0].features;
+  const legacyPoseGroup = (slot: number) => legacy.slice(168 + slot * 4, 172 + slot * 4);
+  return [
+    ...legacy.slice(0, 168),
+    0, -1, 0, 1,
+    -0.1, -1.05, 0, 1,
+    0.1, -1.05, 0, 1,
+    ...Array.from({ length: 11 }, (_, slot) => legacyPoseGroup(slot)).flat()
+  ];
+}
+
 function mediaPipeResults() {
-  const features = activeChunkFixture.frames[0].features;
+  const features = canonicalV2Features();
   const pose = Array.from({ length: 33 }, () => ({ x: 0, y: 0, z: 0, visibility: 0 }));
-  for (let index = 11; index <= 24; index += 1) {
-    pose[index] = landmarkFromFeatureGroup(features, 168 + (index - 11) * 4);
-  }
+  const poseIndices = [0, 2, 5, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21];
+  poseIndices.forEach((index, slot) => {
+    pose[index] = landmarkFromFeatureGroup(features, 168 + slot * 4);
+  });
 
   return {
     hand: {
       landmarks: [
         Array.from({ length: 21 }, (_, index) => ({
-          ...landmarkFromFeatureGroup(features, 84 + index * 4),
+          ...landmarkFromFeatureGroup(features, index * 4),
           visibility: 0
         })),
         Array.from({ length: 21 }, (_, index) => ({
-          ...landmarkFromFeatureGroup(features, index * 4),
+          ...landmarkFromFeatureGroup(features, 84 + index * 4),
           visibility: 0
         }))
       ],
@@ -783,7 +816,7 @@ describe("landmark worker", () => {
       result: {
         kind: "accepted",
         frameKind: "active",
-        features: activeChunkFixture.frames[0].features
+        features: canonicalV2Features()
       },
       browserLocal: {
         trackingQuality: {

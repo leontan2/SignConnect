@@ -255,6 +255,14 @@ export class LandmarkCaptureController {
   }
 
   start(video: HTMLVideoElement, capturePaused = false): string | null {
+    if (capturePaused
+      && this.active
+      && this.worker
+      && this.video === video
+      && this.capturePaused
+      && this.streamIdValue) {
+      return this.streamIdValue;
+    }
     if (this.active || this.worker) this.teardown("stopped");
 
     let streamId: string;

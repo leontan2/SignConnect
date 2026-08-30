@@ -1,8 +1,8 @@
 # SignConnect
 
-SignConnect is a mock-first accessibility workspace for sending a signer’s camera-derived landmarks through a local inference stack and sharing finalized captions with participants in the same ephemeral meeting room.
+SignConnect is a privacy-first accessibility workspace for sending a signer’s camera-derived landmarks through a local inference stack and sharing finalized captions with participants in the same ephemeral meeting room.
 
-> The bundled ONNX model and replay capture are synthetic integration assets. They demonstrate the transport, windowing, inference, and caption experience; they do **not** recognize real Singapore Sign Language (SGSL).
+> The default bundled ONNX model and replay capture are synthetic integration assets. An optional, reproducible OpenHands/WLASL pack recognizes ten isolated American Sign Language (ASL) concepts for local research. Neither mode is Singapore Sign Language (SgSL) or continuous translation.
 
 ## Implemented product slice
 
@@ -12,7 +12,7 @@ SignConnect is a mock-first accessibility workspace for sending a signer’s cam
 | Meeting MFE | React, TypeScript, MediaPipe | 3001 | Consent, camera capture, landmarks, and transcript |
 | Meeting service | Spring Boot MVC | 8081 | Meeting creation and lifecycle |
 | Realtime service | Spring WebFlux | 8082 | WebSocket validation, recognition decisions, and caption delivery |
-| Inference service | Spring Boot, ONNX Runtime | 8083 | Local-profile inference against the bundled synthetic model |
+| Inference service | Spring Boot, ONNX Runtime | 8083 | Local inference against the selected fail-closed model |
 
 The default path is:
 
@@ -30,6 +30,25 @@ Only landmark coordinates and bounded protocol metadata cross the browser bounda
 Creating a room returns a six-character share code and a short-lived signed realtime ticket. Guests join with the share code and a display name. Room membership is currently in memory, supports up to eight connections by default, and is reset when the services restart. Public room events have contiguous server sequence numbers, finalized captions are idempotent, a short-lived private resume token preserves participant identity across reconnects, and the server grants recognition upload to one active signer at a time. Recognition status, unknown-sign feedback, landmark input, and resume tokens remain connection-local.
 
 The camera workspace uses a responsive 4:3 stage with contained, centered video and an aligned tracking overlay. This avoids the shallow horizontal crop while keeping controls in a stable dock below the preview.
+
+### Run the real ASL research pack
+
+The optional pack maps the official OpenHands WLASL SL-GCN checkpoint to the existing local Java/ONNX path. It supports these isolated ASL concepts: **Hello, Thank you, Yes, No, Help, Repeat, Slower, Understand, Finished, and Goodbye**. Unsupported or ambiguous input is returned as no sign instead of being forced into the transcript. WLASL terms make this a noncommercial research path, and the interface labels it accordingly.
+
+From the repository root on Windows:
+
+```powershell
+.\scripts\setup-asl-research-model.ps1
+.\scripts\start-local-asl-research.ps1
+```
+
+Open `http://127.0.0.1:3000`, start a session, turn on the camera, start recognition, and keep both shoulders plus the signing hand inside the guide. Stop exactly the processes started by the runner with:
+
+```powershell
+.\scripts\stop-local-asl-research.ps1
+```
+
+The setup script pins and verifies the upstream source, checkpoint, and vocabulary hashes before exporting `runtime-models/asl-research/models/openhands-wlasl-slgcn-core-v2.onnx`. Downloads and generated runtime models are ignored by Git.
 
 ## Run locally
 

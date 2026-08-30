@@ -191,7 +191,17 @@ test.describe("sign-recognition full-stack milestone", () => {
 
     const transcript = page.getByRole("region", { name: "Live transcript" });
     await expect(transcript.getByText("Synthetic active gesture")).toBeVisible();
-    await expect(transcript.getByRole("article")).toHaveCount(1);
+    const captionEntry = transcript.getByRole("article");
+    await expect(captionEntry).toHaveCount(1);
+    await expect(captionEntry.locator(".caption-source")).toHaveText("You signed");
+    await expect(captionEntry.locator("time")).toHaveText(
+      /^at \d{1,2}:\d{2}:\d{2}(?:\s?[AP]M)?$/i
+    );
+    await expect(captionEntry.locator("time")).toHaveAttribute(
+      "datetime",
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/
+    );
+    await expect(captionEntry).toHaveAccessibleName(/^You signed Synthetic active gesture at /i);
     await expect(transcript.getByRole("note")).toContainText(/not validated SGSL recognition/i);
     await expect(transcript.getByText("synthetic-v1")).toBeVisible();
     await expect(transcript.getByText("Mock integration model.", { exact: true })).toBeVisible();

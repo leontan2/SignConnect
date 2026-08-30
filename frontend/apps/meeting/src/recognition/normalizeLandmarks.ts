@@ -71,7 +71,15 @@ function appendPoint(
   useVisibility = true
 ): LandmarkQualityRejection | null {
   if (!isPresent(point, minimumConfidence, useVisibility)) {
-    features.push(0, 0, 0, 0);
+    // v2 reproduces the pretrained OpenHands normalization contract: a
+    // missing raw landmark is the normalized image origin plus a zero
+    // presence mask. The mask remains authoritative for quality and motion.
+    features.push(
+      normalizedValue(-center.x / scale),
+      normalizedValue(-center.y / scale),
+      normalizedValue(-center.z / scale),
+      0
+    );
     return null;
   }
 
@@ -133,7 +141,7 @@ export function normalizeLandmarks(
     && hand.landmarks.slice(0, HAND_LANDMARK_COUNT)
       .filter((point) => isPresent(point, options.minimumPointConfidence, false)).length >= options.minimumHandPoints);
 
-  const posePresenceCount = POSE_LANDMARK_INDICES.reduce(
+  const posePresenceCount = POSE_LANDMARK_INDICES.reduce<number>(
     (count, index) => count + (isPresent(pose?.[index], options.minimumPointConfidence) ? 1 : 0),
     0
   );
@@ -154,7 +162,9 @@ export function normalizeLandmarks(
   let presentHandPoints = 0;
   for (const hand of selectedHands) {
     if (!hand || hand.score < options.minimumHandConfidence) {
-      for (let index = 0; index < HAND_LANDMARK_COUNT; index += 1) features.push(0, 0, 0, 0);
+      for (let index = 0; index < HAND_LANDMARK_COUNT; index += 1) {
+        appendPoint(features, undefined, center, shoulderWidth, options.minimumPointConfidence, options, false);
+      }
       continue;
     }
 

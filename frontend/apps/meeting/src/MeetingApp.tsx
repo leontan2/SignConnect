@@ -4,14 +4,19 @@ import {
   Captions,
   Check,
   CircleAlert,
+  CircleHelp,
   Copy,
   Hand,
   LoaderCircle,
   LogIn,
+  Mic,
+  MicOff,
   Plus,
   Radio,
   ScanLine,
   Square,
+  Trash2,
+  UserPlus,
   Users,
   Video,
   VideoOff
@@ -49,6 +54,11 @@ import {
   type RecognitionClock,
   useSignRecognition
 } from "./recognition/useSignRecognition";
+import {
+  createBrowserSpeechRecognition,
+  type SpeechRecognitionController,
+  type SpeechRecognitionFactory
+} from "./speechTranscript";
 import { ToastViewport, useToastQueue } from "./ToastViewport";
 import "./meeting.css";
 
@@ -56,6 +66,7 @@ type CameraState = "off" | "requesting" | "on" | "permission-denied" | "no-devic
 
 type ProductState = {
   captions: CaptionEvent[];
+  latestLocalCaption: CaptionEvent | null;
   pendingRecognitionStreamId: string | null;
   latestRecognitionOutcome: "recognized" | "not-recognized" | null;
   latestRecognitionStreamId: string | null;
@@ -65,6 +76,7 @@ type ProductState = {
   protocolFeedback: string | null;
   signerFeedback: string | null;
   mockModelActive: boolean;
+  activeModelVersion: string | null;
 };
 
 type ProductAction =
@@ -73,12 +85,15 @@ type ProductAction =
   | { type: "room-order-issue" }
   | { type: "gesture-dispatched"; streamId: string }
   | { type: "recognition-ended"; streamId: string }
+  | { type: "recognition-timeout"; streamId: string }
   | { type: "recognition-result-expired"; token: number }
   | { type: "signer-feedback"; message: string | null }
+  | { type: "clear-transcript" }
   | { type: "reset-session" };
 
 const INITIAL_PRODUCT_STATE: ProductState = {
   captions: [],
+  latestLocalCaption: null,
   pendingRecognitionStreamId: null,
   latestRecognitionOutcome: null,
   latestRecognitionStreamId: null,
@@ -87,14 +102,30 @@ const INITIAL_PRODUCT_STATE: ProductState = {
   serviceStatus: "Recognition service is waiting.",
   protocolFeedback: null,
   signerFeedback: null,
-  mockModelActive: false
+  mockModelActive: false,
+  activeModelVersion: null
 };
 
 const SIMULATOR_ENABLED = process.env.RECOGNITION_SIMULATOR_ENABLED === "true";
+const ROOM_PREVIEW_TOOLS_ENABLED = typeof process !== "undefined"
+  && process.env.ROOM_PREVIEW_TOOLS_ENABLED === "true";
+const LOCAL_ROOM_PREVIEW_ENABLED = typeof window !== "undefined"
+  && ["127.0.0.1", "localhost", "::1"].includes(window.location.hostname);
 const RECOGNITION_RESULT_DWELL_MS = 2_000;
+const RECOGNITION_RESPONSE_TIMEOUT_MS = 5_000;
 
 function productReducer(state: ProductState, action: ProductAction): ProductState {
   if (action.type === "reset-session") return { ...INITIAL_PRODUCT_STATE };
+  if (action.type === "clear-transcript") {
+    return {
+      ...state,
+      captions: [],
+      latestLocalCaption: null,
+      latestRecognitionOutcome: null,
+      latestRecognitionStreamId: null,
+      recognitionFeedback: null
+    };
+  }
   if (action.type === "room-order-issue") {
     return { ...state, protocolFeedback: "Some room updates arrived out of order. The newest room state is shown." };
   }
@@ -116,6 +147,17 @@ function productReducer(state: ProductState, action: ProductAction): ProductStat
       latestRecognitionOutcome: null,
       latestRecognitionStreamId: null,
       recognitionFeedback: null
+    };
+  }
+  if (action.type === "recognition-timeout") {
+    if (state.pendingRecognitionStreamId !== action.streamId) return state;
+    return {
+      ...state,
+      pendingRecognitionStreamId: null,
+      latestRecognitionOutcome: null,
+      latestRecognitionStreamId: null,
+      recognitionFeedback: "Recognition timed out before returning a result. Start recognition and try the sign again.",
+      serviceStatus: "Recognition result timed out."
     };
   }
   if (action.type === "recognition-result-expired") {
@@ -147,6 +189,7 @@ function productReducer(state: ProductState, action: ProductAction): ProductStat
     return {
       ...state,
       captions: [...state.captions, event],
+      latestLocalCaption: matchesPendingRecognition ? event : state.latestLocalCaption,
       pendingRecognitionStreamId: matchesPendingRecognition ? null : state.pendingRecognitionStreamId,
       latestRecognitionOutcome: matchesPendingRecognition ? "recognized" : state.latestRecognitionOutcome,
       latestRecognitionStreamId: matchesPendingRecognition ? event.streamId : state.latestRecognitionStreamId,
@@ -154,7 +197,8 @@ function productReducer(state: ProductState, action: ProductAction): ProductStat
         ? state.recognitionResultToken + 1
         : state.recognitionResultToken,
       recognitionFeedback: null,
-      mockModelActive: state.mockModelActive || event.payload.mockModel
+      mockModelActive: state.mockModelActive || event.payload.mockModel,
+      activeModelVersion: event.payload.modelVersion
     };
   }
   if (event.type === "recognition.unknown") {
@@ -164,7 +208,7 @@ function productReducer(state: ProductState, action: ProductAction): ProductStat
     const matchesPendingRecognition = event.streamId === state.pendingRecognitionStreamId;
     if (!matchesPendingRecognition) {
       return event.payload.mockModel && !state.mockModelActive
-        ? { ...state, mockModelActive: true }
+        ? { ...state, mockModelActive: true, activeModelVersion: event.payload.modelVersion }
         : state;
     }
     return {
@@ -176,7 +220,8 @@ function productReducer(state: ProductState, action: ProductAction): ProductStat
       recognitionResultToken: matchesPendingRecognition
         ? state.recognitionResultToken + 1
         : state.recognitionResultToken,
-      mockModelActive: state.mockModelActive || event.payload.mockModel
+      mockModelActive: state.mockModelActive || event.payload.mockModel,
+      activeModelVersion: event.payload.modelVersion
     };
   }
 
@@ -212,7 +257,8 @@ function productReducer(state: ProductState, action: ProductAction): ProductStat
       ? null
       : state.recognitionFeedback,
     serviceStatus,
-    mockModelActive: state.mockModelActive || event.payload.mockModel === true
+    mockModelActive: state.mockModelActive || event.payload.mockModel === true,
+    activeModelVersion: event.payload.modelVersion ?? state.activeModelVersion
   };
 }
 
@@ -223,8 +269,61 @@ export interface MeetingAppComposition {
   captureOptions?: Omit<UseLandmarkCaptureOptions, "onStatus" | "onGestureCandidate">;
   clock?: RecognitionClock;
   trackingAnnouncementDelayMs?: number;
+  recognitionResponseTimeoutMs?: number;
   requestIdFactory?: () => string;
+  roomPreviewToolsEnabled?: boolean;
+  speechRecognitionFactory?: SpeechRecognitionFactory;
 }
+
+type SpokenTranscriptEntry = {
+  id: string;
+  sourceDisplayName: string;
+  text: string;
+  occurredAt: string;
+  simulated?: boolean;
+};
+
+type SpeechCaptureStatus = "idle" | "starting" | "listening" | "unsupported" | "permission-denied" | "error";
+
+type DemoParticipant = RoomParticipant & {
+  simulated: true;
+};
+
+const DEMO_PARTICIPANTS: ReadonlyArray<{
+  participant: DemoParticipant;
+  sampleSpeech: string;
+}> = [
+  {
+    participant: {
+      participantId: "d0000000-0000-4000-8000-000000000001",
+      displayName: "Aisyah Rahman",
+      role: "GUEST",
+      activeSigner: false,
+      simulated: true
+    },
+    sampleSpeech: "Could we repeat the last point?"
+  },
+  {
+    participant: {
+      participantId: "d0000000-0000-4000-8000-000000000002",
+      displayName: "Daniel Tan",
+      role: "GUEST",
+      activeSigner: true,
+      simulated: true
+    },
+    sampleSpeech: "Yes, I understand."
+  },
+  {
+    participant: {
+      participantId: "d0000000-0000-4000-8000-000000000003",
+      displayName: "Priya Nair",
+      role: "GUEST",
+      activeSigner: false,
+      simulated: true
+    },
+    sampleSpeech: "Thank you."
+  }
+];
 
 function cameraFailure(error: unknown): { state: CameraState; message: string } {
   if (error instanceof DOMException && error.name === "NotFoundError") {
@@ -309,6 +408,19 @@ function connectionLabel(status: string, recovered: boolean, hasMeeting: boolean
     return retryDelayMs === undefined ? "Reconnecting" : `Reconnecting in ${retryDelayMs} ms`;
   }
   return hasMeeting ? "Room disconnected" : "Not connected";
+}
+
+function captionOccurredAt(occurredAt: string): string {
+  return new Date(occurredAt).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  });
+}
+
+function captionSourceLabel(sourceName: string, isCurrentParticipant: boolean): string {
+  if (!isCurrentParticipant || sourceName.trim().toLocaleLowerCase() === "you") return sourceName;
+  return `${sourceName} (you)`;
 }
 
 type SignerOwnershipState = {
@@ -457,6 +569,13 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
     const [signerOwnership, setSignerOwnership] = useState<SignerOwnershipState>(INITIAL_SIGNER_STATE);
     const [liveAnnouncement, setLiveAnnouncement] = useState("");
     const [product, dispatch] = useReducer(productReducer, INITIAL_PRODUCT_STATE);
+    const [spokenEntries, setSpokenEntries] = useState<SpokenTranscriptEntry[]>([]);
+    const [demoParticipants, setDemoParticipants] = useState<DemoParticipant[]>([]);
+    const [demoSpokenEntries, setDemoSpokenEntries] = useState<SpokenTranscriptEntry[]>([]);
+    const [speechStatus, setSpeechStatus] = useState<SpeechCaptureStatus>("idle");
+    const [speechFeedback, setSpeechFeedback] = useState<string | null>(null);
+    const roomPreviewToolsEnabled = composition.roomPreviewToolsEnabled
+      ?? (ROOM_PREVIEW_TOOLS_ENABLED || LOCAL_ROOM_PREVIEW_ENABLED);
     useEffect(() => {
       if (product.latestRecognitionOutcome === null) return;
       const token = product.recognitionResultToken;
@@ -491,11 +610,27 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
     const revokeRecognitionRef = useRef<() => void>(() => undefined);
     const settleRecognitionGestureRef = useRef<(streamId: string) => void>(() => undefined);
     const stopMediaRef = useRef<() => void>(() => undefined);
+    const speechControllerRef = useRef<SpeechRecognitionController | null>(null);
+    const stopSpokenTranscriptRef = useRef<() => void>(() => undefined);
+    const spokenEntrySequenceRef = useRef(0);
     const productRef = useRef(product);
 
     signerOwnershipRef.current = signerOwnership;
     currentParticipantRef.current = currentParticipant;
     productRef.current = product;
+
+    const stopSpokenTranscript = useCallback(() => {
+      const controller = speechControllerRef.current;
+      speechControllerRef.current = null;
+      try {
+        controller?.stop();
+      } catch {
+        // A browser recognizer can already be stopped when its end event races this action.
+      }
+      setSpeechStatus("idle");
+      setSpeechFeedback(null);
+    }, []);
+    stopSpokenTranscriptRef.current = stopSpokenTranscript;
 
     const acceptServerEvent = useCallback((event: ServerRealtimeEvent, generation: number) => {
       if (roomGenerationRef.current !== generation) {
@@ -556,6 +691,10 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
         setMeeting(null);
         setCurrentParticipant(null);
         setParticipants([]);
+        setDemoParticipants([]);
+        setDemoSpokenEntries([]);
+        setSpokenEntries([]);
+        stopSpokenTranscriptRef.current();
         signerOwnershipRef.current = INITIAL_SIGNER_STATE;
         setSignerOwnership(INITIAL_SIGNER_STATE);
         revokeRecognitionRef.current();
@@ -679,6 +818,23 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
     browserLocalFrameRef.current = recognition.browserLocalFrame;
     revokeRecognitionRef.current = recognition.revoke;
     settleRecognitionGestureRef.current = recognition.settleGesture;
+
+    useEffect(() => {
+      const streamId = product.pendingRecognitionStreamId;
+      if (streamId === null) return;
+      const configuredTimeout = composition.recognitionResponseTimeoutMs
+        ?? RECOGNITION_RESPONSE_TIMEOUT_MS;
+      const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0
+        ? configuredTimeout
+        : RECOGNITION_RESPONSE_TIMEOUT_MS;
+      const handle = window.setTimeout(() => {
+        if (productRef.current.pendingRecognitionStreamId !== streamId) return;
+        recognition.settleGesture(streamId);
+        dispatch({ type: "recognition-timeout", streamId });
+        recognition.stop();
+      }, timeoutMs);
+      return () => window.clearTimeout(handle);
+    }, [product.pendingRecognitionStreamId, recognition.settleGesture, recognition.stop]);
 
     useEffect(() => {
       if (product.latestRecognitionStreamId !== null) {
@@ -872,9 +1028,10 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       return () => {
         mountedRef.current = false;
         meetingRequestGenerationRef.current += 1;
+        stopSpokenTranscript();
         stopMedia();
       };
-    }, [stopMedia]);
+    }, [stopMedia, stopSpokenTranscript]);
 
     async function toggleCamera() {
       if (cameraState === "on") {
@@ -955,6 +1112,10 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
 
     function activateMeetingSession(session: Awaited<ReturnType<typeof createMeeting>>) {
       dispatch({ type: "reset-session" });
+      stopSpokenTranscript();
+      setSpokenEntries([]);
+      setDemoParticipants([]);
+      setDemoSpokenEntries([]);
       setMeeting(session.meeting);
       setCurrentParticipant(session.participant);
       setParticipants([]);
@@ -1051,6 +1212,90 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       }
     }
 
+    function startSpokenTranscript() {
+      if (!meeting || speechControllerRef.current) return;
+      const speechFactory = composition.speechRecognitionFactory ?? createBrowserSpeechRecognition;
+      const controller = speechFactory({
+        onStart: () => {
+          if (!mountedRef.current) return;
+          setSpeechStatus("listening");
+          setSpeechFeedback(null);
+          announce("Spoken transcript started. Listening to your microphone.");
+        },
+        onFinalTranscript: (text) => {
+          if (!mountedRef.current) return;
+          const normalizedText = text.trim().replace(/\s+/g, " ").slice(0, 500);
+          if (!normalizedText) return;
+          spokenEntrySequenceRef.current += 1;
+          setSpokenEntries((current) => [...current, {
+            id: `speech-${spokenEntrySequenceRef.current}`,
+            sourceDisplayName: currentParticipant?.displayName ?? (displayName.trim() || "You"),
+            text: normalizedText,
+            occurredAt: new Date().toISOString()
+          }]);
+          announce(`Spoken transcript: ${normalizedText}`);
+        },
+        onError: (reason) => {
+          if (!mountedRef.current) return;
+          speechControllerRef.current = null;
+          const permissionDenied = reason === "not-allowed" || reason === "service-not-allowed";
+          setSpeechStatus(permissionDenied ? "permission-denied" : "error");
+          setSpeechFeedback(permissionDenied
+            ? "Microphone permission was not granted. Update browser permissions to capture spoken notes."
+            : "Spoken transcript stopped because the browser speech service was unavailable.");
+        },
+        onEnd: () => {
+          if (!mountedRef.current) return;
+          speechControllerRef.current = null;
+          setSpeechStatus((current) => current === "permission-denied" || current === "error" ? current : "idle");
+        }
+      });
+
+      if (!controller) {
+        setSpeechStatus("unsupported");
+        setSpeechFeedback("This browser does not offer spoken transcript capture.");
+        return;
+      }
+
+      speechControllerRef.current = controller;
+      setSpeechStatus("starting");
+      setSpeechFeedback(null);
+      try {
+        controller.start();
+      } catch {
+        speechControllerRef.current = null;
+        setSpeechStatus("error");
+        setSpeechFeedback("Spoken transcript could not start. Try again after checking microphone access.");
+      }
+    }
+
+    function clearTranscript() {
+      dispatch({ type: "clear-transcript" });
+      setSpokenEntries([]);
+      setDemoSpokenEntries([]);
+      announce("Live transcript cleared from this browser session.");
+    }
+
+    function addDemoParticipant() {
+      const nextDemo = DEMO_PARTICIPANTS[demoParticipants.length];
+      if (!nextDemo) return;
+      setDemoParticipants((current) => [...current, nextDemo.participant]);
+      setDemoSpokenEntries((current) => [...current, {
+        id: `demo-speech-${nextDemo.participant.participantId}`,
+        sourceDisplayName: nextDemo.participant.displayName,
+        text: nextDemo.sampleSpeech,
+        occurredAt: new Date(Date.now() + demoParticipants.length).toISOString(),
+        simulated: true
+      }]);
+      announce(`${nextDemo.participant.displayName} added to the local room preview.`);
+    }
+
+    function removeDemoParticipants() {
+      setDemoParticipants([]);
+      setDemoSpokenEntries([]);
+      announce("Demo participants removed from the local room preview.");
+    }
+
     function toggleRecognition() {
       if (recognition.enabledByUser) {
         recognition.stop();
@@ -1084,7 +1329,8 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
     const signerRequestPending = recognition.enabledByUser && signerOwnership.status === "requesting";
     const signerGranted = recognition.enabledByUser && signerOwnership.status === "granted";
     const activeSigner = participants.find((participant) => participant.activeSigner);
-    const mockNoticeVisible = recognition.enabledByUser || product.mockModelActive;
+    const mockNoticeVisible = product.mockModelActive;
+    const aslResearchNoticeVisible = product.activeModelVersion?.startsWith("asl-wlasl-") === true;
     const browserLocalFrame = recognition.browserLocalFrame;
     const readinessGuidance = cameraReadinessGuidance(
       cameraState,
@@ -1094,10 +1340,13 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       product.latestRecognitionOutcome
     );
     const trackedHandCount = browserLocalFrame?.hands.length ?? 0;
-    const trackingLost = recognition.enabledByUser
-      && (recognition.captureStatus === "no-hands" || recognition.captureStatus === "low-quality");
+    const trackingLost = recognition.enabledByUser && recognition.captureStatus === "low-quality";
     const landmarkExtractorLabel = !recognition.enabledByUser
-      ? "Loads when recognition starts"
+      ? recognition.captureStatus === "model-loading"
+        ? "Preloading hand and pose landmarks"
+        : recognition.captureStatus === "ready"
+          ? "Hand and pose landmarks ready"
+          : "Loads after the camera and session connect"
       : browserLocalFrame
         ? "Hand and pose landmarks ready"
         : recognition.captureStatus === "unavailable"
@@ -1109,6 +1358,28 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       previousReadinessTitleRef.current = readinessGuidance.title;
       announce(readinessGuidance.title + ". " + readinessGuidance.message);
     }, [announce, readinessGuidance.message, readinessGuidance.title, recognition.enabledByUser]);
+
+    const visibleParticipants: Array<RoomParticipant | DemoParticipant> = [
+      ...participants,
+      ...demoParticipants
+    ];
+    const transcriptEntries = [
+      ...product.captions.map((caption) => ({ kind: "sign" as const, occurredAt: caption.occurredAt, caption })),
+      ...spokenEntries.map((entry) => ({ kind: "speech" as const, occurredAt: entry.occurredAt, entry })),
+      ...demoSpokenEntries.map((entry) => ({ kind: "speech" as const, occurredAt: entry.occurredAt, entry }))
+    ].sort((left, right) => left.occurredAt.localeCompare(right.occurredAt));
+    const speechCaptureActive = speechStatus === "starting" || speechStatus === "listening";
+    const speechStatusLabel = speechStatus === "listening"
+      ? "Listening to your microphone"
+      : speechStatus === "starting"
+        ? "Requesting microphone access"
+        : speechStatus === "unsupported"
+          ? "Spoken transcript is not supported by this browser"
+          : speechStatus === "permission-denied"
+            ? "Microphone permission is needed"
+            : speechStatus === "error"
+              ? "Spoken transcript is unavailable"
+              : "Spoken transcript is off";
 
     return (
       <section className="studio-workspace" aria-labelledby="meeting-title">
@@ -1159,7 +1430,12 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
           )}
 
           {!meeting ? (
-            <section className="room-entry-panel" aria-labelledby="room-entry-title">
+            <section
+              className="room-entry-panel"
+              id="room-participants"
+              tabIndex={-1}
+              aria-labelledby="room-entry-title"
+            >
               <div className="room-entry-intro">
                 <span className="room-entry-icon"><Users size={17} aria-hidden="true" /></span>
                 <div>
@@ -1219,7 +1495,12 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
               </button>
             </section>
           ) : (
-            <section className="room-presence-bar" aria-label="Room participants">
+            <section
+              className="room-presence-bar"
+              id="room-participants"
+              tabIndex={-1}
+              aria-label="Room participants"
+            >
               <div className="room-identity">
                 <span>Share code</span>
                 <strong>{meeting.joinCode}</strong>
@@ -1234,10 +1515,10 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
               </div>
               <div className="participant-summary">
                 <Users size={14} aria-hidden="true" />
-                <span>{participants.length} participant{participants.length === 1 ? "" : "s"}</span>
+                <span>{visibleParticipants.length} participant{visibleParticipants.length === 1 ? "" : "s"}</span>
               </div>
               <ul className="participant-list" aria-label="People in this room">
-                {participants.map((roomParticipant) => (
+                {visibleParticipants.map((roomParticipant) => (
                   <li key={roomParticipant.participantId}>
                     <span className="participant-avatar" aria-hidden="true">
                       {roomParticipant.displayName.slice(0, 1).toUpperCase()}
@@ -1246,15 +1527,41 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
                     {roomParticipant.participantId === currentParticipant?.id && <em>You</em>}
                     {roomParticipant.role === "HOST" && <small>Host</small>}
                     {roomParticipant.activeSigner && <small>Signer</small>}
+                    {"simulated" in roomParticipant && roomParticipant.simulated && <small>Demo</small>}
                   </li>
                 ))}
               </ul>
+              {roomPreviewToolsEnabled && (
+                <div className="room-preview-controls" aria-label="Local room preview tools">
+                  <button
+                    type="button"
+                    className="sc-button sc-button--secondary sc-button--compact"
+                    onClick={addDemoParticipant}
+                    disabled={demoParticipants.length >= DEMO_PARTICIPANTS.length}
+                    aria-label="Add demo participant"
+                  >
+                    <UserPlus size={13} aria-hidden="true" />
+                    <span className="sc-button__label">Add demo</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="sc-button sc-button--secondary sc-button--compact"
+                    onClick={removeDemoParticipants}
+                    disabled={demoParticipants.length === 0}
+                    aria-label="Remove demo participants"
+                  >
+                    <Trash2 size={13} aria-hidden="true" />
+                    <span className="sc-button__label">Remove demos</span>
+                  </button>
+                  <span>Local preview only</span>
+                </div>
+              )}
             </section>
           )}
         </div>
 
         <div className="studio-layout">
-          <section className="capture-console" aria-label="Camera workspace">
+          <section className="capture-console" id="camera-workspace" tabIndex={-1} aria-label="Camera workspace">
             <header className="console-header">
               <div>
                 <h2>Camera feed</h2>
@@ -1308,6 +1615,23 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
                   </span>
                 )}
               </div>
+
+              {product.latestLocalCaption && (
+                <div className="latest-sign-overlay" aria-label="Latest recognized sign">
+                  <span>Latest recognized sign</span>
+                  <strong>{product.latestLocalCaption.payload.text}</strong>
+                  <div>
+                    <span><Hand size={13} aria-hidden="true" /> You signed</span>
+                    <time
+                      dateTime={product.latestLocalCaption.occurredAt}
+                      title={new Date(product.latestLocalCaption.occurredAt).toLocaleString()}
+                    >
+                      at {captionOccurredAt(product.latestLocalCaption.occurredAt)}
+                    </time>
+                    <span>{Math.round(product.latestLocalCaption.payload.confidence * 100)}% confidence</span>
+                  </div>
+                </div>
+              )}
 
               <div className="gesture-overlay">
                 <span>Recognition readiness</span>
@@ -1407,7 +1731,13 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
             </footer>
           </section>
 
-          <aside className="intelligence-panel" role="region" aria-label="Live transcript">
+          <aside
+            className="intelligence-panel"
+            id="live-transcript"
+            tabIndex={-1}
+            role="region"
+            aria-label="Live transcript"
+          >
             <header className="panel-header">
               <div>
                 <Captions size={17} aria-hidden="true" />
@@ -1416,8 +1746,51 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
                   <span>Confirmed output</span>
                 </div>
               </div>
-              <span aria-label={`${product.captions.length} final captions`}>{product.captions.length}</span>
+              <div className="transcript-header-actions">
+                <span className="transcript-count" aria-label={`${transcriptEntries.length} transcript entries`}>
+                  <span aria-label={`${product.captions.length} final captions`}>{transcriptEntries.length}</span>
+                </span>
+                <button
+                  type="button"
+                  className="sc-icon-button transcript-clear-action"
+                  aria-label="Clear transcript"
+                  title="Clear transcript"
+                  onClick={clearTranscript}
+                  disabled={transcriptEntries.length === 0}
+                >
+                  <Trash2 size={15} aria-hidden="true" />
+                </button>
+              </div>
             </header>
+
+            <section className="transcript-tools" aria-labelledby="spoken-transcript-title">
+              <div className="speech-tool-copy">
+                <span className={speechCaptureActive ? "speech-indicator active" : "speech-indicator"} aria-hidden="true">
+                  {speechCaptureActive ? <Mic size={15} /> : <MicOff size={15} />}
+                </span>
+                <div>
+                  <strong id="spoken-transcript-title">Spoken notes</strong>
+                  <span>{speechStatusLabel}</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                className={speechCaptureActive
+                  ? "sc-button sc-button--selected sc-button--compact"
+                  : "sc-button sc-button--secondary sc-button--compact"}
+                aria-label={speechCaptureActive ? "Stop spoken transcript" : "Start spoken transcript"}
+                onClick={speechCaptureActive ? stopSpokenTranscript : startSpokenTranscript}
+                disabled={!meeting}
+                aria-describedby="spoken-transcript-disclosure"
+              >
+                {speechCaptureActive ? <MicOff size={13} aria-hidden="true" /> : <Mic size={13} aria-hidden="true" />}
+                <span className="sc-button__label">{speechCaptureActive ? "Stop" : "Start"}</span>
+              </button>
+              <p id="spoken-transcript-disclosure">
+                Opt-in local microphone capture. Your browser speech service may process audio; SignConnect does not store raw audio.
+              </p>
+              {speechFeedback && <div className="speech-feedback">{speechFeedback}</div>}
+            </section>
 
             {mockNoticeVisible && (
               <div className="mock-model-notice" role="note">
@@ -1426,27 +1799,72 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
               </div>
             )}
 
+            {aslResearchNoticeVisible && !mockNoticeVisible && (
+              <div className="mock-model-notice" role="note">
+                <CircleAlert size={14} aria-hidden="true" />
+                <span><strong>Local ASL research model.</strong> Supported signs: Hello, Thank you, Yes, No, Help, Repeat, Slower, Understand, Finished, and Goodbye. This is ASL, not SGSL.</span>
+              </div>
+            )}
+
             <div className="caption-list">
-              {product.captions.length === 0 ? (
+              {transcriptEntries.length === 0 ? (
                 <div className="caption-empty">
                   <span className="caption-empty-icon"><Captions size={21} strokeWidth={1.5} aria-hidden="true" /></span>
-                  <strong>No captions yet</strong>
-                  <span>Supported signs appear here after the inference service confirms them.</span>
+                  <strong>No transcript entries yet</strong>
+                  <span>Confirmed signs and opt-in spoken notes will appear here with their speaker and time.</span>
                 </div>
-              ) : product.captions.map((caption) => {
+              ) : transcriptEntries.map((transcriptEntry) => {
+                if (transcriptEntry.kind === "speech") {
+                  const { entry } = transcriptEntry;
+                  const isCurrentParticipant = currentParticipant !== null
+                    && entry.sourceDisplayName === currentParticipant.displayName
+                    && !entry.simulated;
+                  const sourceLabel = isCurrentParticipant ? "You" : entry.sourceDisplayName;
+                  const spokenAt = captionOccurredAt(entry.occurredAt);
+                  return (
+                    <article
+                      className="caption-entry speech-entry"
+                      key={entry.id}
+                      aria-label={`${sourceLabel} spoke ${entry.text} at ${spokenAt}`}
+                    >
+                      <div className="caption-meta">
+                        <span className="caption-source">
+                          <Mic size={13} aria-hidden="true" />
+                          {sourceLabel} spoke
+                        </span>
+                        <time dateTime={entry.occurredAt} title={new Date(entry.occurredAt).toLocaleString()}>
+                          at {spokenAt}
+                        </time>
+                      </div>
+                      <p>{entry.text}</p>
+                      <div className="caption-details">
+                        <span>Local microphone</span>
+                        {entry.simulated && <span>Demo preview</span>}
+                      </div>
+                    </article>
+                  );
+                }
+
+                const { caption } = transcriptEntry;
                 const isCurrentParticipant = currentParticipant !== null
                   && caption.participantId === currentParticipant.id;
                 const sourceName = caption.payload.sourceDisplayName
                   ?? (isCurrentParticipant ? currentParticipant?.displayName ?? "You" : "Participant");
+                const sourceLabel = captionSourceLabel(sourceName, isCurrentParticipant);
+                const signedAt = captionOccurredAt(caption.occurredAt);
                 return (
-                  <article className="caption-entry" key={caption.captionId ?? `${caption.streamId}-${caption.sequence}`}>
+                  <article
+                    className="caption-entry sign-entry"
+                    key={caption.captionId ?? `${caption.streamId}-${caption.sequence}`}
+                    aria-label={`${sourceLabel} signed ${caption.payload.text} at ${signedAt}`}
+                  >
                     <div className="caption-meta">
-                      <span>
-                        {sourceName}
-                        {isCurrentParticipant ? " (you)" : ""}
+                      <span className="caption-source">
+                        <Hand size={13} aria-hidden="true" />
+                        {sourceLabel} signed
                       </span>
-                      <time dateTime={caption.occurredAt}>
-                        {new Date(caption.occurredAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      <time dateTime={caption.occurredAt} title={new Date(caption.occurredAt).toLocaleString()}>
+                        at {signedAt}
                       </time>
                     </div>
                     <p>{caption.payload.text}</p>
@@ -1460,19 +1878,24 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
               })}
             </div>
 
-            <section className="system-health" aria-label="Recognition status">
+            <section
+              className="system-health"
+              id="recognition-status"
+              tabIndex={-1}
+              aria-label="Recognition status"
+            >
               <div className="system-health-header">
                 <strong>Recognition status</strong>
                 <span className={`health-light ${recognition.captureStatus}`} aria-hidden="true" />
               </div>
-              <dl>
-                <div>
-                  <dt>Camera readiness</dt>
-                  <dd className="readiness-detail" aria-label="Camera readiness">
-                    <strong>{readinessGuidance.title}</strong>
-                    <span>{readinessGuidance.message}</span>
-                  </dd>
+              <div className="recognition-status-summary">
+                <span>Current state</span>
+                <div className="recognition-status-copy" aria-label="Camera readiness">
+                  <strong>{readinessGuidance.title}</strong>
+                  <p>{readinessGuidance.message}</p>
                 </div>
+              </div>
+              <dl>
                 <div>
                   <dt>Landmark capture</dt>
                   <dd>{captureHealthLabel(recognition.captureStatus)}</dd>
@@ -1498,6 +1921,13 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
               </dl>
               {product.recognitionFeedback && <div className="recognition-feedback">{product.recognitionFeedback}</div>}
               {product.protocolFeedback && <div className="protocol-feedback">{product.protocolFeedback}</div>}
+              <div className="workspace-help" id="workspace-help" tabIndex={-1}>
+                <CircleHelp size={15} aria-hidden="true" />
+                <span>
+                  <strong>Recognition help</strong>
+                  Keep your upper body and hands inside the camera guide. Only landmarks are sent for sign inference; raw video stays in this browser.
+                </span>
+              </div>
             </section>
 
           </aside>

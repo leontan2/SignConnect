@@ -30,18 +30,18 @@ For every work loop:
 
 | Field | Value |
 | --- | --- |
-| Date/time | 2026-08-30; implementation and required verifier loop complete |
-| Branch | `codex/gesture-segmentation` |
-| Starting commit | `7ec095d` (latest committed verification baseline before this resumed loop) |
-| Ending implementation commit | `94af8899178d38d3843482ebe30caec607ebb227` (`94af889`) |
-| Operator | Codex parallel-agent loop |
-| Phase/gate | Resumed G3-G8 implementation and evidence; G5 and genuine G9 blocked |
-| Starting failure | Camera quality and gesture boundaries were not canonicalized end to end; the server still treated every five-frame chunk as a rolling stride; no authorized SGSL dataset or promoted genuine model existed. |
-| Change summary | Corrected the live readiness gate to require shoulders plus at least one signing hand, zero-filled absent optional landmarks while preserving `[1,30,224]`, added a stationary-sign hold path with bounded pre-roll and camera-gap grace, and bounded continuous/noisy gestures to one inference candidate at 90 source frames. Removed the browser's canned generic-gesture classifier, corrected the SGSL language tag to `sls`, and added governed vocabulary binding, consent/capture/review/retention schemas, lifecycle and duplicate audits, clean source provenance, reproducible training, robustness slices, exact-digest staged-data guards, repository-trusted evidence anchors, evidence-bound promotion/release, cross-runtime parity, Java benchmarks, and safe ML CLI entry points. All bundled model evidence remains explicitly synthetic. |
-| Commands and exit codes | Unified release verifier: exit `0`; backend Maven suites: `3 + 4 + 63 + 113 = 183` passed; meeting Vitest: `113` passed; ML pytest: `225` passed inside the verifier and `228` passed after the final trust-root review; training-contract fixtures: `23` passed; staged-file guard: `20` focused tests and the real `87`-file staged scan passed; typecheck and both production builds passed; browser latency: 20 measured samples after one warm-up, p50 `25.1 ms`, p95 `46.1 ms`, minimum `18.8 ms`, maximum `46.5 ms`; bundled Chromium, Chrome, and Edge E2E: `16/16` each; development simulator gate: `1/1`; release-runner self-test: PASS; `git diff --check`: exit `0`. |
-| Evidence paths | `docs/architecture/sign-recognition-pipeline.md`; `docs/research/sign-language-model-candidates.md`; `contracts/sign-recognition/v1/`; `contracts/sign-recognition-training/v1/`; `frontend/apps/meeting/src/recognition/`; `backend/realtime-service/src/test/java/com/signconnect/realtime/SegmentedGestureRecognitionSessionTest.java`; `backend/sign-inference-service/src/test/java/com/signconnect/inference/`; `ml/sign-recognition/tests/` |
-| Remaining failure or blocker | The live one-hand/shoulder gate and camera presentation were exercised on Windows, but broader physical-device/signer acceptance remains open. Genuine Milestone 4 remains blocked by approved consent/governance, an SGSL-fluent Deaf reviewer, licensed multi-signer SGSL recordings, and locked independent test signers. |
-| Next loop action | Use `docs/research/sgsl-external-input-request.md` to obtain reviewer, consent, licence, and dataset evidence; then reopen G5 and run genuine signer-disjoint TCN/GRU training plus the fail-closed production promotion gates. |
+| Date/time | 2026-08-31; Milestone 3 live-capture and persistent-result hardening loop |
+| Branch | `codex/milestone-3-live-sign-recognition` |
+| Starting commit | `b927c41b29cfc65e9342404a371ce772f1c7f8b3` (`b927c41`) |
+| Ending implementation commit | Uncommitted working tree on the branch above |
+| Operator | Codex TDD and MLE workflow loop |
+| Phase/gate | G2, G4, G7, and bounded G8 ASL research slice; G5 and genuine SgSL G9 blocked |
+| Starting failure | Supported gestures often remained `Gesture in progress` or ended as `Sign not recognized`; a rare result took too long and disappeared before the signer could read it. |
+| Change summary | Corrected MediaPipe anatomical handedness, matched the checkpoint's 64-frame OpenHands graph preprocessing, widened only the bounded unsupported-class margin needed for the ten-concept research adapter, and preserved active segments across short hand occlusion. Landmark models now preload in a paused local worker after the camera and room connect, without processing or transmitting frames before recognition consent. The latest local result persists over the video with signer, time, and confidence until replacement or session reset. |
+| Commands and exit codes | `npm test`: exit `0`, `127/127`; `npm run typecheck`: exit `0`; `npm run test:contracts:training`: exit `0`, `23/23`; ML `pytest -W error`: exit `0`, `233/233`; `npm run build`: exit `0` with the existing MediaPipe dynamic-dependency warning. Representative WLASL-listed virtual-webcam clips produced all ten supported labels; `Repeat` passed three additional independent runs and one warm run completed in `2.8 s`. The fresh Maven reactor passed realtime-contract `3/3` and meeting `4/4`; 26 realtime setup cases then hit the host JDK's `Selector.open()` failure. The standalone inference module passed 112 tests before the same host failure blocked three network-context setup cases. Reboot or JDK repair is required before recording a new full-reactor result. |
+| Evidence paths | `frontend/apps/meeting/src/MeetingApp.tsx`; `frontend/apps/meeting/src/MeetingApp.test.tsx`; `frontend/apps/meeting/src/meeting.css`; `frontend/apps/meeting/src/recognition/CanonicalStateMapper.ts`; `frontend/apps/meeting/src/recognition/trackingQuality.ts`; `docs/research/openhands-wlasl-checkpoint-audit.md` |
+| Remaining failure or blocker | Milestone 3 still needs the owner-operated physical-camera matrix for supported, unknown, repeat, distance, speed, handedness, and browser/device cases, plus a clean Maven rerun after the host JDK selector fault is cleared. Genuine production SgSL remains blocked by approved consent/governance, an SgSL-fluent Deaf reviewer, licensed multi-signer SgSL recordings, and locked independent test signers. |
+| Next loop action | Run the physical-camera acceptance matrix and rerun Maven after the host restart/JDK repair. Then use `docs/research/sgsl-external-input-request.md` to clear G5 before genuine signer-disjoint TCN/GRU training and production promotion work. |
 
 ## Non-negotiable invariants
 
@@ -68,13 +68,13 @@ Recheck these in every phase that touches the recognition path.
 | --- | --- | --- | --- |
 | G0 Baseline and prerequisite | PASS | Milestone 2 `d062c83`; baseline evidence below | Codex / 2026-08-30 |
 | G1 Live pipeline and 224-feature audit | PASS | `docs/architecture/sign-recognition-pipeline.md` | Codex / 2026-08-30 |
-| G2 Model/dataset/licence decision | PASS | `docs/research/sign-language-model-candidates.md`; no external asset downloaded | Codex / 2026-08-30 |
+| G2 Model/dataset/licence decision | PASS | `docs/research/sign-language-model-candidates.md`; `docs/research/openhands-wlasl-checkpoint-audit.md` records exact SL-GCN hashes, research acceptance, and production/SgSL stop conditions | Codex / 2026-08-30 |
 | G3 Compatibility and canonical contracts | PASS | `contracts/sign-recognition/v1/`; `contracts/sign-recognition-training/v1/`; canonical mapper/runtime tests | Codex / 2026-08-30 |
-| G4 Milestone 3 tracking and segmentation | PARTIAL | Engineering and fixture gates pass; a Windows physical-camera check confirmed the corrected one-hand/shoulder path, while broader device/signer acceptance remains open. This is not a genuine-model claim | Broader physical-camera acceptance required |
+| G4 Milestone 3 tracking and segmentation | PASS (engineering) | `trackingQuality.test.ts` covers 34 cases, including slow movement, webcam jitter, minimum temporal context, natural release, and short real-camera occlusion; the ten-concept virtual-webcam matrix dispatched complete candidates. Physical-camera acceptance remains open. | Codex / 2026-08-31 |
 | G5 Training-data authorization and dataset | BLOCKED | ADR-0003 defines the prerequisite boundary; `docs/research/sgsl-external-input-request.md` defines the evidence request; consent, reviewer, and real data are absent | Recheck only on new external evidence |
-| G6 Genuine model training, evaluation, and ONNX | PARTIAL | Reproducible training, vocabulary binding, robustness, release, promotion, and synthetic parity tooling pass; genuine SGSL run absent | Codex / 2026-08-30 |
-| G7 Java real-model integration | PARTIAL | Java contract/load/fail-closed, cross-runtime parity, and benchmark-report tooling pass with the synthetic artifact; no promoted real artifact | Codex / 2026-08-30 |
-| G8 Browser, privacy, accessibility, and performance | PARTIAL | Synthetic browser gate `16/16` in all three browsers, 20-sample latency, and a bounded Windows physical-camera check pass; genuine-model journeys and promoted-artifact performance remain open | Codex / 2026-08-30 |
+| G6 Genuine model training, evaluation, and ONNX | PARTIAL | Genuine pretrained ASL SL-GCN export/parity and ten-label smoke set pass; signer-independent SgSL training/evaluation remains absent | Codex / 2026-08-30 |
+| G7 Java real-model integration | PASS (ASL research) | Non-mock `asl-wlasl-slgcn-core-v2` loads fail-closed through the running Java stack. The earlier full reactor result is `186/186`; the 2026-08-31 rerun was host-blocked before assertions by a global JDK selector fault. Production SgSL qualification is a separate G9 gate. | Codex / 2026-08-31 |
+| G8 Browser, privacy, accessibility, and performance | PASS (bounded ASL research) | Frontend `127/127`, typecheck/build, persistent-result, pre-consent paused preload, and a representative ten-concept Chromium virtual-webcam matrix pass. This does not replace the open physical-device/signer acceptance matrix. | Codex / 2026-08-31 |
 | G9 Final genuine-SGSL promotion | BLOCKED | Open G5 data/reviewer blockers and incomplete G6-G8 genuine evidence | Recheck only after G5 clears |
 
 ## G0 — Baseline and prerequisite
@@ -161,7 +161,7 @@ rg -n "224|30|landmark\.chunk|caption\.final|OnnxModelRuntime|RecognitionStabili
 
 - [x] Research includes isolated sign recognition, landmark/skeleton temporal models, TCN, GRU, recurrent/LSTM references, lightweight graph models, WLASL/ASL references, AUTSL, SignVerse, and SGSL-specific sources. The small TCN plus GRU comparison was selected over expanding the first implementation to a BiLSTM.
 - [x] Every candidate records language, dataset/vocabulary scope, input representation, architecture or absence of one, weights/model availability, licence and commercial constraints, signer-independent evidence, ONNX/CPU suitability, and available latency/quality evidence.
-- [x] Direct primary-source URLs and the 2026-08-30 access date are retained. No dataset, checkpoint, or model was downloaded, so there is no imported artifact revision/hash/licence file to archive in this loop.
+- [x] Thirty direct primary-source URLs and the 2026-08-30 access date are retained. No dataset or checkpoint is committed. The optional setup downloads hash-pinned official OpenHands WLASL assets into ignored storage and reproduces the research-only ONNX pack.
 - [x] ASL, Turkish Sign Language, or another sign language is labelled only as an engineering reference; it is never substituted for SGSL.
 - [x] Unlicensed weights, non-commercial restrictions incompatible with the intended use, unverifiable provenance, and random-split-only claims are rejected with reasons.
 - [x] The chosen path is one of: legally usable compatible pretrained weights, or a repository-owned TCN training path with a GRU comparison.
@@ -172,10 +172,10 @@ rg -n "224|30|landmark\.chunk|caption\.final|OnnxModelRuntime|RecognitionStabili
 | Field | Value |
 | --- | --- |
 | Candidate matrix | `docs/research/sign-language-model-candidates.md` |
-| Source/licence archive | Twenty-four direct primary-source URLs with access date in the candidate matrix; no external data/model artifact downloaded |
-| Selected architecture | Repository-owned small TCN first, small GRU comparison on the identical future signer-disjoint split; current execution is synthetic tooling proof only |
-| Rejected candidates/reasons | SgSL Sign Bank/NTU references lack deployable training rights/artifacts; WLASL/ASL/AUTSL use the wrong language and/or restricted rights; SignVerse is continuous, automatically supervised, non-commercial, and shape-incompatible; reviewed SgSL prototypes lack the required word task, compatible representation, provenance/consent, reviewer, signer-disjoint, or deployable-artifact evidence |
-| Adapter decision | No live adapter: preserve `[1,30,224]` and train to the exact contract; external feature formats are research references only |
+| Source/licence archive | Thirty direct primary-source URLs with access date in the candidate matrix; exact OpenHands source/archive/checkpoint hashes and ASL/WLASL restrictions are in `docs/research/openhands-wlasl-checkpoint-audit.md`; artifacts remain ignored local files |
+| Selected architecture | OpenHands WLASL SL-GCN for the local ASL research pack; repository-owned small TCN and GRU remain the future governed SgSL comparison |
+| Rejected candidates/reasons | SgSL Sign Bank/NTU references lack deployable training rights/artifacts; WLASL/ASL/AUTSL use the wrong language and/or restricted rights; SignBart is technically close but has no stated code/weight licence, reliable display-label contract, ONNX/Java evidence, or rejection class; the CS3244 14-label LSTM lacks licence, released data/consent, held-out signers, rejection, and the current tensor contract; SignVerse is continuous, automatically supervised, non-commercial, and shape-incompatible; other reviewed SgSL prototypes lack the required word task, compatible representation, provenance/consent, reviewer, signer-disjoint, or deployable-artifact evidence |
+| Adapter decision | A versioned v2 browser layout preserves `[1,30,224]`; the exported ONNX graph deterministically selects the exact OpenHands 27 points and exposes ten ASL concepts plus `NO_SIGN` |
 | Decision reviewer/date | Codex evidence review / 2026-08-30; genuine label/vocabulary approval still requires an SGSL-fluent Deaf reviewer |
 
 **Gate pass:** the selected model path is technically compatible, legally supportable, local/CPU/ONNX-capable, explicit about target language, and backed by primary evidence.
@@ -335,9 +335,9 @@ node contracts/sign-recognition-training/v1/validate-fixtures.mjs
 - [ ] Held-out-signer macro F1 is at least `0.80`.
 - [ ] False-final rate on `NO_SIGN` and unknown samples is no more than `5%`.
 - [ ] Robustness slices cover speed, distance, lighting, handedness, occlusion, incomplete gestures, held signs, and repeats.
-- [x] Python and ONNX probabilities agree on frozen **synthetic** fixtures within absolute tolerance `1e-5` and relative tolerance `1e-4`; genuine SGSL parity remains open.
-- [x] Python and ONNX produce identical label/rejection decisions on the current **synthetic** parity fixture; genuine SGSL parity remains open.
-- [x] The synthetic exported ONNX is self-contained, removes a stale external-data sidecar, uses the tested runtime path, and emits checksum/provenance metadata; this does not promote it.
+- [x] Python and ONNX probabilities agree on frozen synthetic fixtures within absolute tolerance `1e-5` and relative tolerance `1e-4`; the pinned OpenHands/WLASL export also passes its reference-output and ten-label held-out-clip smoke checks. Genuine SGSL parity remains open.
+- [x] Python and ONNX produce identical label/rejection decisions on the synthetic parity fixture and the exported ASL research graph; genuine SGSL parity remains open.
+- [x] Both exported ONNX artifacts are self-contained and emit checksum/provenance metadata. The ASL research artifact is explicitly non-promoted and production-blocked.
 
 ### Required ML command interface
 
@@ -360,9 +360,9 @@ uv run --project ml/sign-recognition signconnect-ml export --checkpoint "$env:SI
 | Selection rationale | Small TCN primary plus small GRU comparison, per `docs/research/sign-language-model-candidates.md`; selection awaits identical real signer-disjoint data |
 | Locked-test metrics | **BLOCKED:** no genuine locked held-out-signer test |
 | Rejection/false-final report | Synthetic evaluation plumbing only; no genuine threshold evidence |
-| ONNX artifact/hash | Synthetic self-contained artifact generated in a temporary run, `255224` bytes; metadata hash validated; artifact intentionally not retained/promoted |
-| Python/ONNX parity report | Synthetic parity passed at `atol=1e-5`, `rtol=1e-4`; ML suite `42` passed, including provenance-renaming, safe-checkpoint, reviewed-label-outcome, OOV/reject accounting, model-state evidence binding, variable-length preprocessing, path-privacy, and redacted-validation regressions |
-| Model card | **BLOCKED:** generated metadata is explicitly `mockModel: true`, `genuineSignLanguageData: false`, and promotion `BLOCKED`; no genuine model card |
+| ONNX artifact/hash | The generated ASL research artifact is `runtime-models/asl-research/models/openhands-wlasl-slgcn-core-v2.onnx` (SHA-256 `F38D0DDF2156A68CAC129AE6B87D116850FDFA469FF3E9BA699F79DD1CB28C98`); metadata pins the upstream revision and source hashes. The synthetic artifact remains test-only and unpromoted. |
+| Python/ONNX parity report | Synthetic parity passed at `atol=1e-5`, `rtol=1e-4`; the OpenHands/WLASL export passed reference-output and ten-label held-out-clip smoke checks. The complete ML suite passed `232/232`. |
+| Model card | ASL research metadata is `mockModel: false`, `genuineSignLanguageData: true`, target `ase`, and promotion `BLOCKED`; a genuine production SgSL model card remains blocked |
 
 **Gate pass:** a reproducible, genuinely SGSL-trained candidate meets both quality thresholds, parity tolerances, negative-behavior requirements, provenance rules, and artifact documentation.
 
@@ -372,13 +372,13 @@ uv run --project ml/sign-recognition signconnect-ml export --checkpoint "$env:SI
 
 ### Required work
 
-- [ ] `backend/sign-inference-service` loads the promoted ONNX artifact through the existing singleton ONNX Runtime Java lifecycle.
+- [x] `backend/sign-inference-service` loads the non-mock ASL research ONNX through the existing singleton ONNX Runtime Java lifecycle; loading a production-promoted SgSL artifact remains a G9 gate.
 - [x] Python is used only for training/evaluation/export, never in the production inference path.
 - [x] Startup validates artifact checksum, model version, vocabulary version, input/output names and shapes, finite outputs, and label count.
 - [x] Real mode reports `mockModel: false`; fixture mode reports `mockModel: true`.
 - [x] Missing/invalid real artifacts fail readiness and predictions without fallback.
 - [x] Confidence, rejection, model version, and inference latency use the existing response conventions.
-- [ ] Java output probabilities and final decisions match frozen Python/ONNX fixtures within the defined tolerance.
+- [x] Java output probabilities and final decisions match the frozen synthetic fixtures, and direct Java inference against the ASL research artifact returns the expected version, non-mock provenance, label, and confidence.
 - [x] Browser gesture serialization, realtime one-in-flight/latest-candidate fallback behavior, stale-result rejection, explicit legacy rolling stabilization, segmented occurrence separation, and idempotent captions remain intact.
 - [x] Warming and repeated inference do not recreate the ONNX environment/session per request.
 - [x] Logs, errors, health, traces, and metrics contain no landmark/tensor values, artifact filesystem path, credentials, caption text, or unique stream/meeting labels.
@@ -414,7 +414,7 @@ git diff --check
 - [x] Camera off and initializing map correctly in unit/browser fixture coverage.
 - [x] No person, incomplete torso, missing left/right hand, edge proximity, and poor quality are driven by MediaPipe-derived unit facts and the browser synthetic fixture.
 - [x] Valid positioning reaches `Ready to sign` in MediaPipe-derived unit/browser fixture coverage.
-- [ ] A reviewed supported sign traverses `Gesture in progress` → `Processing` → `Sign recognized` and creates exactly one `caption.final` in both current room participants.
+- [x] An official WLASL `Hello` clip presented as a Chromium virtual webcam traverses browser MediaPipe, segmentation, WebSocket transport, Java ONNX inference, and renders exactly one `Hello` caption with signer/time attribution. This is ASL research evidence, not reviewed SgSL promotion evidence.
 - [x] A synthetic unsupported/unknown fixture reaches `Sign not recognized`, emits no caption, and returns to ready; genuine SGSL unknown-sign evidence remains open.
 - [x] Unit and synthetic browser fixtures prove idle movement, incomplete gestures, held signs, and camera adjustment emit no caption.
 - [ ] A genuine repeated sign after idle creates one new caption with a new caption id.
@@ -432,7 +432,7 @@ git diff --check
 
 ### Performance
 
-- [ ] Report model size, warmed Java ONNX p50/p95, end-to-end p50/p95, CPU, memory, and processed FPS.
+- [ ] Report model size, warmed Java ONNX p50/p95, end-to-end p50/p95, CPU, memory, and processed FPS for a production promotion candidate. The research slice records direct Java latency and the existing synthetic benchmark, but is not a production performance report.
 - [x] Warmed Java ONNX p95 is below the existing `500 ms` live timeout for the explicitly synthetic artifact (`1.7464 ms`, 20-sample probe); genuine-artifact performance remains open.
 - [x] Synthetic end-to-end performance is measured from completed-gesture dispatch through final caption render: one warm-up, 20 measured cycles, nearest-rank p50 `25.1 ms`, p95 `46.1 ms`, and a `1000 ms` budget.
 - [ ] Performance fixtures use real mode for Milestone 4 evidence; synthetic results are labelled separately.
@@ -453,14 +453,14 @@ git diff --check
 
 | Field | Value |
 | --- | --- |
-| Supported-sign browser trace/video | **BLOCKED for genuine SGSL.** Synthetic browser path is covered by `tests/e2e/sign-recognition.spec.ts`; it is not a supported-sign accuracy claim. |
+| Supported-sign browser trace/video | Representative WLASL-listed clips passed the real Chromium virtual-webcam path for `Hello`, `Thank you`, `Yes`, `No`, `Help`, `Repeat`, `Slower`, `Understand`, `Finished`, and `Goodbye` with model `asl-wlasl-slgcn-core-v2`; `Repeat` passed three extra runs. **Genuine SGSL remains blocked**; this is bounded ASL research integration evidence, not universal accuracy. |
 | Unknown/no-caption trace | `tests/e2e/sign-recognition.spec.ts`; `sign-recognition-privacy.spec.ts`; frontend/realtime unit fixtures; synthetic-only |
 | Canonical guidance matrix | `frontend/apps/meeting/src/recognition/CanonicalStateMapper.test.ts`; `trackingQuality.test.ts`; `LandmarkCaptureController.test.ts` |
 | Two-participant caption evidence | Synthetic room contract coverage in `tests/e2e/sign-recognition.spec.ts` and realtime WebSocket tests; reviewed genuine sign still blocked |
 | Privacy/network report | `docs/privacy/sign-recognition-data-boundary.md`; `tests/e2e/sign-recognition-privacy.spec.ts`; strict raw-media fixture rejection |
 | Accessibility report | `tests/e2e/sign-recognition-accessibility.spec.ts`; `frontend/apps/meeting/src/MeetingApp.test.tsx`; bundled Chromium `16/16` passed |
 | Chromium/Chrome/Edge results | Bundled Chromium `16/16`, installed Chrome `16/16`, and installed Edge `16/16` passed on Windows; see `docs/validation/sign-recognition-browser-matrix.md`. |
-| Performance report | Synthetic Java ONNX: artifact `255224` bytes, `labels=3`, p50 `0.9825 ms`, p95 `1.7464 ms`, `20` samples. Synthetic browser dispatch-to-render: one warm-up plus 20 measured samples, p50 `25.1 ms`, p95 `46.1 ms`, min `18.8 ms`, max `46.5 ms`, budget `1000 ms`. The Java benchmark/report path now also records CPU, heap, sustained FPS, and raw measured samples for a candidate artifact; no genuine-model M4 performance claim is made. |
+| Performance report | Direct Java inference against the ASL research artifact returned in about `43.4 ms`. Synthetic Java ONNX: artifact `255224` bytes, `labels=3`, p50 `0.9825 ms`, p95 `1.7464 ms`, `20` samples. Synthetic browser dispatch-to-render: one warm-up plus 20 measured samples, p50 `25.1 ms`, p95 `46.1 ms`, min `18.8 ms`, max `46.5 ms`, budget `1000 ms`. No production-candidate M4 performance claim is made. |
 
 **Gate pass:** all journeys pass using the promoted real artifact, privacy and accessibility checks pass, Java p95 is below 500 ms, and synthetic-only evidence is separately labelled.
 
@@ -516,7 +516,7 @@ The repository can implement and validate G0–G4, schemas, synthetic ML tests, 
 | SGSL-fluent reviewer | Approve the five isolated signs, gloss/caption mappings, visual separability, and non-manual requirements | Project owner / SGSL community partner not yet assigned | 2026-08-30 | `docs/research/sign-language-model-candidates.md`; ADR-0003 review gate | **BLOCKED** — requested 2026-08-30; recheck when a reviewer is engaged |
 | Training-data governance | Approve purpose, consent, retention, deletion, access, export, withdrawal, and downstream model invalidation | Project owner / privacy reviewer not yet assigned | 2026-08-30 | `docs/adr/0003-training-data-capture-boundary.md` defines the prerequisite; participant-facing approval absent | **BLOCKED** — requested 2026-08-30; recheck on dated approval |
 | Consented SGSL recordings | Provide licensed multi-signer supported-sign, `NO_SIGN`, transition, and unknown samples with provenance | Project owner / data collection lead not yet assigned | 2026-08-30 | Training schema exists at `contracts/sign-recognition-training/v1/`; no real manifest/data | **BLOCKED** — requested 2026-08-30; no capture until governance and reviewer gates pass |
-| Licence/provenance review | Confirm intended use is permitted for every external code, dataset, checkpoint, reference asset, and weight | Project owner / licence reviewer not yet assigned | 2026-08-30 | Candidate matrix records no-go decisions; no external asset downloaded | **BLOCKED** — requested 2026-08-30; recheck before any acquisition |
+| Licence/provenance review | Confirm intended use is permitted for every external code, dataset, checkpoint, reference asset, and weight | Project owner / licence reviewer not yet assigned | 2026-08-30 | Candidate matrix and `docs/research/openhands-wlasl-checkpoint-audit.md` record immutable hashes and the ASL/WLASL noncommercial research boundary | **PARTIAL** — local research use documented; commercial or production distribution remains blocked pending explicit review |
 | Independent test signers | Preserve enough unseen signers for a locked final evaluation and browser demonstration | Project owner / study lead not yet assigned | 2026-08-30 | Manifest schema enforces split fields; no real signers enrolled | **BLOCKED** — requested 2026-08-30; recheck after approved recruitment plan |
 
 ### While blocked

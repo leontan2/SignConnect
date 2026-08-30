@@ -51,6 +51,7 @@ export function mapCanonicalApplicationState(input: CanonicalStateInput): Canoni
     return QUALITY_STATE[input.trackingQuality];
   }
   if (!input.calibrationReady) return "Camera initializing";
+  if (input.recognitionPending && input.recognitionOutcome === null) return "Processing";
   if (input.gesturePhase === "starting"
     || input.gesturePhase === "active"
     || input.gesturePhase === "ending") {
@@ -58,6 +59,5 @@ export function mapCanonicalApplicationState(input: CanonicalStateInput): Canoni
   }
   if (input.recognitionOutcome === "recognized") return "Sign recognized";
   if (input.recognitionOutcome === "not-recognized") return "Sign not recognized";
-  if (input.recognitionPending) return "Processing";
   return "Ready to sign";
 }

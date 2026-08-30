@@ -41,8 +41,8 @@
     "mockModel": { "type": "boolean" },
     "genuineSignLanguageData": { "type": "boolean" },
     "targetLanguage": {
-      "const": "sls",
-      "description": "IANA-registered BCP 47 language tag for Singapore Sign Language."
+      "enum": ["sls", "ase"],
+      "description": "IANA BCP 47 tag for the explicitly selected sign-language pack: Singapore Sign Language or American Sign Language."
     },
     "vocabularyVersion": { "$ref": "#/$defs/semanticVersion" },
     "vocabularySha256": {
@@ -82,20 +82,47 @@
           "maxItems": 3
         },
         "tensorType": { "const": "FLOAT32" },
-        "featureLayoutVersion": { "const": "mediapipe-holistic-224-v1" },
+        "featureLayoutVersion": {
+          "enum": ["mediapipe-holistic-224-v1", "mediapipe-holistic-224-v2"]
+        },
         "normalizationVersion": { "const": "shoulder-midpoint-shoulder-width-v1" },
         "featureOrder": {
-          "type": "array",
-          "prefixItems": [
-            { "const": "LEFT_HAND_0_20_XYZ_PRESENCE" },
-            { "const": "RIGHT_HAND_0_20_XYZ_PRESENCE" },
-            { "const": "POSE_11_24_XYZ_PRESENCE" }
-          ],
-          "items": false,
-          "minItems": 3,
-          "maxItems": 3
+          "oneOf": [
+            {
+              "type": "array",
+              "prefixItems": [
+                { "const": "LEFT_HAND_0_20_XYZ_PRESENCE" },
+                { "const": "RIGHT_HAND_0_20_XYZ_PRESENCE" },
+                { "const": "POSE_11_24_XYZ_PRESENCE" }
+              ],
+              "items": false,
+              "minItems": 3,
+              "maxItems": 3
+            },
+            {
+              "type": "array",
+              "prefixItems": [
+                { "const": "LEFT_HAND_0_20_XYZ_PRESENCE" },
+                { "const": "RIGHT_HAND_0_20_XYZ_PRESENCE" },
+                { "const": "POSE_0_2_5_11_21_XYZ_PRESENCE" }
+              ],
+              "items": false,
+              "minItems": 3,
+              "maxItems": 3
+            }
+          ]
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "featureLayoutVersion": { "const": "mediapipe-holistic-224-v1" } } },
+          "then": { "type": "object", "properties": { "featureOrder": { "type": "array", "contains": { "const": "POSE_11_24_XYZ_PRESENCE" } } } }
+        },
+        {
+          "if": { "type": "object", "properties": { "featureLayoutVersion": { "const": "mediapipe-holistic-224-v2" } } },
+          "then": { "type": "object", "properties": { "featureOrder": { "type": "array", "contains": { "const": "POSE_0_2_5_11_21_XYZ_PRESENCE" } } } }
+        }
+      ]
     },
     "output": {
       "type": "object",
@@ -274,7 +301,9 @@
       "required": ["status", "reviewerRole", "reviewedLabelIds", "reviewArtifactSha256", "reviewedAt"],
       "properties": {
         "status": { "enum": ["PENDING", "APPROVED", "REJECTED"] },
-        "reviewerRole": { "const": "SGSL_FLUENT_DEAF_REVIEWER" },
+        "reviewerRole": {
+          "enum": ["SGSL_FLUENT_DEAF_REVIEWER", "ASL_FLUENT_DEAF_REVIEWER"]
+        },
         "reviewedLabelIds": {
           "type": "array",
           "uniqueItems": true,
@@ -359,6 +388,31 @@
     }
   },
   "allOf": [
+    {
+      "if": {
+        "type": "object",
+        "properties": { "targetLanguage": { "const": "ase" } },
+        "required": ["targetLanguage"]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "sgslReview": {
+            "type": "object",
+            "properties": { "reviewerRole": { "const": "ASL_FLUENT_DEAF_REVIEWER" } }
+          }
+        }
+      },
+      "else": {
+        "type": "object",
+        "properties": {
+          "sgslReview": {
+            "type": "object",
+            "properties": { "reviewerRole": { "const": "SGSL_FLUENT_DEAF_REVIEWER" } }
+          }
+        }
+      }
+    },
     {
       "if": {
         "type": "object",

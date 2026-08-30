@@ -73,5 +73,10 @@ describe("CanonicalStateMapper", () => {
       recognitionPending: true,
       recognitionOutcome: "not-recognized"
     })).toBe("Sign not recognized");
+    expect(mapCanonicalApplicationState({
+      ...ready,
+      gesturePhase: "active",
+      recognitionPending: true
+    })).toBe("Processing");
   });
 });
