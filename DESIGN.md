@@ -57,6 +57,8 @@ The implemented tokens live in `frontend/styles/system.css`. Always reuse them b
 | Strong hairline | `--sc-line-strong` | `#c8cac4` | Interactive control borders |
 | Danger | `--sc-danger` | `#b84e3b` | Errors and destructive actions |
 
+Participant identity uses the paired `--sc-participant-*-accent` and `--sc-participant-*-surface` tokens. Assign a stable pair from the participant identity, reserve the `self` pair for the current participant, and always show the participant name or initials alongside the color treatment. Participant color is supporting information, never the only identifier.
+
 ### Typography
 
 - Product sans: `Plus Jakarta Sans`, with `system-ui` fallback.
@@ -144,6 +146,9 @@ Use `.sc-select` for device, participant, and workspace option selectors. Keep a
 ### Transcript and system health
 
 - Confirmed captions belong in the transcript. Temporary tracking feedback stays near the camera.
+- Treat the conversation history as the primary flexible region. Keep the room-message composer directly below it and dock recognition health at the bottom of the transcript panel.
+- Follow new entries while the viewer is at the latest message. If they scroll upward, preserve their reading position and offer a text-labelled jump to the new entries.
+- Attribute signed, spoken, and typed entries with a stable participant color plus a visible name or initials.
 - Keep status rows compact and use text plus status indicators.
 - Display honest model capability and mock-model disclosures without visual alarmism.
 

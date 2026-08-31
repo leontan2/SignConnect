@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -882,6 +882,90 @@ describe("Meeting recognition product UX", () => {
     expect(within(transcript).getByText("Can you repeat that sign?")).toBeVisible();
     expect(within(transcript).getByText("You typed")).toBeVisible();
     expect(within(transcript).getAllByRole("article")).toHaveLength(1);
+  });
+
+  it("places the room composer after history and visibly identifies different participants", async () => {
+    const harness = makeHarness();
+    const socket = await connectSession(harness);
+    const transcript = screen.getByRole("region", { name: "Live transcript" });
+    const conversationHistory = within(transcript).getByLabelText("Conversation history");
+    const composer = within(transcript).getByLabelText("Message the room").closest("form");
+
+    expect(composer).not.toBeNull();
+    expect(conversationHistory.compareDocumentPosition(composer!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+
+    act(() => socket.message({
+      schemaVersion: 1,
+      type: "chat.message",
+      meetingId: meeting.id,
+      participantId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      messageId: "11111111-1111-4111-8111-111111111111",
+      sequence: ++harness.roomSequence.value,
+      payload: { text: "Could you repeat that?", sourceDisplayName: "Aisyah Rahman" },
+      occurredAt: "2026-01-01T00:00:03Z"
+    }));
+    act(() => socket.message({
+      schemaVersion: 1,
+      type: "chat.message",
+      meetingId: meeting.id,
+      participantId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      messageId: "22222222-2222-4222-8222-222222222222",
+      sequence: ++harness.roomSequence.value,
+      payload: { text: "Yes, one moment.", sourceDisplayName: "Marcus Lee" },
+      occurredAt: "2026-01-01T00:00:04Z"
+    }));
+
+    const aisyahEntry = within(transcript).getByLabelText(/Aisyah Rahman typed Could you repeat that/);
+    const marcusEntry = within(transcript).getByLabelText(/Marcus Lee typed Yes, one moment/);
+    expect(within(aisyahEntry).getByText("AR")).toBeVisible();
+    expect(within(marcusEntry).getByText("ML")).toBeVisible();
+    expect(aisyahEntry).not.toHaveAttribute("data-participant-tone", marcusEntry.getAttribute("data-participant-tone"));
+  });
+
+  it("follows new transcript entries unless the user is reading older messages", async () => {
+    const harness = makeHarness();
+    const socket = await connectSession(harness);
+    const history = screen.getByLabelText("Conversation history");
+    const scrollTo = vi.fn();
+    Object.defineProperties(history, {
+      clientHeight: { configurable: true, value: 300 },
+      scrollHeight: { configurable: true, value: 1_000 },
+      scrollTop: { configurable: true, writable: true, value: 700 },
+      scrollTo: { configurable: true, value: scrollTo }
+    });
+    fireEvent.scroll(history);
+
+    act(() => socket.message({
+      schemaVersion: 1,
+      type: "chat.message",
+      meetingId: meeting.id,
+      participantId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      messageId: "33333333-3333-4333-8333-333333333333",
+      sequence: ++harness.roomSequence.value,
+      payload: { text: "First new message", sourceDisplayName: "Aisyah Rahman" },
+      occurredAt: "2026-01-01T00:00:03Z"
+    }));
+    await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 1_000, behavior: "smooth" }));
+
+    scrollTo.mockClear();
+    Object.defineProperty(history, "scrollTop", { configurable: true, writable: true, value: 100 });
+    fireEvent.scroll(history);
+    act(() => socket.message({
+      schemaVersion: 1,
+      type: "chat.message",
+      meetingId: meeting.id,
+      participantId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      messageId: "44444444-4444-4444-8444-444444444444",
+      sequence: ++harness.roomSequence.value,
+      payload: { text: "Second new message", sourceDisplayName: "Marcus Lee" },
+      occurredAt: "2026-01-01T00:00:04Z"
+    }));
+
+    expect(scrollTo).not.toHaveBeenCalled();
+    const jumpToLatest = await screen.findByRole("button", { name: "1 new message. Jump to latest" });
+    await harness.user.click(jumpToLatest);
+    expect(scrollTo).toHaveBeenCalledWith({ top: 1_000, behavior: "smooth" });
+    expect(history).toHaveFocus();
   });
 
   it("starts a private call with the existing camera track and provides mute and end controls", async () => {

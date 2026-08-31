@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   Activity,
   Captions,
@@ -448,6 +448,27 @@ function captionSourceLabel(sourceName: string, isCurrentParticipant: boolean): 
   return `${sourceName} (you)`;
 }
 
+const PARTICIPANT_TONES = ["forest", "coral", "olive", "ochre", "slate"] as const;
+type ParticipantTone = "self" | typeof PARTICIPANT_TONES[number];
+
+function participantTone(identity: string, isCurrentParticipant: boolean): ParticipantTone {
+  if (isCurrentParticipant) return "self";
+  const hash = Array.from(identity).reduce(
+    (current, character) => (current + (character.codePointAt(0) ?? 0)) >>> 0,
+    0
+  );
+  const leadingCharacter = identity.codePointAt(0) ?? 0;
+  return PARTICIPANT_TONES[(hash + leadingCharacter) % PARTICIPANT_TONES.length];
+}
+
+function participantInitials(displayName: string): string {
+  const words = displayName.trim().split(/\s+/u).filter(Boolean);
+  if (words.length === 0) return "?";
+  const first = Array.from(words[0])[0] ?? "?";
+  const last = words.length > 1 ? Array.from(words[words.length - 1])[0] ?? "" : "";
+  return `${first}${last}`.toLocaleUpperCase();
+}
+
 type SignerOwnershipState = {
   status: "idle" | "requesting" | "granted" | "denied";
   requestId: string | null;
@@ -598,6 +619,7 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
     const [chatMessages, setChatMessages] = useState<ChatMessageEvent[]>([]);
     const [chatDraft, setChatDraft] = useState("");
     const [chatFeedback, setChatFeedback] = useState<string | null>(null);
+    const [unreadTranscriptCount, setUnreadTranscriptCount] = useState(0);
     const [spokenEntries, setSpokenEntries] = useState<SpokenTranscriptEntry[]>([]);
     const [demoParticipants, setDemoParticipants] = useState<DemoParticipant[]>([]);
     const [demoSpokenEntries, setDemoSpokenEntries] = useState<SpokenTranscriptEntry[]>([]);
@@ -662,6 +684,9 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
     const stopSpokenTranscriptRef = useRef<() => void>(() => undefined);
     const spokenEntrySequenceRef = useRef(0);
     const productRef = useRef(product);
+    const transcriptListRef = useRef<HTMLDivElement>(null);
+    const transcriptWasNearBottomRef = useRef(true);
+    const previousTranscriptCountRef = useRef(0);
 
     signerOwnershipRef.current = signerOwnership;
     currentParticipantRef.current = currentParticipant;
@@ -1727,12 +1752,68 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
     const cameraDevices = mediaDevices.filter((device) => device.kind === "videoinput");
     const microphoneDevices = mediaDevices.filter((device) => device.kind === "audioinput");
     const speakerDevices = mediaDevices.filter((device) => device.kind === "audiooutput");
-    const transcriptEntries = [
+    const transcriptEntries = useMemo(() => [
       ...product.captions.map((caption) => ({ kind: "sign" as const, occurredAt: caption.occurredAt, caption })),
       ...chatMessages.map((message) => ({ kind: "chat" as const, occurredAt: message.occurredAt, message })),
       ...spokenEntries.map((entry) => ({ kind: "speech" as const, occurredAt: entry.occurredAt, entry })),
       ...demoSpokenEntries.map((entry) => ({ kind: "speech" as const, occurredAt: entry.occurredAt, entry }))
-    ].sort((left, right) => left.occurredAt.localeCompare(right.occurredAt));
+    ].sort((left, right) => left.occurredAt.localeCompare(right.occurredAt)), [
+      chatMessages,
+      demoSpokenEntries,
+      product.captions,
+      spokenEntries
+    ]);
+    const scrollTranscriptToLatest = useCallback((focusHistory = false) => {
+      const transcriptList = transcriptListRef.current;
+      if (!transcriptList) return;
+      if (focusHistory) transcriptList.focus({ preventScroll: true });
+      const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+      if (typeof transcriptList.scrollTo === "function") {
+        transcriptList.scrollTo({
+          top: transcriptList.scrollHeight,
+          behavior: reduceMotion ? "auto" : "smooth"
+        });
+      } else {
+        transcriptList.scrollTop = transcriptList.scrollHeight;
+      }
+      transcriptWasNearBottomRef.current = true;
+      setUnreadTranscriptCount(0);
+    }, []);
+    const handleTranscriptScroll = useCallback(() => {
+      const transcriptList = transcriptListRef.current;
+      if (!transcriptList) return;
+      const remainingDistance = transcriptList.scrollHeight
+        - transcriptList.clientHeight
+        - transcriptList.scrollTop;
+      const isNearBottom = remainingDistance <= 48;
+      transcriptWasNearBottomRef.current = isNearBottom;
+      if (isNearBottom) setUnreadTranscriptCount(0);
+    }, []);
+    useLayoutEffect(() => {
+      const currentCount = transcriptEntries.length;
+      const previousCount = previousTranscriptCountRef.current;
+      previousTranscriptCountRef.current = currentCount;
+      if (currentCount === 0) {
+        transcriptWasNearBottomRef.current = true;
+        setUnreadTranscriptCount(0);
+        return;
+      }
+      if (currentCount <= previousCount) return;
+
+      const latestEntry = transcriptEntries[currentCount - 1];
+      const isCurrentParticipantEntry = currentParticipant !== null && (
+        (latestEntry.kind === "chat" && latestEntry.message.participantId === currentParticipant.id)
+        || (latestEntry.kind === "sign" && latestEntry.caption.participantId === currentParticipant.id)
+        || (latestEntry.kind === "speech"
+          && !latestEntry.entry.simulated
+          && latestEntry.entry.sourceDisplayName === currentParticipant.displayName)
+      );
+      if (transcriptWasNearBottomRef.current || isCurrentParticipantEntry) {
+        scrollTranscriptToLatest();
+        return;
+      }
+      setUnreadTranscriptCount((count) => count + (currentCount - previousCount));
+    }, [currentParticipant, scrollTranscriptToLatest, transcriptEntries]);
     const speechCaptureActive = speechStatus === "starting" || speechStatus === "listening";
     const speechStatusLabel = speechStatus === "listening"
       ? "Listening to your microphone"
@@ -2333,46 +2414,6 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
               </div>
             </header>
 
-            <form className="message-composer" onSubmit={sendChatMessage}>
-              <label htmlFor="room-message">Message the room</label>
-              <div className="message-composer-row">
-                <textarea
-                  id="room-message"
-                  className="sc-textarea"
-                  rows={2}
-                  maxLength={500}
-                  value={chatDraft}
-                  onChange={(event) => {
-                    setChatDraft(event.target.value);
-                    setChatFeedback(null);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" && !event.shiftKey) {
-                      event.preventDefault();
-                      event.currentTarget.form?.requestSubmit();
-                    }
-                  }}
-                  placeholder="Type a reply…"
-                  disabled={!connected}
-                  aria-describedby="room-message-hint"
-                />
-                <button
-                  type="submit"
-                  className="sc-button sc-button--primary sc-button--compact"
-                  aria-label="Send message"
-                  disabled={!connected || chatDraft.trim().length === 0}
-                >
-                  <Send size={13} aria-hidden="true" />
-                  <span className="sc-button__label">Send</span>
-                </button>
-              </div>
-              <div className="message-composer-meta" id="room-message-hint">
-                <span>{connected ? "Enter to send · Shift+Enter for a new line" : "Connect to a room to send messages"}</span>
-                <span>{Array.from(chatDraft).length}/500</span>
-              </div>
-              {chatFeedback && <div className="message-feedback" role="status">{chatFeedback}</div>}
-            </form>
-
             <section className="transcript-tools" aria-labelledby="spoken-transcript-title">
               <div className="speech-tool-copy">
                 <span className={speechCaptureActive ? "speech-indicator active" : "speech-indicator"} aria-hidden="true">
@@ -2416,7 +2457,14 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
               </div>
             )}
 
-            <div className="caption-list" tabIndex={0} aria-label="Conversation history">
+            <div className="conversation-history">
+              <div
+                className="caption-list"
+                ref={transcriptListRef}
+                tabIndex={0}
+                aria-label="Conversation history"
+                onScroll={handleTranscriptScroll}
+              >
               {transcriptEntries.length === 0 ? (
                 <div className="caption-empty">
                   <span className="caption-empty-icon"><Captions size={21} strokeWidth={1.5} aria-hidden="true" /></span>
@@ -2429,15 +2477,20 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
                   const isCurrentParticipant = currentParticipant !== null
                     && message.participantId === currentParticipant.id;
                   const sourceLabel = isCurrentParticipant ? "You" : message.payload.sourceDisplayName;
+                  const sourceIdentity = isCurrentParticipant
+                    ? currentParticipant.displayName
+                    : message.payload.sourceDisplayName;
                   const typedAt = captionOccurredAt(message.occurredAt);
                   return (
                     <article
                       className="caption-entry chat-entry"
                       key={message.messageId}
                       aria-label={`${sourceLabel} typed ${message.payload.text} at ${typedAt}`}
+                      data-participant-tone={participantTone(message.participantId, isCurrentParticipant)}
                     >
                       <div className="caption-meta">
                         <span className="caption-source">
+                          <span className="participant-mark" aria-hidden="true">{participantInitials(sourceIdentity)}</span>
                           <MessageSquare size={13} aria-hidden="true" />
                           {sourceLabel} typed
                         </span>
@@ -2462,9 +2515,11 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
                       className="caption-entry speech-entry"
                       key={entry.id}
                       aria-label={`${sourceLabel} spoke ${entry.text} at ${spokenAt}`}
+                      data-participant-tone={participantTone(entry.sourceDisplayName, isCurrentParticipant)}
                     >
                       <div className="caption-meta">
                         <span className="caption-source">
+                          <span className="participant-mark" aria-hidden="true">{participantInitials(entry.sourceDisplayName)}</span>
                           <Mic size={13} aria-hidden="true" />
                           {sourceLabel} spoke
                         </span>
@@ -2493,9 +2548,11 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
                     className="caption-entry sign-entry"
                     key={caption.captionId ?? `${caption.streamId}-${caption.sequence}`}
                     aria-label={`${sourceLabel} signed ${caption.payload.text} at ${signedAt}`}
+                    data-participant-tone={participantTone(caption.participantId ?? sourceName, isCurrentParticipant)}
                   >
                     <div className="caption-meta">
                       <span className="caption-source">
+                        <span className="participant-mark" aria-hidden="true">{participantInitials(sourceName)}</span>
                         <Hand size={13} aria-hidden="true" />
                         {sourceLabel} signed
                       </span>
@@ -2512,7 +2569,61 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
                   </article>
                 );
               })}
+              </div>
+              {unreadTranscriptCount > 0 && (
+                <button
+                  type="button"
+                  className="sc-button sc-button--secondary sc-button--compact transcript-jump-action"
+                  aria-label={`${unreadTranscriptCount} new ${unreadTranscriptCount === 1 ? "message" : "messages"}. Jump to latest`}
+                  onClick={() => scrollTranscriptToLatest(true)}
+                >
+                  <MessageSquare size={13} aria-hidden="true" />
+                  <span className="sc-button__label">
+                    {unreadTranscriptCount} new {unreadTranscriptCount === 1 ? "message" : "messages"}
+                  </span>
+                </button>
+              )}
             </div>
+
+            <form className="message-composer" onSubmit={sendChatMessage}>
+              <label htmlFor="room-message">Message the room</label>
+              <div className="message-composer-row">
+                <textarea
+                  id="room-message"
+                  className="sc-textarea"
+                  rows={1}
+                  maxLength={500}
+                  value={chatDraft}
+                  onChange={(event) => {
+                    setChatDraft(event.target.value);
+                    setChatFeedback(null);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      event.currentTarget.form?.requestSubmit();
+                    }
+                  }}
+                  placeholder="Type a reply…"
+                  disabled={!connected}
+                  aria-describedby="room-message-hint"
+                />
+                <button
+                  type="submit"
+                  className="sc-button sc-button--primary sc-button--compact"
+                  aria-label="Send message"
+                  disabled={!connected || chatDraft.trim().length === 0}
+                >
+                  <Send size={13} aria-hidden="true" />
+                  <span className="sc-button__label">Send</span>
+                </button>
+              </div>
+              <div className="message-composer-meta" id="room-message-hint">
+                <span>{connected ? "Enter to send · Shift+Enter for a new line" : "Connect to a room to send messages"}</span>
+                <span>{Array.from(chatDraft).length}/500</span>
+              </div>
+              {chatFeedback && <div className="message-feedback" role="status">{chatFeedback}</div>}
+            </form>
 
             <section
               className="system-health"
@@ -2531,30 +2642,36 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
                   <p>{readinessGuidance.message}</p>
                 </div>
               </div>
-              <dl>
-                <div>
-                  <dt>Landmark capture</dt>
-                  <dd>{captureHealthLabel(recognition.captureStatus)}</dd>
-                </div>
-                <div>
-                  <dt>Browser vision</dt>
-                  <dd>{landmarkExtractorLabel}</dd>
-                </div>
-                <div>
-                  <dt>Inference service</dt>
-                  <dd aria-label="Recognition service status">{product.serviceStatus}</dd>
-                </div>
-                <div>
-                  <dt>Signer access</dt>
-                  <dd>{signerGranted
-                    ? "Granted to you"
-                    : signerRequestPending
-                      ? "Awaiting room grant"
-                      : activeSigner
-                        ? `${activeSigner.displayName} is signing`
-                        : "Available"}</dd>
-                </div>
-              </dl>
+              <details className="recognition-diagnostics">
+                <summary>
+                  <span>Technical details</span>
+                  <span>4 checks</span>
+                </summary>
+                <dl>
+                  <div>
+                    <dt>Landmark capture</dt>
+                    <dd>{captureHealthLabel(recognition.captureStatus)}</dd>
+                  </div>
+                  <div>
+                    <dt>Browser vision</dt>
+                    <dd>{landmarkExtractorLabel}</dd>
+                  </div>
+                  <div>
+                    <dt>Inference service</dt>
+                    <dd aria-label="Recognition service status">{product.serviceStatus}</dd>
+                  </div>
+                  <div>
+                    <dt>Signer access</dt>
+                    <dd>{signerGranted
+                      ? "Granted to you"
+                      : signerRequestPending
+                        ? "Awaiting room grant"
+                        : activeSigner
+                          ? `${activeSigner.displayName} is signing`
+                          : "Available"}</dd>
+                  </div>
+                </dl>
+              </details>
               {product.recognitionFeedback && <div className="recognition-feedback">{product.recognitionFeedback}</div>}
               {product.protocolFeedback && <div className="protocol-feedback">{product.protocolFeedback}</div>}
               <div className="workspace-help" id="workspace-help" tabIndex={-1}>

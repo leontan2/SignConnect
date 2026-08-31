@@ -193,7 +193,8 @@ test.describe("sign-recognition full-stack milestone", () => {
     await expect(transcript.getByText("Synthetic active gesture")).toBeVisible();
     const captionEntry = transcript.getByRole("article");
     await expect(captionEntry).toHaveCount(1);
-    await expect(captionEntry.locator(".caption-source")).toHaveText("You signed");
+    await expect(captionEntry.locator(".caption-source")).toContainText("You signed");
+    await expect(captionEntry.locator(".participant-mark")).toHaveText("Y");
     await expect(captionEntry.locator("time")).toHaveText(
       /^at \d{1,2}:\d{2}:\d{2}(?:\s?[AP]M)?$/i
     );
@@ -275,7 +276,7 @@ test.describe("sign-recognition full-stack milestone", () => {
       await expect(page.getByRole("region", { name: "Open a shared room" })).toBeVisible();
       await page.waitForTimeout(500);
       await expect(transcript.getByRole("article")).toHaveCount(0);
-      await expect(transcript.getByText("No captions yet", { exact: true })).toBeVisible();
+      await expect(transcript.getByText("No transcript entries yet", { exact: true })).toBeVisible();
       await expect(transcript.getByLabel("0 final captions")).toBeVisible();
       await expect(transcript.getByRole("note")).toHaveCount(0);
       await expect.poll(() => diagnostics.frames.filter(

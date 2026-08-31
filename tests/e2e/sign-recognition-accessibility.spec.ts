@@ -53,7 +53,7 @@ function parseRgb(value: string): [number, number, number] {
   return channels as [number, number, number];
 }
 
-async function tabTo(page: Page, target: Locator, maximumTabs = 12): Promise<void> {
+async function tabTo(page: Page, target: Locator, maximumTabs = 24): Promise<void> {
   for (let index = 0; index < maximumTabs; index += 1) {
     await page.keyboard.press("Tab");
     if (await target.evaluate((element) => element === document.activeElement)) return;
@@ -190,9 +190,9 @@ test.describe("sign-recognition WCAG 2.2 AA validation", () => {
     await expect(readiness).toHaveCount(1);
     await expect(readiness).toHaveAttribute("aria-label", "Camera readiness");
     await expect(readiness.locator("strong")).toHaveText("Camera off");
-    await expect(readiness.locator("span")).toContainText(/turn on the camera/i);
+    await expect(readiness.locator("p")).toContainText(/turn on the camera/i);
     await expect(readiness.locator("strong")).toBeVisible();
-    await expect(readiness.locator("span")).toBeVisible();
+    await expect(readiness.locator("p")).toBeVisible();
     await expect(readiness).not.toHaveAttribute("aria-live");
 
     const announcement = page.getByRole("status", { name: "Meeting announcements" });
@@ -238,7 +238,7 @@ test.describe("sign-recognition WCAG 2.2 AA validation", () => {
     }
     await expect(page.locator("[aria-live]")).toHaveCount(1);
     await expect(readiness.locator("strong")).toHaveText(new RegExp(`^(${CANONICAL_CAMERA_STATES.join("|")})$`));
-    await expect(readiness.locator("span")).not.toHaveText("");
+    await expect(readiness.locator("p")).not.toHaveText("");
   });
 
   test("keeps the optional tracking overlay keyboard operable without moving focus", async ({ page }) => {
@@ -281,7 +281,7 @@ test.describe("sign-recognition WCAG 2.2 AA validation", () => {
     await expect(page.getByRole("button", { name: "Start recognition" })).toBeEnabled();
     const readiness = page.getByLabel("Camera readiness", { exact: true });
     await expect(readiness.locator("strong")).toBeVisible();
-    await expect(readiness.locator("span")).toBeVisible();
+    await expect(readiness.locator("p")).toBeVisible();
   });
 
   test("reflows at 320 CSS pixels and honors reduced motion", async ({ page }) => {

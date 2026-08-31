@@ -10,6 +10,7 @@ const defaultPoseModel = "https://storage.googleapis.com/mediapipe-models/pose_l
 const e2eFixtureEnabled = process.env.RECOGNITION_E2E_FIXTURE_ENABLED === "true";
 const recognitionSimulatorEnabled = process.env.RECOGNITION_SIMULATOR_ENABLED === "true";
 const roomPreviewToolsEnabled = process.env.ROOM_PREVIEW_TOOLS_ENABLED === "true";
+const lanMode = process.env.SIGNCONNECT_LAN_MODE === "true";
 
 module.exports = {
   entry: "./src/index.ts",
@@ -79,10 +80,11 @@ module.exports = {
     new HtmlWebpackPlugin({ template: "./public/index.html" })
   ],
   devServer: {
+    host: "127.0.0.1",
     port: 3001,
     historyApiFallback: true,
-    hot: true,
-    client: {
+    hot: !lanMode,
+    client: lanMode ? false : {
       overlay: {
         errors: true,
         warnings: false
