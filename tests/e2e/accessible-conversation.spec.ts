@@ -62,15 +62,48 @@ test.describe("Accessible typed and video conversation", () => {
       await joinRoom(guest.page, roomCode, "Guest Message");
       await expect(host.page.getByLabel("People in this room").getByRole("listitem")).toHaveCount(2);
 
+      await guest.page.getByLabel("Message the room").fill("Guest response");
+      await guest.page.getByRole("button", { name: "Send message" }).click();
+
       for (let index = 1; index <= 18; index += 1) {
         await host.page.getByLabel("Message the room").fill(`Shared message ${index}`);
         await host.page.getByRole("button", { name: "Send message" }).click();
       }
 
-      await expect(conversationEntries(host.page)).toHaveCount(18);
-      await expect(conversationEntries(guest.page)).toHaveCount(18);
+      await expect(conversationEntries(host.page)).toHaveCount(19);
+      await expect(conversationEntries(guest.page)).toHaveCount(19);
       await expect(guest.page.getByRole("region", { name: "Live transcript" })).toContainText("Host Message typed");
       await expect(guest.page.getByText("Shared message 18", { exact: true })).toBeVisible();
+      await expect(host.page.getByText("HM", { exact: true }).first()).toBeVisible();
+      await expect(host.page.getByText("GM", { exact: true }).first()).toBeVisible();
+
+      const participantTreatments = await host.page.locator("article.caption-entry").evaluateAll((entries) => {
+        const hostEntry = entries.find((entry) => entry.textContent?.includes("Shared message 1"));
+        const guestEntry = entries.find((entry) => entry.textContent?.includes("Guest response"));
+        if (!hostEntry || !guestEntry) return null;
+        const hostStyle = getComputedStyle(hostEntry);
+        const guestStyle = getComputedStyle(guestEntry);
+        return {
+          host: `${hostStyle.borderLeftColor}|${hostStyle.backgroundColor}`,
+          guest: `${guestStyle.borderLeftColor}|${guestStyle.backgroundColor}`
+        };
+      });
+      expect(participantTreatments).not.toBeNull();
+      expect(participantTreatments?.host).not.toBe(participantTreatments?.guest);
+
+      const panelLayout = await host.page.locator(".intelligence-panel").evaluate((panel) => {
+        const history = panel.querySelector(".conversation-history");
+        const composer = panel.querySelector(".message-composer");
+        const recognitionStatus = panel.querySelector(".system-health");
+        if (!history || !composer || !recognitionStatus) return null;
+        return {
+          historyBeforeComposer: Boolean(history.compareDocumentPosition(composer) & Node.DOCUMENT_POSITION_FOLLOWING),
+          composerBeforeStatus: Boolean(composer.compareDocumentPosition(recognitionStatus) & Node.DOCUMENT_POSITION_FOLLOWING),
+          bottomGap: Math.abs(panel.getBoundingClientRect().bottom - recognitionStatus.getBoundingClientRect().bottom)
+        };
+      });
+      expect(panelLayout).toMatchObject({ historyBeforeComposer: true, composerBeforeStatus: true });
+      expect(panelLayout?.bottomGap).toBeLessThanOrEqual(2);
 
       const scrollMetrics = await host.page.locator(".caption-list").evaluate((element) => ({
         clientHeight: element.clientHeight,
@@ -79,10 +112,28 @@ test.describe("Accessible typed and video conversation", () => {
       }));
       expect(scrollMetrics.overflowY).toBe("auto");
       expect(scrollMetrics.scrollHeight).toBeGreaterThan(scrollMetrics.clientHeight);
+      await expect.poll(() => host.page.locator(".caption-list").evaluate((element) => (
+        element.scrollHeight - element.clientHeight - element.scrollTop
+      ))).toBeLessThanOrEqual(2);
+
+      await host.page.locator(".caption-list").evaluate((element) => {
+        element.scrollTop = 0;
+        element.dispatchEvent(new Event("scroll"));
+      });
+      await guest.page.getByLabel("Message the room").fill("Unread while reviewing");
+      await guest.page.getByRole("button", { name: "Send message" }).click();
+      await expect(host.page.getByRole("button", { name: "1 new message. Jump to latest" })).toBeVisible();
+      await host.page.getByRole("button", { name: "1 new message. Jump to latest" }).click();
+      await expect.poll(() => host.page.locator(".caption-list").evaluate((element) => (
+        element.scrollHeight - element.clientHeight - element.scrollTop
+      ))).toBeLessThanOrEqual(2);
+
+      await expect(conversationEntries(host.page)).toHaveCount(20);
+      await expect(conversationEntries(guest.page)).toHaveCount(20);
 
       await host.page.getByRole("button", { name: "Clear transcript" }).click();
       await expect(conversationEntries(host.page)).toHaveCount(0);
-      await expect(conversationEntries(guest.page)).toHaveCount(18);
+      await expect(conversationEntries(guest.page)).toHaveCount(20);
     } finally {
       await guest.context.close();
       await host.context.close();

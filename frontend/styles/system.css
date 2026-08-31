@@ -22,6 +22,18 @@
   --sc-line-strong: #c8cac4;
   --sc-danger: #b84e3b;
   --sc-danger-hover: #9e3f30;
+  --sc-participant-self-accent: #285345;
+  --sc-participant-self-surface: #edf2e7;
+  --sc-participant-forest-accent: #3f7564;
+  --sc-participant-forest-surface: #edf4f0;
+  --sc-participant-coral-accent: #ad5a47;
+  --sc-participant-coral-surface: #f9ebe7;
+  --sc-participant-olive-accent: #6f7543;
+  --sc-participant-olive-surface: #f0f1e6;
+  --sc-participant-ochre-accent: #8a6638;
+  --sc-participant-ochre-surface: #f6eee2;
+  --sc-participant-slate-accent: #536d73;
+  --sc-participant-slate-surface: #eaf0f1;
   --sc-focus: rgba(233, 112, 85, 0.46);
   --sc-radius-control: 9px;
   --sc-ease-product: cubic-bezier(0.16, 1, 0.3, 1);
