@@ -17,7 +17,7 @@
   --sc-selected-hover: #cbdab9;
   --sc-ink: #142a24;
   --sc-ink-strong: #0b1f1a;
-  --sc-ink-muted: #65726d;
+  --sc-ink-muted: #5b6863;
   --sc-line: #d9d8d2;
   --sc-line-strong: #c8cac4;
   --sc-danger: #b84e3b;
@@ -314,6 +314,63 @@
 .sc-icon-button[aria-current="page"] svg,
 .sc-icon-button.is-active svg {
   animation: sc-icon-settle 360ms var(--sc-ease-product) both;
+}
+
+.sc-textarea {
+  width: 100%;
+  min-height: 60px;
+  resize: vertical;
+  border: 1px solid var(--sc-line-strong);
+  border-radius: var(--sc-radius-control);
+  padding: 9px 10px;
+  background: var(--sc-surface-raised);
+  color: var(--sc-ink);
+  font: 500 14px/1.45 "Plus Jakarta Sans", system-ui, sans-serif;
+  transition:
+    border-color var(--sc-duration-fast) var(--sc-ease-product),
+    box-shadow var(--sc-duration-fast) var(--sc-ease-product);
+}
+
+.sc-textarea::placeholder { color: var(--sc-ink-muted); }
+
+.sc-textarea:focus-visible {
+  outline: 3px solid var(--sc-focus);
+  outline-offset: 1px;
+  border-color: var(--sc-accent);
+}
+
+.sc-textarea:disabled {
+  cursor: not-allowed;
+  background: #eff0eb;
+  color: var(--sc-ink-muted);
+  opacity: 0.72;
+}
+
+.sc-select {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid var(--sc-line-strong);
+  border-radius: var(--sc-radius-control);
+  padding: 0 34px 0 10px;
+  background: var(--sc-surface-raised);
+  color: var(--sc-ink);
+  font: 600 12px/1.35 "Plus Jakarta Sans", system-ui, sans-serif;
+  transition:
+    border-color var(--sc-duration-fast) var(--sc-ease-product),
+    box-shadow var(--sc-duration-fast) var(--sc-ease-product);
+}
+
+.sc-select:focus-visible {
+  outline: 3px solid var(--sc-focus);
+  outline-offset: 1px;
+  border-color: var(--sc-accent);
+}
+
+.sc-select:disabled {
+  cursor: not-allowed;
+  background: #eff0eb;
+  color: var(--sc-ink-muted);
+  opacity: 0.72;
 }
 
 .sc-toast-viewport {

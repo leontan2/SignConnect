@@ -3,8 +3,12 @@ package com.signconnect.realtime.room;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.signconnect.realtime.api.CaptionEvent;
+import com.signconnect.realtime.api.ChatMessageEvent;
+import com.signconnect.realtime.api.CallSignalEvent;
 import com.signconnect.realtime.api.ParticipantPresenceEvent;
 import com.signconnect.realtime.api.RoomCaptionEvent;
+import com.signconnect.realtime.api.RoomChatMessageEvent;
+import com.signconnect.realtime.api.RoomCallSignalEvent;
 import com.signconnect.realtime.api.RoomJoinedEvent;
 import com.signconnect.realtime.api.RoomSnapshotEvent;
 import com.signconnect.realtime.api.SignerDeniedEvent;
@@ -34,6 +38,8 @@ import java.util.function.Consumer;
 public class InMemoryRoomRegistry implements RoomRegistry {
 
     private static final int MAX_REMEMBERED_CAPTION_IDS = 4096;
+    private static final int MAX_REMEMBERED_CHAT_IDS = 4096;
+    private static final int MAX_REMEMBERED_SIGNAL_IDS = 8192;
 
     private final Map<UUID, RoomState> rooms = new ConcurrentHashMap<>();
     private final ObjectMapper objectMapper;
@@ -257,6 +263,75 @@ public class InMemoryRoomRegistry implements RoomRegistry {
     }
 
     @Override
+    public void publishChat(RoomMembership source, ChatMessageEvent message) {
+        if (source == null || message == null || !message.hasValidContract()) {
+            return;
+        }
+        RoomState room = rooms.get(source.participant().meetingId());
+        if (room == null) {
+            return;
+        }
+        synchronized (room) {
+            if (!activeConnection(room, source)
+                    || !rememberChat(room, new ChatKey(source.participant().participantId(), message.messageId()))) {
+                return;
+            }
+            broadcast(room, serialize(new RoomChatMessageEvent(
+                    1,
+                    "chat.message",
+                    source.participant().meetingId(),
+                    source.participant().participantId(),
+                    message.messageId(),
+                    room.nextSequence++,
+                    new RoomChatMessageEvent.Payload(
+                            message.normalizedText(),
+                            source.participant().displayName()),
+                    clock.instant())));
+        }
+    }
+
+    @Override
+    public boolean routeCallSignal(RoomMembership source, CallSignalEvent signal) {
+        if (source == null || signal == null || !signal.hasValidContract()
+                || source.participant().participantId().equals(signal.targetParticipantId())) {
+            return false;
+        }
+        RoomState room = rooms.get(source.participant().meetingId());
+        if (room == null) {
+            return false;
+        }
+        synchronized (room) {
+            if (!activeConnection(room, source)) {
+                return false;
+            }
+            Connection target = room.connections.values().stream()
+                    .filter(connection -> connection.membership().participant().participantId()
+                            .equals(signal.targetParticipantId()))
+                    .findFirst()
+                    .orElse(null);
+            if (target == null) {
+                return false;
+            }
+            SignalKey key = new SignalKey(source.participant().participantId(), signal.signalId());
+            if (!rememberSignal(room, key)) {
+                return true;
+            }
+            target.outbound().accept(serialize(new RoomCallSignalEvent(
+                    1,
+                    signal.type(),
+                    source.participant().meetingId(),
+                    source.participant().participantId(),
+                    signal.targetParticipantId(),
+                    signal.signalId(),
+                    signal.callId(),
+                    room.nextSequence++,
+                    signal.payload(),
+                    clock.instant())));
+            return true;
+        }
+    }
+
+    @Override
     public void requestSigner(RoomMembership source, UUID requestId, UUID streamId) {
         RoomState room = rooms.get(source.participant().meetingId());
         if (room == null) {
@@ -410,6 +485,30 @@ public class InMemoryRoomRegistry implements RoomRegistry {
         return true;
     }
 
+    private static boolean rememberChat(RoomState room, ChatKey messageId) {
+        if (!room.emittedChatIds.add(messageId)) {
+            return false;
+        }
+        if (room.emittedChatIds.size() > MAX_REMEMBERED_CHAT_IDS) {
+            Iterator<ChatKey> oldest = room.emittedChatIds.iterator();
+            oldest.next();
+            oldest.remove();
+        }
+        return true;
+    }
+
+    private static boolean rememberSignal(RoomState room, SignalKey signalId) {
+        if (!room.emittedSignalIds.add(signalId)) {
+            return false;
+        }
+        if (room.emittedSignalIds.size() > MAX_REMEMBERED_SIGNAL_IDS) {
+            Iterator<SignalKey> oldest = room.emittedSignalIds.iterator();
+            oldest.next();
+            oldest.remove();
+        }
+        return true;
+    }
+
     private static ParticipantPresenceEvent.Payload participantPayload(
             RoomParticipant participant,
             boolean activeSigner) {
@@ -470,6 +569,8 @@ public class InMemoryRoomRegistry implements RoomRegistry {
         private final Map<UUID, Connection> connections = new LinkedHashMap<>();
         private final Map<UUID, ResumeCredential> resumeCredentials = new LinkedHashMap<>();
         private final Set<UUID> emittedCaptionIds = new LinkedHashSet<>();
+        private final Set<ChatKey> emittedChatIds = new LinkedHashSet<>();
+        private final Set<SignalKey> emittedSignalIds = new LinkedHashSet<>();
         private long nextSequence = 1;
         private ActiveSigner activeSigner;
     }
@@ -481,6 +582,12 @@ public class InMemoryRoomRegistry implements RoomRegistry {
     }
 
     private record ActiveSigner(RoomMembership membership, UUID requestId, UUID streamId) {
+    }
+
+    private record ChatKey(UUID participantId, UUID messageId) {
+    }
+
+    private record SignalKey(UUID participantId, UUID signalId) {
     }
 
     private record ResumeCredential(byte[] fingerprint, Instant expiresAt) {

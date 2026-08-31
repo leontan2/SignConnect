@@ -3,6 +3,8 @@ package com.signconnect.realtime.web;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.signconnect.realtime.api.CaptionEvent;
+import com.signconnect.realtime.api.ChatMessageEvent;
+import com.signconnect.realtime.api.CallSignalEvent;
 import com.signconnect.realtime.api.RoomErrorEvent;
 import com.signconnect.realtime.api.RoomJoinEvent;
 import com.signconnect.realtime.api.SignerDeniedEvent;
@@ -191,6 +193,14 @@ public class CaptionWebSocketHandler implements WebSocketHandler {
                     root);
             return;
         }
+        if (root != null && "chat.message".equals(root.path("type").asText())) {
+            publishChat(meetingId, membership.get(), connectionEmitter, root);
+            return;
+        }
+        if (root != null && isCallSignal(root.path("type").asText())) {
+            routeCallSignal(meetingId, membership.get(), connectionEmitter, root);
+            return;
+        }
         UUID recognitionStreamId = root == null ? null : uuidFrom(root, "streamId");
         if (roomProperties.isRequireJoin()
                 && root != null
@@ -351,6 +361,54 @@ public class CaptionWebSocketHandler implements WebSocketHandler {
     private static boolean requiresSignerOwnership(JsonNode root) {
         String type = root.path("type").asText();
         return "landmark.chunk".equals(type) || "recognition.control".equals(type);
+    }
+
+    private void publishChat(
+            UUID meetingId,
+            RoomMembership membership,
+            ConnectionEmitter connectionEmitter,
+            JsonNode root) {
+        try {
+            ChatMessageEvent message = objectMapper.treeToValue(root, ChatMessageEvent.class);
+            if (root.size() != 4 || !message.hasValidContract()) {
+                emitRoomError(
+                        meetingId, connectionEmitter, "INVALID_CHAT_MESSAGE", "Chat message was rejected.");
+                return;
+            }
+            roomRegistry.publishChat(membership, message);
+        } catch (Exception exception) {
+            emitRoomError(meetingId, connectionEmitter, "INVALID_CHAT_MESSAGE", "Chat message was rejected.");
+        }
+    }
+
+    private void routeCallSignal(
+            UUID meetingId,
+            RoomMembership membership,
+            ConnectionEmitter connectionEmitter,
+            JsonNode root) {
+        try {
+            CallSignalEvent signal = objectMapper.treeToValue(root, CallSignalEvent.class);
+            if (root.size() != 6 || !signal.hasValidContract()) {
+                emitRoomError(
+                        meetingId, connectionEmitter, "INVALID_CALL_SIGNAL", "Call signal was rejected.");
+                return;
+            }
+            if (!roomRegistry.routeCallSignal(membership, signal)) {
+                emitRoomError(
+                        meetingId, connectionEmitter, "CALL_TARGET_UNAVAILABLE", "The call participant is unavailable.");
+            }
+        } catch (Exception exception) {
+            emitRoomError(meetingId, connectionEmitter, "INVALID_CALL_SIGNAL", "Call signal was rejected.");
+        }
+    }
+
+    private static boolean isCallSignal(String type) {
+        return "call.offer".equals(type)
+                || "call.answer".equals(type)
+                || "call.ice-candidate".equals(type)
+                || "call.decline".equals(type)
+                || "call.leave".equals(type)
+                || "media.state".equals(type);
     }
 
     private static UUID uuidFrom(JsonNode root, String field) {

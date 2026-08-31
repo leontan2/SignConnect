@@ -149,6 +149,106 @@ class RealtimeRoomWebSocketTest {
         }
     }
 
+    @Test
+    void broadcastsOneAttributedChatMessageWithoutCrossRoomLeakage() throws Exception {
+        UUID messageId = UUID.fromString("33333333-3333-4333-8333-333333333333");
+        try (WebSocketProbe host = connect(MEETING_ID);
+             WebSocketProbe guest = connect(MEETING_ID);
+             WebSocketProbe otherRoom = connect(OTHER_MEETING_ID)) {
+            join(host, MEETING_ID, HOST_ID, "Leon", "HOST");
+            host.awaitEvent(type("room.joined"), WAIT);
+            host.awaitEvent(type("room.snapshot"), WAIT);
+            host.awaitEvent(type("participant.joined"), WAIT);
+
+            join(guest, MEETING_ID, GUEST_ID, "Ari", "GUEST");
+            guest.awaitEvent(type("room.joined"), WAIT);
+            guest.awaitEvent(type("room.snapshot"), WAIT);
+            guest.awaitEvent(type("participant.joined"), WAIT);
+            host.awaitEvent(type("participant.joined"), WAIT);
+
+            join(otherRoom, OTHER_MEETING_ID, UUID.randomUUID(), "Other", "HOST");
+            otherRoom.awaitEvent(type("room.joined"), WAIT);
+            otherRoom.awaitEvent(type("room.snapshot"), WAIT);
+            otherRoom.awaitEvent(type("participant.joined"), WAIT);
+
+            String message = """
+                    {
+                      "schemaVersion": 1,
+                      "type": "chat.message",
+                      "messageId": "%s",
+                      "text": "Can you repeat that sign?"
+                    }
+                    """.formatted(messageId);
+            host.send(message);
+
+            JsonNode hostMessage = host.awaitEvent(type("chat.message"), WAIT);
+            JsonNode guestMessage = guest.awaitEvent(type("chat.message"), WAIT);
+            assertThat(hostMessage).isEqualTo(guestMessage);
+            assertThat(hostMessage.path("messageId").asText()).isEqualTo(messageId.toString());
+            assertThat(hostMessage.path("participantId").asText()).isEqualTo(HOST_ID.toString());
+            assertThat(hostMessage.path("payload").path("sourceDisplayName").asText()).isEqualTo("Leon");
+            assertThat(hostMessage.path("payload").path("text").asText()).isEqualTo("Can you repeat that sign?");
+            assertThat(hostMessage.path("sequence").asLong()).isPositive();
+            assertThat(otherRoom.pollEvent(Duration.ofMillis(200))).isNull();
+
+            host.send(message);
+            assertThat(host.pollEvent(Duration.ofMillis(200))).isNull();
+            assertThat(guest.pollEvent(Duration.ofMillis(200))).isNull();
+        }
+    }
+
+    @Test
+    void routesACallOfferOnlyToTheTargetParticipantAndSuppressesDuplicates() throws Exception {
+        UUID observerId = UUID.fromString("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+        UUID signalId = UUID.fromString("44444444-4444-4444-8444-444444444444");
+        UUID callId = UUID.fromString("55555555-5555-4555-8555-555555555555");
+        try (WebSocketProbe host = connect(MEETING_ID);
+             WebSocketProbe guest = connect(MEETING_ID);
+             WebSocketProbe observer = connect(MEETING_ID)) {
+            join(host, MEETING_ID, HOST_ID, "Leon", "HOST");
+            host.awaitEvent(type("room.joined"), WAIT);
+            host.awaitEvent(type("room.snapshot"), WAIT);
+            host.awaitEvent(type("participant.joined"), WAIT);
+
+            join(guest, MEETING_ID, GUEST_ID, "Ari", "GUEST");
+            guest.awaitEvent(type("room.joined"), WAIT);
+            guest.awaitEvent(type("room.snapshot"), WAIT);
+            guest.awaitEvent(type("participant.joined"), WAIT);
+            host.awaitEvent(type("participant.joined"), WAIT);
+
+            join(observer, MEETING_ID, observerId, "Observer", "GUEST");
+            observer.awaitEvent(type("room.joined"), WAIT);
+            observer.awaitEvent(type("room.snapshot"), WAIT);
+            observer.awaitEvent(type("participant.joined"), WAIT);
+            host.awaitEvent(type("participant.joined"), WAIT);
+            guest.awaitEvent(type("participant.joined"), WAIT);
+
+            String offer = """
+                    {
+                      "schemaVersion": 1,
+                      "type": "call.offer",
+                      "signalId": "%s",
+                      "callId": "%s",
+                      "targetParticipantId": "%s",
+                      "payload": {"sdp": "v=0\\r\\no=host"}
+                    }
+                    """.formatted(signalId, callId, GUEST_ID);
+            host.send(offer);
+
+            JsonNode delivered = guest.awaitEvent(type("call.offer"), WAIT);
+            assertThat(delivered.path("participantId").asText()).isEqualTo(HOST_ID.toString());
+            assertThat(delivered.path("targetParticipantId").asText()).isEqualTo(GUEST_ID.toString());
+            assertThat(delivered.path("signalId").asText()).isEqualTo(signalId.toString());
+            assertThat(delivered.path("callId").asText()).isEqualTo(callId.toString());
+            assertThat(delivered.path("payload").path("sdp").asText()).isEqualTo("v=0\r\no=host");
+            assertThat(host.pollEvent(Duration.ofMillis(200))).isNull();
+            assertThat(observer.pollEvent(Duration.ofMillis(200))).isNull();
+
+            host.send(offer);
+            assertThat(guest.pollEvent(Duration.ofMillis(200))).isNull();
+        }
+    }
+
     private WebSocketProbe connect(UUID meetingId) {
         return WebSocketProbe.connect(
                 URI.create("ws://localhost:%d/ws/v1/realtime/%s".formatted(port, meetingId)),

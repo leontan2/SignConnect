@@ -11,9 +11,13 @@ import {
   LogIn,
   Mic,
   MicOff,
+  MessageSquare,
+  Phone,
+  PhoneOff,
   Plus,
   Radio,
   ScanLine,
+  Send,
   Square,
   Trash2,
   UserPlus,
@@ -27,12 +31,20 @@ import {
   joinMeeting,
   MeetingRequestError,
   type CaptionEvent,
+  type CallSignalCommand,
+  type CallSignalEvent,
+  type ChatMessageEvent,
   type Meeting,
   type Participant,
   type RoomParticipant,
   type ServerRealtimeEvent,
   type SignerReleaseEvent
 } from "./api";
+import {
+  PeerCallController,
+  type PeerCallState,
+  type PeerConnectionLike
+} from "./call/PeerCallController";
 import {
   type RealtimeRetryScheduler,
   type RealtimeSocketLike
@@ -273,7 +285,13 @@ export interface MeetingAppComposition {
   requestIdFactory?: () => string;
   roomPreviewToolsEnabled?: boolean;
   speechRecognitionFactory?: SpeechRecognitionFactory;
+  messageIdFactory?: () => string;
+  callIdFactory?: () => string;
+  peerConnectionFactory?: (configuration: RTCConfiguration) => PeerConnectionLike;
+  mediaStreamFactory?: (tracks: MediaStreamTrack[]) => MediaStream;
 }
+
+type IncomingCallOffer = Extract<CallSignalEvent, { type: "call.offer" }>;
 
 type SpokenTranscriptEntry = {
   id: string;
@@ -333,6 +351,13 @@ function cameraFailure(error: unknown): { state: CameraState; message: string } 
     return { state: "permission-denied", message: "Camera permission was not granted." };
   }
   return { state: "error", message: "The camera could not be started." };
+}
+
+function tracksOfKind(stream: MediaStream | null, kind: "audio" | "video"): MediaStreamTrack[] {
+  if (!stream) return [];
+  const getter = kind === "video" ? stream.getVideoTracks : stream.getAudioTracks;
+  if (typeof getter === "function") return getter.call(stream);
+  return stream.getTracks().filter((track) => track.kind === kind);
 }
 
 function recognitionDisabledReason(cameraState: CameraState, connected: boolean): string {
@@ -442,6 +467,7 @@ function isOrderedRoomEvent(event: ServerRealtimeEvent): boolean {
     || event.type === "participant.left"
     || event.type === "signer.granted"
     || event.type === "signer.released"
+    || event.type === "chat.message"
     || (event.type === "caption.final" && event.participantId !== undefined);
 }
 
@@ -569,11 +595,26 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
     const [signerOwnership, setSignerOwnership] = useState<SignerOwnershipState>(INITIAL_SIGNER_STATE);
     const [liveAnnouncement, setLiveAnnouncement] = useState("");
     const [product, dispatch] = useReducer(productReducer, INITIAL_PRODUCT_STATE);
+    const [chatMessages, setChatMessages] = useState<ChatMessageEvent[]>([]);
+    const [chatDraft, setChatDraft] = useState("");
+    const [chatFeedback, setChatFeedback] = useState<string | null>(null);
     const [spokenEntries, setSpokenEntries] = useState<SpokenTranscriptEntry[]>([]);
     const [demoParticipants, setDemoParticipants] = useState<DemoParticipant[]>([]);
     const [demoSpokenEntries, setDemoSpokenEntries] = useState<SpokenTranscriptEntry[]>([]);
     const [speechStatus, setSpeechStatus] = useState<SpeechCaptureStatus>("idle");
     const [speechFeedback, setSpeechFeedback] = useState<string | null>(null);
+    const [callState, setCallState] = useState<PeerCallState>("idle");
+    const [callFeedback, setCallFeedback] = useState<string | null>(null);
+    const [incomingCall, setIncomingCall] = useState<IncomingCallOffer | null>(null);
+    const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+    const [remoteMediaState, setRemoteMediaState] = useState({ audioEnabled: true, videoEnabled: true });
+    const [microphoneEnabled, setMicrophoneEnabled] = useState(true);
+    const [callVideoEnabled, setCallVideoEnabled] = useState(true);
+    const [selectedCallParticipantId, setSelectedCallParticipantId] = useState("");
+    const [mediaDevices, setMediaDevices] = useState<MediaDeviceInfo[]>([]);
+    const [selectedCameraId, setSelectedCameraId] = useState("");
+    const [selectedMicrophoneId, setSelectedMicrophoneId] = useState("");
+    const [selectedSpeakerId, setSelectedSpeakerId] = useState("");
     const roomPreviewToolsEnabled = composition.roomPreviewToolsEnabled
       ?? (ROOM_PREVIEW_TOOLS_ENABLED || LOCAL_ROOM_PREVIEW_ENABLED);
     useEffect(() => {
@@ -591,9 +632,16 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       announce(`${notice.title}. ${notice.message}`);
     }, [announce, pushToast]);
     const videoRef = useRef<HTMLVideoElement>(null);
+    const remoteVideoRef = useRef<HTMLVideoElement>(null);
     const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
     const browserLocalFrameRef = useRef<BrowserLocalVisionFrame | null>(null);
     const mediaStreamRef = useRef<MediaStream | null>(null);
+    const microphoneStreamRef = useRef<MediaStream | null>(null);
+    const callControllerRef = useRef<PeerCallController | null>(null);
+    const realtimeSendRef = useRef<(event: CallSignalCommand) => boolean>(() => false);
+    const combinedCallStreamRef = useRef<() => MediaStream | null>(() => mediaStreamRef.current);
+    const handleCallSignalRef = useRef<(event: CallSignalEvent) => void>(() => undefined);
+    const stopCallRef = useRef<(reason?: string, notifyPeer?: boolean) => void>(() => undefined);
     const mediaTrackEndedListenersRef = useRef(new Map<MediaStreamTrack, EventListener>());
     const recognitionStreamRef = useRef<string | null>(null);
     const recentlyStoppedStreamRef = useRef<string | null>(null);
@@ -645,6 +693,22 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
         if (event.sequence === lastRoomSequenceRef.current) return;
         lastRoomSequenceRef.current = event.sequence;
       }
+      if (event.type === "chat.message") {
+        setChatMessages((current) => current.some((message) => message.messageId === event.messageId)
+          ? current
+          : [...current, event]);
+        setChatFeedback(null);
+        return;
+      }
+      if (event.type === "call.offer"
+        || event.type === "call.answer"
+        || event.type === "call.ice-candidate"
+        || event.type === "call.decline"
+        || event.type === "call.leave"
+        || event.type === "media.state") {
+        handleCallSignalRef.current(event);
+        return;
+      }
       if (event.type === "room.snapshot") {
         setParticipants(event.payload.participants);
         return;
@@ -670,6 +734,18 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
         return;
       }
       if (event.type === "room.error") {
+        if (event.payload.code === "INVALID_CHAT_MESSAGE") {
+          setChatFeedback("That message could not be sent. Review it and try again.");
+          return;
+        }
+        if (event.payload.code === "INVALID_CALL_SIGNAL"
+          || event.payload.code === "CALL_TARGET_UNAVAILABLE") {
+          setCallFeedback(event.payload.code === "CALL_TARGET_UNAVAILABLE"
+            ? "That participant is no longer available for a call."
+            : "The call signal was rejected. End the call and try again.");
+          stopCallRef.current("signaling_error", false);
+          return;
+        }
         if (event.payload.code === "INVALID_SIGNER_EVENT") {
           signerOwnershipRef.current = INITIAL_SIGNER_STATE;
           setSignerOwnership(INITIAL_SIGNER_STATE);
@@ -694,6 +770,11 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
         setDemoParticipants([]);
         setDemoSpokenEntries([]);
         setSpokenEntries([]);
+        setChatMessages([]);
+        setChatDraft("");
+        setChatFeedback(null);
+        setIncomingCall(null);
+        stopCallRef.current("room_closed", false);
         stopSpokenTranscriptRef.current();
         signerOwnershipRef.current = INITIAL_SIGNER_STATE;
         setSignerOwnership(INITIAL_SIGNER_STATE);
@@ -771,6 +852,152 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       onEvent: acceptServerEvent,
       onParseIssue: (issue) => dispatch({ type: "parse-issue", reason: issue.reason })
     });
+    realtimeSendRef.current = realtime.send;
+
+    const refreshMediaDevices = useCallback(async () => {
+      if (!navigator.mediaDevices?.enumerateDevices) return;
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        if (!mountedRef.current) return;
+        setMediaDevices(devices);
+        setSelectedCameraId((current) => current || devices.find((device) => device.kind === "videoinput")?.deviceId || "");
+        setSelectedMicrophoneId((current) => current || devices.find((device) => device.kind === "audioinput")?.deviceId || "");
+        setSelectedSpeakerId((current) => current || devices.find((device) => device.kind === "audiooutput")?.deviceId || "");
+      } catch {
+        setCallFeedback("Media device names are unavailable until browser permission is granted.");
+      }
+    }, []);
+
+    useEffect(() => {
+      void refreshMediaDevices();
+      const devices = navigator.mediaDevices;
+      if (!devices?.addEventListener) return;
+      const refresh = () => void refreshMediaDevices();
+      devices.addEventListener("devicechange", refresh);
+      return () => devices.removeEventListener("devicechange", refresh);
+    }, [refreshMediaDevices]);
+
+    const stopCall = useCallback((reason = "user_left", notifyPeer = true) => {
+      callControllerRef.current?.end(reason, notifyPeer);
+      const microphoneStream = microphoneStreamRef.current;
+      microphoneStreamRef.current = null;
+      microphoneStream?.getTracks().forEach((track) => {
+        const endedListener = mediaTrackEndedListenersRef.current.get(track);
+        if (endedListener) track.removeEventListener("ended", endedListener);
+        mediaTrackEndedListenersRef.current.delete(track);
+        track.stop();
+      });
+      tracksOfKind(mediaStreamRef.current, "video").forEach((track) => {
+        track.enabled = true;
+      });
+      setIncomingCall(null);
+      setRemoteStream(null);
+      setRemoteMediaState({ audioEnabled: true, videoEnabled: true });
+      setMicrophoneEnabled(true);
+      setCallVideoEnabled(true);
+      setCallState("ended");
+      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+    }, []);
+    stopCallRef.current = stopCall;
+
+    combinedCallStreamRef.current = () => {
+      const cameraStream = mediaStreamRef.current;
+      const microphoneStream = microphoneStreamRef.current;
+      if (!cameraStream) return microphoneStream;
+      if (!microphoneStream) return cameraStream;
+      const tracks = [...tracksOfKind(cameraStream, "video"), ...tracksOfKind(microphoneStream, "audio")];
+      const streamFactory = composition.mediaStreamFactory ?? ((streamTracks: MediaStreamTrack[]) => new MediaStream(streamTracks));
+      return streamFactory(tracks);
+    };
+
+    useEffect(() => {
+      if (!currentParticipant) {
+        callControllerRef.current?.dispose();
+        callControllerRef.current = null;
+        return;
+      }
+      const controller = new PeerCallController({
+        participantId: currentParticipant.id,
+        send: (signal) => realtimeSendRef.current(signal),
+        idFactory: composition.callIdFactory,
+        peerConnectionFactory: composition.peerConnectionFactory,
+        onStateChange: (state) => {
+          if (!mountedRef.current) return;
+          setCallState(state);
+          if (state === "connected") {
+            setCallFeedback("Private peer call connected.");
+            announce("Private peer call connected.");
+          }
+          if (state === "failed") {
+            setCallFeedback("The peer connection failed. End the call and try again.");
+            announce("The peer connection failed. End the call and try again.");
+          }
+        },
+        onRemoteStream: (stream) => {
+          if (!mountedRef.current) return;
+          setRemoteStream(stream);
+        },
+        onRemoteMediaState: (state) => {
+          if (mountedRef.current) setRemoteMediaState(state);
+        }
+      });
+      callControllerRef.current = controller;
+      setCallState("idle");
+      return () => {
+        controller.dispose();
+        if (callControllerRef.current === controller) callControllerRef.current = null;
+      };
+    }, [currentParticipant?.id]);
+
+    handleCallSignalRef.current = (event) => {
+      if (event.type === "call.offer") {
+        if (incomingCall !== null
+          || callState === "calling"
+          || callState === "connecting"
+          || callState === "connected") {
+          realtimeSendRef.current({
+            schemaVersion: 1,
+            type: "call.decline",
+            signalId: composition.callIdFactory?.() ?? crypto.randomUUID(),
+            callId: event.callId,
+            targetParticipantId: event.participantId,
+            payload: { reason: "busy" }
+          });
+          return;
+        }
+        setIncomingCall(event);
+        setCallFeedback("Incoming peer call. Accept to share your selected camera and microphone.");
+        announce("Incoming peer call. Accept to share your selected camera and microphone.");
+        return;
+      }
+      void callControllerRef.current?.handleSignal(event, combinedCallStreamRef.current()).then(() => {
+        if (event.type === "call.decline" || event.type === "call.leave") {
+          stopCall("remote_ended", false);
+          setCallFeedback(event.type === "call.decline" ? "The participant declined the call." : "The participant ended the call.");
+          announce(event.type === "call.decline" ? "The participant declined the call." : "The participant ended the call.");
+        }
+      }).catch(() => {
+        setCallState("failed");
+        setCallFeedback("Call signaling could not be completed. End the call and try again.");
+      });
+    };
+
+    useEffect(() => {
+      const video = remoteVideoRef.current;
+      if (!video) return;
+      video.srcObject = remoteStream;
+      if (remoteStream) void video.play().catch(() => undefined);
+    }, [remoteStream]);
+
+    useEffect(() => {
+      if (!selectedSpeakerId || !remoteVideoRef.current) return;
+      const outputVideo = remoteVideoRef.current as HTMLVideoElement & {
+        setSinkId?: (deviceId: string) => Promise<void>;
+      };
+      void outputVideo.setSinkId?.(selectedSpeakerId).catch(() => {
+        setCallFeedback("This browser could not switch the selected speaker.");
+      });
+    }, [remoteStream, selectedSpeakerId]);
 
     function nextSignerCommandOrder(): { sequence: number; timestampMs: number } {
       if (signerCommandGenerationRef.current !== realtime.state.generation) {
@@ -992,6 +1219,7 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
 
     const stopMedia = useCallback(() => {
       cameraRequestGenerationRef.current += 1;
+      stopCallRef.current("camera_stopped", true);
       const stream = mediaStreamRef.current;
       mediaStreamRef.current = null;
       mediaTrackEndedListenersRef.current.forEach((listener, track) => {
@@ -1058,7 +1286,8 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
             width: { ideal: 1280 },
             height: { ideal: 960 },
             aspectRatio: { ideal: 4 / 3 },
-            facingMode: "user"
+            facingMode: "user",
+            ...(selectedCameraId ? { deviceId: { exact: selectedCameraId } } : {})
           },
           audio: false
         });
@@ -1090,6 +1319,8 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
         });
         if (videoRef.current) videoRef.current.srcObject = stream;
         setCameraState("on");
+        setCallVideoEnabled(true);
+        void refreshMediaDevices();
         notify({
           key: "camera",
           tone: "success",
@@ -1112,8 +1343,12 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
 
     function activateMeetingSession(session: Awaited<ReturnType<typeof createMeeting>>) {
       dispatch({ type: "reset-session" });
+      stopCall("room_changed", false);
       stopSpokenTranscript();
       setSpokenEntries([]);
+      setChatMessages([]);
+      setChatDraft("");
+      setChatFeedback(null);
       setDemoParticipants([]);
       setDemoSpokenEntries([]);
       setMeeting(session.meeting);
@@ -1273,7 +1508,118 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       dispatch({ type: "clear-transcript" });
       setSpokenEntries([]);
       setDemoSpokenEntries([]);
+      setChatMessages([]);
       announce("Live transcript cleared from this browser session.");
+    }
+
+    function sendChatMessage(event: React.FormEvent<HTMLFormElement>) {
+      event.preventDefault();
+      const text = chatDraft.trim();
+      if (!text || text.length > 500) return;
+      const messageId = composition.messageIdFactory?.() ?? crypto.randomUUID();
+      if (!realtime.send({
+        schemaVersion: 1,
+        type: "chat.message",
+        messageId,
+        text
+      })) {
+        setChatFeedback("Message could not be sent while the room is reconnecting. Try again when connected.");
+        return;
+      }
+      setChatDraft("");
+      setChatFeedback("Sending message…");
+    }
+
+    async function requestCallMicrophone(): Promise<MediaStream> {
+      if (microphoneStreamRef.current) return microphoneStreamRef.current;
+      const microphoneStream = await navigator.mediaDevices.getUserMedia({
+        video: false,
+        audio: selectedMicrophoneId ? { deviceId: { exact: selectedMicrophoneId } } : true
+      });
+      tracksOfKind(microphoneStream, "audio").forEach((track) => {
+        track.enabled = true;
+        const handleEnded = () => {
+          if (!mountedRef.current || microphoneStreamRef.current !== microphoneStream) return;
+          stopCallRef.current("microphone_disconnected", true);
+          setCallFeedback("The microphone disconnected. Reconnect it before starting another call.");
+          announce("The call ended because the microphone disconnected.");
+        };
+        track.addEventListener("ended", handleEnded);
+        mediaTrackEndedListenersRef.current.set(track, handleEnded);
+      });
+      microphoneStreamRef.current = microphoneStream;
+      setMicrophoneEnabled(true);
+      void refreshMediaDevices();
+      return microphoneStream;
+    }
+
+    async function startPeerCall() {
+      if (!selectedCallParticipantId || cameraState !== "on" || !callControllerRef.current) return;
+      setCallFeedback("Requesting microphone access…");
+      try {
+        await requestCallMicrophone();
+        const callStream = combinedCallStreamRef.current();
+        if (!callStream) throw new Error("Local media is unavailable.");
+        await callControllerRef.current.startCall(selectedCallParticipantId, callStream);
+        setCallFeedback("Calling the selected participant…");
+      } catch {
+        microphoneStreamRef.current?.getTracks().forEach((track) => track.stop());
+        microphoneStreamRef.current = null;
+        setCallState("failed");
+        setCallFeedback("The call could not start. Check microphone permission and try again.");
+      }
+    }
+
+    async function acceptIncomingCall() {
+      if (!incomingCall || cameraState !== "on" || !callControllerRef.current) return;
+      const offer = incomingCall;
+      setCallFeedback("Requesting microphone access…");
+      try {
+        await requestCallMicrophone();
+        setSelectedCallParticipantId(offer.participantId);
+        setIncomingCall(null);
+        await callControllerRef.current.handleSignal(offer, combinedCallStreamRef.current());
+        setCallFeedback("Connecting the private peer call…");
+      } catch {
+        setCallState("failed");
+        setCallFeedback("The call could not be accepted. Check camera and microphone permissions.");
+      }
+    }
+
+    function declineIncomingCall() {
+      if (!incomingCall) return;
+      realtimeSendRef.current({
+        schemaVersion: 1,
+        type: "call.decline",
+        signalId: composition.callIdFactory?.() ?? crypto.randomUUID(),
+        callId: incomingCall.callId,
+        targetParticipantId: incomingCall.participantId,
+        payload: { reason: "declined" }
+      });
+      setIncomingCall(null);
+      setCallState("ended");
+      setCallFeedback("Incoming call declined.");
+      announce("Incoming call declined.");
+    }
+
+    function toggleCallMicrophone() {
+      const enabled = !microphoneEnabled;
+      tracksOfKind(microphoneStreamRef.current, "audio").forEach((track) => {
+        track.enabled = enabled;
+      });
+      setMicrophoneEnabled(enabled);
+      callControllerRef.current?.sendMediaState(enabled, callVideoEnabled);
+      announce(enabled ? "Call microphone unmuted." : "Call microphone muted.");
+    }
+
+    function toggleCallVideo() {
+      const enabled = !callVideoEnabled;
+      tracksOfKind(mediaStreamRef.current, "video").forEach((track) => {
+        track.enabled = enabled;
+      });
+      setCallVideoEnabled(enabled);
+      callControllerRef.current?.sendMediaState(microphoneEnabled, enabled);
+      announce(enabled ? "Call camera resumed." : "Call camera paused.");
     }
 
     function addDemoParticipant() {
@@ -1363,8 +1709,27 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       ...participants,
       ...demoParticipants
     ];
+    const callParticipants = participants.filter(
+      (participant) => participant.participantId !== currentParticipant?.id
+    );
+    useEffect(() => {
+      setSelectedCallParticipantId((current) => callParticipants.some(
+        (participant) => participant.participantId === current
+      ) ? current : callParticipants[0]?.participantId ?? "");
+    }, [currentParticipant?.id, participants]);
+    const selectedCallParticipant = callParticipants.find(
+      (participant) => participant.participantId === selectedCallParticipantId
+    );
+    const incomingCallParticipant = incomingCall
+      ? participants.find((participant) => participant.participantId === incomingCall.participantId)
+      : undefined;
+    const callActive = callState === "calling" || callState === "connecting" || callState === "connected";
+    const cameraDevices = mediaDevices.filter((device) => device.kind === "videoinput");
+    const microphoneDevices = mediaDevices.filter((device) => device.kind === "audioinput");
+    const speakerDevices = mediaDevices.filter((device) => device.kind === "audiooutput");
     const transcriptEntries = [
       ...product.captions.map((caption) => ({ kind: "sign" as const, occurredAt: caption.occurredAt, caption })),
+      ...chatMessages.map((message) => ({ kind: "chat" as const, occurredAt: message.occurredAt, message })),
       ...spokenEntries.map((entry) => ({ kind: "speech" as const, occurredAt: entry.occurredAt, entry })),
       ...demoSpokenEntries.map((entry) => ({ kind: "speech" as const, occurredAt: entry.occurredAt, entry }))
     ].sort((left, right) => left.occurredAt.localeCompare(right.occurredAt));
@@ -1559,6 +1924,211 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
             </section>
           )}
         </div>
+
+        {meeting && (
+          <section className="conversation-call" aria-labelledby="conversation-call-title">
+            <div className="call-remote-stage">
+              <header>
+                <div>
+                  <span>Private one-to-one media</span>
+                  <h2 id="conversation-call-title">Live conversation</h2>
+                </div>
+                <span className={`call-state ${incomingCall ? "incoming" : callState}`} aria-label="Call status">
+                  {incomingCall
+                    ? "Incoming call"
+                    : callState === "connected"
+                      ? "Connected"
+                      : callState === "calling"
+                        ? "Calling"
+                        : callState === "connecting"
+                          ? "Connecting"
+                          : callState === "failed"
+                            ? "Connection failed"
+                            : "Not in a call"}
+                </span>
+              </header>
+              <div className="remote-video-shell">
+                <video
+                  ref={remoteVideoRef}
+                  data-testid="remote-video"
+                  aria-label="Remote participant video"
+                  autoPlay
+                  playsInline
+                  className={remoteStream ? "visible" : ""}
+                />
+                {!remoteStream && (
+                  <div className="remote-video-empty">
+                    <Video size={25} strokeWidth={1.5} aria-hidden="true" />
+                    <strong>{incomingCall
+                      ? `${incomingCallParticipant?.displayName ?? "A participant"} is calling`
+                      : selectedCallParticipant
+                        ? `Ready to call ${selectedCallParticipant.displayName}`
+                        : "Waiting for another participant"}</strong>
+                    <span>Remote video appears here after both browsers establish the peer connection.</span>
+                  </div>
+                )}
+                {remoteStream && !remoteMediaState.videoEnabled && (
+                  <div className="remote-media-paused"><VideoOff size={18} aria-hidden="true" /> Remote camera paused</div>
+                )}
+                {remoteStream && (
+                  <div className="remote-media-state" aria-label="Remote media state">
+                    <span>{remoteMediaState.audioEnabled ? "Remote microphone on" : "Remote microphone muted"}</span>
+                    <span>{remoteMediaState.videoEnabled ? "Remote camera on" : "Remote camera paused"}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="call-control-panel">
+              {incomingCall ? (
+                <div className="incoming-call-actions">
+                  <strong>{incomingCallParticipant?.displayName ?? "A participant"} wants to start a call.</strong>
+                  <span>Accepting shares your active camera and selected microphone with that participant.</span>
+                  <div>
+                    <button
+                      type="button"
+                      className="sc-button sc-button--primary sc-button--compact"
+                      onClick={acceptIncomingCall}
+                      disabled={cameraState !== "on"}
+                    >
+                      <Phone size={14} aria-hidden="true" />
+                      <span className="sc-button__label">Accept call</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="sc-button sc-button--secondary sc-button--compact"
+                      onClick={declineIncomingCall}
+                    >
+                      <PhoneOff size={14} aria-hidden="true" />
+                      <span className="sc-button__label">Decline</span>
+                    </button>
+                  </div>
+                  {cameraState !== "on" && <span>Turn on your camera before accepting.</span>}
+                </div>
+              ) : (
+                <div className="call-primary-controls">
+                  <label>
+                    <span>Call participant</span>
+                    <select
+                      className="sc-select"
+                      aria-label="Call participant"
+                      value={selectedCallParticipantId}
+                      onChange={(event) => setSelectedCallParticipantId(event.target.value)}
+                      disabled={callActive || callParticipants.length === 0}
+                    >
+                      {callParticipants.length === 0 && <option value="">No participant available</option>}
+                      {callParticipants.map((participant) => (
+                        <option key={participant.participantId} value={participant.participantId}>
+                          {participant.displayName}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="call-action-row">
+                    {!callActive ? (
+                      <button
+                        type="button"
+                        className="sc-button sc-button--primary"
+                        onClick={startPeerCall}
+                        disabled={!connected || cameraState !== "on" || !selectedCallParticipantId}
+                      >
+                        <Phone size={15} aria-hidden="true" />
+                        <span className="sc-button__label">Start call</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="sc-button sc-button--danger"
+                        onClick={() => {
+                          stopCall("user_left", true);
+                          setCallFeedback("Call ended.");
+                          announce("Call ended.");
+                        }}
+                      >
+                        <PhoneOff size={15} aria-hidden="true" />
+                        <span className="sc-button__label">End call</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className={microphoneEnabled ? "sc-button sc-button--selected" : "sc-button sc-button--secondary"}
+                      onClick={toggleCallMicrophone}
+                      disabled={!callActive}
+                      aria-pressed={microphoneEnabled}
+                      aria-label={microphoneEnabled ? "Mute call microphone" : "Unmute call microphone"}
+                    >
+                      {microphoneEnabled ? <Mic size={15} aria-hidden="true" /> : <MicOff size={15} aria-hidden="true" />}
+                      <span className="sc-button__label">{microphoneEnabled ? "Mute" : "Unmute"}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={callVideoEnabled ? "sc-button sc-button--selected" : "sc-button sc-button--secondary"}
+                      onClick={toggleCallVideo}
+                      disabled={!callActive}
+                      aria-pressed={callVideoEnabled}
+                      aria-label={callVideoEnabled ? "Pause call camera" : "Resume call camera"}
+                    >
+                      {callVideoEnabled ? <Video size={15} aria-hidden="true" /> : <VideoOff size={15} aria-hidden="true" />}
+                      <span className="sc-button__label">{callVideoEnabled ? "Pause video" : "Resume video"}</span>
+                    </button>
+                  </div>
+                  {cameraState !== "on" && <span className="call-requirement">Turn on your camera to start a video call.</span>}
+                </div>
+              )}
+
+              <details className="call-device-settings">
+                <summary>Camera, microphone, and speaker</summary>
+                <div>
+                  <label>
+                    <span>Camera</span>
+                    <select
+                      className="sc-select"
+                      value={selectedCameraId}
+                      onChange={(event) => setSelectedCameraId(event.target.value)}
+                      disabled={cameraState === "on" || callActive}
+                    >
+                      {cameraDevices.length === 0 && <option value="">Browser default camera</option>}
+                      {cameraDevices.map((device, index) => (
+                        <option key={device.deviceId} value={device.deviceId}>{device.label || `Camera ${index + 1}`}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Microphone</span>
+                    <select
+                      className="sc-select"
+                      value={selectedMicrophoneId}
+                      onChange={(event) => setSelectedMicrophoneId(event.target.value)}
+                      disabled={callActive}
+                    >
+                      {microphoneDevices.length === 0 && <option value="">Browser default microphone</option>}
+                      {microphoneDevices.map((device, index) => (
+                        <option key={device.deviceId} value={device.deviceId}>{device.label || `Microphone ${index + 1}`}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Speaker</span>
+                    <select
+                      className="sc-select"
+                      value={selectedSpeakerId}
+                      onChange={(event) => setSelectedSpeakerId(event.target.value)}
+                    >
+                      {speakerDevices.length === 0 && <option value="">Browser default speaker</option>}
+                      {speakerDevices.map((device, index) => (
+                        <option key={device.deviceId} value={device.deviceId}>{device.label || `Speaker ${index + 1}`}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              </details>
+              <p className="call-privacy-note">
+                Media travels browser-to-browser for this call and is not recorded by SignConnect. A TURN relay is still required for restrictive production networks.
+              </p>
+              {callFeedback && <div className="call-feedback">{callFeedback}</div>}
+            </div>
+          </section>
+        )}
 
         <div className="studio-layout">
           <section className="capture-console" id="camera-workspace" tabIndex={-1} aria-label="Camera workspace">
@@ -1763,6 +2333,46 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
               </div>
             </header>
 
+            <form className="message-composer" onSubmit={sendChatMessage}>
+              <label htmlFor="room-message">Message the room</label>
+              <div className="message-composer-row">
+                <textarea
+                  id="room-message"
+                  className="sc-textarea"
+                  rows={2}
+                  maxLength={500}
+                  value={chatDraft}
+                  onChange={(event) => {
+                    setChatDraft(event.target.value);
+                    setChatFeedback(null);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      event.currentTarget.form?.requestSubmit();
+                    }
+                  }}
+                  placeholder="Type a reply…"
+                  disabled={!connected}
+                  aria-describedby="room-message-hint"
+                />
+                <button
+                  type="submit"
+                  className="sc-button sc-button--primary sc-button--compact"
+                  aria-label="Send message"
+                  disabled={!connected || chatDraft.trim().length === 0}
+                >
+                  <Send size={13} aria-hidden="true" />
+                  <span className="sc-button__label">Send</span>
+                </button>
+              </div>
+              <div className="message-composer-meta" id="room-message-hint">
+                <span>{connected ? "Enter to send · Shift+Enter for a new line" : "Connect to a room to send messages"}</span>
+                <span>{Array.from(chatDraft).length}/500</span>
+              </div>
+              {chatFeedback && <div className="message-feedback" role="status">{chatFeedback}</div>}
+            </form>
+
             <section className="transcript-tools" aria-labelledby="spoken-transcript-title">
               <div className="speech-tool-copy">
                 <span className={speechCaptureActive ? "speech-indicator active" : "speech-indicator"} aria-hidden="true">
@@ -1806,14 +2416,40 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
               </div>
             )}
 
-            <div className="caption-list">
+            <div className="caption-list" tabIndex={0} aria-label="Conversation history">
               {transcriptEntries.length === 0 ? (
                 <div className="caption-empty">
                   <span className="caption-empty-icon"><Captions size={21} strokeWidth={1.5} aria-hidden="true" /></span>
                   <strong>No transcript entries yet</strong>
-                  <span>Confirmed signs and opt-in spoken notes will appear here with their speaker and time.</span>
+                  <span>Confirmed signs, room messages, and opt-in spoken notes will appear here with their speaker and time.</span>
                 </div>
               ) : transcriptEntries.map((transcriptEntry) => {
+                if (transcriptEntry.kind === "chat") {
+                  const { message } = transcriptEntry;
+                  const isCurrentParticipant = currentParticipant !== null
+                    && message.participantId === currentParticipant.id;
+                  const sourceLabel = isCurrentParticipant ? "You" : message.payload.sourceDisplayName;
+                  const typedAt = captionOccurredAt(message.occurredAt);
+                  return (
+                    <article
+                      className="caption-entry chat-entry"
+                      key={message.messageId}
+                      aria-label={`${sourceLabel} typed ${message.payload.text} at ${typedAt}`}
+                    >
+                      <div className="caption-meta">
+                        <span className="caption-source">
+                          <MessageSquare size={13} aria-hidden="true" />
+                          {sourceLabel} typed
+                        </span>
+                        <time dateTime={message.occurredAt} title={new Date(message.occurredAt).toLocaleString()}>
+                          at {typedAt}
+                        </time>
+                      </div>
+                      <p>{message.payload.text}</p>
+                      <div className="caption-details"><span>Room message</span></div>
+                    </article>
+                  );
+                }
                 if (transcriptEntry.kind === "speech") {
                   const { entry } = transcriptEntry;
                   const isCurrentParticipant = currentParticipant !== null

@@ -1,6 +1,8 @@
 package com.signconnect.realtime.room;
 
 import com.signconnect.realtime.api.CaptionEvent;
+import com.signconnect.realtime.api.ChatMessageEvent;
+import com.signconnect.realtime.api.CallSignalEvent;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -26,6 +28,10 @@ public interface RoomRegistry {
     void leave(RoomMembership membership);
 
     void publishCaption(RoomMembership source, CaptionEvent caption);
+
+    void publishChat(RoomMembership source, ChatMessageEvent message);
+
+    boolean routeCallSignal(RoomMembership source, CallSignalEvent signal);
 
     void requestSigner(RoomMembership source, UUID requestId, UUID streamId);
 

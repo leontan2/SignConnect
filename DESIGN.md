@@ -52,7 +52,7 @@ The implemented tokens live in `frontend/styles/system.css`. Always reuse them b
 | Ink action | `--sc-action-ink` | `#0d1714` | Session and infrastructure actions |
 | Selected | `--sc-selected` | `#d7e3c7` | Enabled camera and confirmed selection |
 | Ink | `--sc-ink` | `#142a24` | Default text |
-| Muted ink | `--sc-ink-muted` | `#65726d` | Secondary text |
+| Muted ink | `--sc-ink-muted` | `#5b6863` | Secondary text with AA contrast on every system surface |
 | Hairline | `--sc-line` | `#d9d8d2` | Dividers and borders |
 | Strong hairline | `--sc-line-strong` | `#c8cac4` | Interactive control borders |
 | Danger | `--sc-danger` | `#b84e3b` | Errors and destructive actions |
@@ -118,6 +118,12 @@ Use the shared `.sc-button` anatomy and add exactly one visual variant.
 - Stop recognition: coral accent button to communicate an active consented capture state.
 
 Buttons must use active, specific labels such as “Start session,” “Turn camera on,” and “Stop recognition.” Icon-only controls need an accessible name. Never use clickable `div` or `span` elements.
+
+## Text fields
+
+Use `.sc-textarea` for multiline workspace input such as room messages. It uses the raised surface, strong hairline, control radius, readable 14px text, and the shared coral focus ring. Always pair it with a visible label, a clear disabled explanation, and a nearby character limit when input is bounded.
+
+Use `.sc-select` for device, participant, and workspace option selectors. Keep a visible label above it, retain the browser's native option menu, and disable rather than hide a selection that cannot safely change during an active session.
 
 ## Application patterns
 

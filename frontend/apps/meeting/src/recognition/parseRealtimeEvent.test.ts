@@ -56,9 +56,27 @@ describe("parseRealtimeEvent", () => {
       },
       occurredAt: captionFixture.occurredAt
     };
+    const chatMessage = {
+      schemaVersion: 1,
+      type: "chat.message",
+      meetingId: captionFixture.meetingId,
+      participantId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      messageId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      sequence: 2,
+      payload: {
+        text: "Can you repeat that sign?",
+        sourceDisplayName: "Leon"
+      },
+      occurredAt: captionFixture.occurredAt
+    };
     expect(parseRealtimeEvent(roomCaption)).toEqual({ ok: true, event: roomCaption });
     expect(parseRealtimeEvent(roomJoined)).toEqual({ ok: true, event: roomJoined });
     expect(parseRealtimeEvent(roomSnapshot)).toEqual({ ok: true, event: roomSnapshot });
+    expect(parseRealtimeEvent(chatMessage)).toEqual({ ok: true, event: chatMessage });
+    expect(parseRealtimeEvent({
+      ...chatMessage,
+      payload: { ...chatMessage.payload, text: "" }
+    })).toEqual({ ok: false, reason: "malformed" });
     expect(parseRealtimeEvent(JSON.stringify(malformedCaptionFixture))).toEqual({
       ok: false,
       reason: "malformed"
@@ -144,6 +162,40 @@ describe("parseRealtimeEvent", () => {
     expect(parseRealtimeEvent({
       ...participantUpdated,
       payload: { displayName: "Leon", role: "HOST" }
+    })).toEqual({ ok: false, reason: "malformed" });
+  });
+
+  it("accepts targeted call signaling while rejecting malformed media payloads", () => {
+    const parseRealtimeEvent = (meetingApi as unknown as {
+      parseRealtimeEvent?: ParseRealtimeEvent;
+    }).parseRealtimeEvent;
+    expect(parseRealtimeEvent).toBeTypeOf("function");
+    if (!parseRealtimeEvent) return;
+
+    const offer = {
+      schemaVersion: 1,
+      type: "call.offer",
+      meetingId: captionFixture.meetingId,
+      participantId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      targetParticipantId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      signalId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      callId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      sequence: 5,
+      payload: { sdp: "v=0\r\n" },
+      occurredAt: captionFixture.occurredAt
+    };
+    const mediaState = {
+      ...offer,
+      type: "media.state",
+      signalId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      payload: { audioEnabled: true, videoEnabled: false }
+    };
+
+    expect(parseRealtimeEvent(offer)).toEqual({ ok: true, event: offer });
+    expect(parseRealtimeEvent(mediaState)).toEqual({ ok: true, event: mediaState });
+    expect(parseRealtimeEvent({
+      ...mediaState,
+      payload: { audioEnabled: "yes", videoEnabled: false }
     })).toEqual({ ok: false, reason: "malformed" });
   });
 });
