@@ -16,6 +16,7 @@
     "test:contracts:training": "node contracts/sign-recognition-training/v1/validate-fixtures.mjs",
     "test:ml": "uv run --project ml/sign-recognition --extra test --frozen pytest -W error",
     "test:e2e": "node scripts/run-recognition-e2e.mjs --project=chromium",
+    "test:e2e:conversation": "node scripts/run-conversation-e2e.mjs",
     "test:e2e:installed": "node scripts/run-recognition-e2e.mjs --project=chrome && node scripts/run-recognition-e2e.mjs --project=edge",
     "test:e2e:performance": "node scripts/run-recognition-e2e.mjs --performance",
     "test:e2e:simulator": "node scripts/run-recognition-e2e.mjs --simulator",
@@ -41,6 +42,7 @@
     "typescript": "5.7.2",
     "webpack": "5.110.1",
     "webpack-cli": "6.0.1",
-    "webpack-dev-server": "5.2.6"
+    "webpack-dev-server": "5.2.6",
+    "ws": "^8.21.3"
   }
 }

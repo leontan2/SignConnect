@@ -60,6 +60,27 @@ export type RecognitionControlEvent = {
   action: "start" | "stop";
 };
 
+export type ChatMessageCommand = {
+  schemaVersion: 1;
+  type: "chat.message";
+  messageId: string;
+  text: string;
+};
+
+type CallSignalCommandBase = {
+  schemaVersion: 1;
+  signalId: string;
+  callId: string;
+  targetParticipantId: string;
+};
+
+export type CallSignalCommand = CallSignalCommandBase & (
+  | { type: "call.offer" | "call.answer"; payload: { sdp: string } }
+  | { type: "call.ice-candidate"; payload: RTCIceCandidateInit }
+  | { type: "call.decline" | "call.leave"; payload: { reason: string } }
+  | { type: "media.state"; payload: { audioEnabled: boolean; videoEnabled: boolean } }
+);
+
 export type LegacyRecognitionResultEvent = {
   type: "recognition.result";
   sequence: number;
@@ -74,6 +95,8 @@ export type ClientRealtimeEvent =
   | RecognitionControlEvent
   | SignerRequestEvent
   | SignerReleaseEvent
+  | ChatMessageCommand
+  | CallSignalCommand
   | LegacyRecognitionResultEvent
   | RoomJoinEvent;
 
@@ -142,6 +165,31 @@ export type RoomParticipant = {
   role: ParticipantRole;
   activeSigner?: boolean;
 };
+
+export type ChatMessageEvent = ServerEventEnvelope & {
+  type: "chat.message";
+  participantId: string;
+  messageId: string;
+  payload: {
+    text: string;
+    sourceDisplayName: string;
+  };
+};
+
+type CallSignalEventBase = ServerEventEnvelope & {
+  participantId: string;
+  targetParticipantId: string;
+  signalId: string;
+  callId: string;
+};
+
+export type CallSignalEvent =
+  | (CallSignalEventBase & { type: "call.offer"; payload: { sdp: string } })
+  | (CallSignalEventBase & { type: "call.answer"; payload: { sdp: string } })
+  | (CallSignalEventBase & { type: "call.ice-candidate"; payload: RTCIceCandidateInit })
+  | (CallSignalEventBase & { type: "call.decline"; payload: { reason: string } })
+  | (CallSignalEventBase & { type: "call.leave"; payload: { reason: string } })
+  | (CallSignalEventBase & { type: "media.state"; payload: { audioEnabled: boolean; videoEnabled: boolean } });
 
 export type RoomJoinedEvent = ServerEventEnvelope & {
   type: "room.joined";
@@ -222,7 +270,10 @@ export type RoomErrorCode =
   | "REALTIME_TICKET_EXPIRED"
   | "TICKET_EXPIRED"
   | "PARTICIPANT_CONNECTED"
-  | "INVALID_SIGNER_EVENT";
+  | "INVALID_SIGNER_EVENT"
+  | "INVALID_CHAT_MESSAGE"
+  | "INVALID_CALL_SIGNAL"
+  | "CALL_TARGET_UNAVAILABLE";
 
 export type RoomErrorEvent = ServerEventEnvelope & {
   type: "room.error";
@@ -234,6 +285,8 @@ export type RoomErrorEvent = ServerEventEnvelope & {
 
 export type ServerRealtimeEvent =
   | CaptionFinalEvent
+  | ChatMessageEvent
+  | CallSignalEvent
   | RecognitionUnknownEvent
   | RecognitionStatusEvent
   | RoomJoinedEvent

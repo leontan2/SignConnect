@@ -9,6 +9,7 @@ import unavailableFixture from "../../../../contracts/sign-recognition/v1/fixtur
 import unknownFixture from "../../../../contracts/sign-recognition/v1/fixtures/server-recognition-unknown.valid.json";
 import roomNotFoundFixture from "../../../../contracts/realtime-room/v1/fixtures/server-room-error-room-not-found.valid.json";
 import MeetingApp, * as meetingModule from "./MeetingApp";
+import type { PeerConnectionLike } from "./call/PeerCallController";
 
 const meeting = {
   id: captionFixture.meetingId,
@@ -133,8 +134,11 @@ class FakeWorker {
 }
 
 class FakeMediaTrack {
+  enabled = true;
   readonly stop = vi.fn();
   private readonly endedListeners = new Set<EventListenerOrEventListenerObject>();
+
+  constructor(readonly kind: "audio" | "video" = "video") {}
 
   addEventListener(type: string, listener: EventListenerOrEventListenerObject): void {
     if (type === "ended") this.endedListeners.add(listener);
@@ -232,6 +236,9 @@ function makeHarness(options: {
     onError(reason: string): void;
     onEnd(): void;
   }) => { start(): void; stop(): void } | null;
+  peerConnectionFactory?: (configuration: RTCConfiguration) => PeerConnectionLike;
+  callIdFactory?: () => string;
+  mediaStreamFactory?: (tracks: MediaStreamTrack[]) => MediaStream;
 } = {}): Harness {
   const captureScheduler = new ManualScheduler();
   const retryScheduler = new ManualRetryScheduler();
@@ -281,7 +288,10 @@ function makeHarness(options: {
     trackingAnnouncementDelayMs: 20,
     recognitionResponseTimeoutMs: options.recognitionResponseTimeoutMs,
     roomPreviewToolsEnabled: options.roomPreviewToolsEnabled,
-    speechRecognitionFactory: options.speechRecognitionFactory
+    speechRecognitionFactory: options.speechRecognitionFactory,
+    peerConnectionFactory: options.peerConnectionFactory,
+    callIdFactory: options.callIdFactory,
+    mediaStreamFactory: options.mediaStreamFactory
   }) ?? MeetingApp;
   const rendered = render(<App />);
   const video = rendered.container.querySelector("video");
@@ -831,6 +841,153 @@ describe("Meeting recognition product UX", () => {
 
     await harness.user.click(screen.getByRole("button", { name: "Stop spoken transcript" }));
     expect(speechController.stop).toHaveBeenCalledOnce();
+  });
+
+  it("sends a typed room message and renders the server-attributed echo exactly once", async () => {
+    const harness = makeHarness();
+    const socket = await connectSession(harness);
+    const composer = screen.getByLabelText("Message the room");
+
+    await harness.user.type(composer, "Can you repeat that sign?");
+    await harness.user.click(screen.getByRole("button", { name: "Send message" }));
+
+    const command = socket.parsedSent().find((event) => event.type === "chat.message");
+    expect(command).toEqual({
+      schemaVersion: 1,
+      type: "chat.message",
+      messageId: expect.stringMatching(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      ),
+      text: "Can you repeat that sign?"
+    });
+    expect(composer).toHaveValue("");
+
+    const echoed = {
+      schemaVersion: 1,
+      type: "chat.message",
+      meetingId: meeting.id,
+      participantId: meetingSession.participant.id,
+      messageId: command?.messageId,
+      sequence: ++harness.roomSequence.value,
+      payload: {
+        text: "Can you repeat that sign?",
+        sourceDisplayName: "You"
+      },
+      occurredAt: "2026-01-01T00:00:03Z"
+    };
+    act(() => socket.message(echoed));
+    act(() => socket.message(echoed));
+
+    const transcript = screen.getByRole("region", { name: "Live transcript" });
+    expect(within(transcript).getByText("Can you repeat that sign?")).toBeVisible();
+    expect(within(transcript).getByText("You typed")).toBeVisible();
+    expect(within(transcript).getAllByRole("article")).toHaveLength(1);
+  });
+
+  it("starts a private call with the existing camera track and provides mute and end controls", async () => {
+    const connection = {
+      connectionState: "new",
+      onconnectionstatechange: null,
+      onicecandidate: null,
+      ontrack: null,
+      addTrack: vi.fn(),
+      createOffer: vi.fn(async () => ({ type: "offer", sdp: "v=0\r\no=host" })),
+      createAnswer: vi.fn(async () => ({ type: "answer", sdp: "v=0\r\no=guest" })),
+      setLocalDescription: vi.fn(async () => undefined),
+      setRemoteDescription: vi.fn(async () => undefined),
+      addIceCandidate: vi.fn(async () => undefined),
+      close: vi.fn()
+    } as unknown as PeerConnectionLike;
+    const callIds = [
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+      "33333333-3333-4333-8333-333333333333",
+      "44444444-4444-4444-8444-444444444444"
+    ];
+    const combinedStreams: MediaStream[] = [];
+    const harness = makeHarness({
+      peerConnectionFactory: () => connection,
+      callIdFactory: () => callIds.shift()!,
+      mediaStreamFactory: (tracks) => {
+        const stream = {
+          getTracks: () => tracks,
+          getVideoTracks: () => tracks.filter((track) => track.kind === "video"),
+          getAudioTracks: () => tracks.filter((track) => track.kind === "audio")
+        } as unknown as MediaStream;
+        combinedStreams.push(stream);
+        return stream;
+      }
+    });
+    const videoTrack = new FakeMediaTrack("video") as unknown as MediaStreamTrack;
+    const fakeAudioTrack = new FakeMediaTrack("audio");
+    const audioTrack = fakeAudioTrack as unknown as MediaStreamTrack;
+    const cameraStream = {
+      getTracks: () => [videoTrack],
+      getVideoTracks: () => [videoTrack],
+      getAudioTracks: () => []
+    } as unknown as MediaStream;
+    const microphoneStream = {
+      getTracks: () => [audioTrack],
+      getVideoTracks: () => [],
+      getAudioTracks: () => [audioTrack]
+    } as unknown as MediaStream;
+    const getUserMedia = vi.fn(async (constraints: MediaStreamConstraints) => constraints.video
+      ? cameraStream
+      : microphoneStream);
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia }
+    });
+
+    const socket = await connectSession(harness);
+    act(() => socket.message({
+      schemaVersion: 1,
+      type: "room.snapshot",
+      meetingId: meeting.id,
+      sequence: ++harness.roomSequence.value,
+      payload: {
+        participants: [
+          { participantId: meetingSession.participant.id, displayName: "You", role: "HOST" },
+          { participantId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", displayName: "Ari", role: "GUEST" }
+        ]
+      },
+      occurredAt: meeting.createdAt
+    }));
+    await enableCamera(harness);
+
+    const startCall = await screen.findByRole("button", { name: "Start call" });
+    expect(startCall).toBeEnabled();
+    await harness.user.click(startCall);
+
+    await waitFor(() => expect(socket.parsedSent()).toContainEqual({
+      schemaVersion: 1,
+      type: "call.offer",
+      signalId: "22222222-2222-4222-8222-222222222222",
+      callId: "11111111-1111-4111-8111-111111111111",
+      targetParticipantId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      payload: { sdp: "v=0\r\no=host" }
+    }));
+    expect(getUserMedia).toHaveBeenCalledTimes(2);
+    expect(getUserMedia).toHaveBeenLastCalledWith({ video: false, audio: true });
+    expect(connection.addTrack).toHaveBeenCalledWith(videoTrack, combinedStreams[0]);
+    expect(connection.addTrack).toHaveBeenCalledWith(audioTrack, combinedStreams[0]);
+    expect(fakeAudioTrack.endedListenerCount).toBe(1);
+
+    await harness.user.click(screen.getByRole("button", { name: "Mute call microphone" }));
+    expect(audioTrack.enabled).toBe(false);
+    expect(socket.parsedSent()).toContainEqual(expect.objectContaining({
+      type: "media.state",
+      payload: { audioEnabled: false, videoEnabled: true }
+    }));
+
+    await harness.user.click(screen.getByRole("button", { name: "End call" }));
+    expect(socket.parsedSent()).toContainEqual(expect.objectContaining({
+      type: "call.leave",
+      payload: { reason: "user_left" }
+    }));
+    expect(audioTrack.stop).toHaveBeenCalledOnce();
+    expect(fakeAudioTrack.endedListenerCount).toBe(0);
+    expect(videoTrack.stop).not.toHaveBeenCalled();
   });
 
   it("adds and removes local preview participants without sending room events", async () => {

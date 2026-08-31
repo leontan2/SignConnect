@@ -2,8 +2,11 @@ package com.signconnect.realtime.room;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.signconnect.realtime.api.CaptionEvent;
 import com.signconnect.realtime.api.CaptionPayload;
+import com.signconnect.realtime.api.ChatMessageEvent;
+import com.signconnect.realtime.api.CallSignalEvent;
 import com.signconnect.realtime.config.RoomProperties;
 import org.junit.jupiter.api.Test;
 
@@ -26,7 +29,9 @@ class InMemoryRoomRegistryTest {
     private static final UUID REQUEST_ID = UUID.fromString("99999999-9999-4999-8999-999999999999");
     private static final UUID STREAM_ID = UUID.fromString("aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa");
 
-    private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+    private final ObjectMapper objectMapper = new ObjectMapper()
+            .findAndRegisterModules()
+            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     private final InMemoryRoomRegistry registry = new InMemoryRoomRegistry(
             objectMapper,
             Clock.fixed(NOW, ZoneOffset.UTC),
@@ -64,6 +69,86 @@ class InMemoryRoomRegistryTest {
                 .map(event -> event.path("sequence").asLong())
                 .toList();
         assertThat(publicSequences).containsExactly(0L, 1L, 2L, 3L, 4L);
+    }
+
+    @Test
+    void publishesOneAttributedChatMessageForADuplicateClientMessageId() {
+        List<String> hostOutbound = new ArrayList<>();
+        List<String> guestOutbound = new ArrayList<>();
+        RoomMembership host = registry.join(
+                participant(), hostOutbound::add, () -> { }, "host-resume", NOW.plusSeconds(300));
+        registry.join(
+                new RoomParticipant(
+                        MEETING_ID,
+                        UUID.fromString("bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb"),
+                        "Ari",
+                        "GUEST"),
+                guestOutbound::add,
+                () -> { },
+                "guest-resume",
+                NOW.plusSeconds(300));
+        ChatMessageEvent chat = new ChatMessageEvent(
+                1,
+                "chat.message",
+                UUID.fromString("33333333-3333-4333-8333-333333333333"),
+                "Can you repeat that sign?");
+
+        registry.publishChat(host, chat);
+        registry.publishChat(host, chat);
+
+        List<JsonNode> hostMessages = hostOutbound.stream()
+                .map(this::read)
+                .filter(event -> "chat.message".equals(event.path("type").asText()))
+                .toList();
+        List<JsonNode> guestMessages = guestOutbound.stream()
+                .map(this::read)
+                .filter(event -> "chat.message".equals(event.path("type").asText()))
+                .toList();
+        assertThat(hostMessages).hasSize(1);
+        assertThat(guestMessages).containsExactlyElementsOf(hostMessages);
+        JsonNode published = hostMessages.getFirst();
+        assertThat(published.path("participantId").asText()).isEqualTo(PARTICIPANT_ID.toString());
+        assertThat(published.path("payload").path("sourceDisplayName").asText()).isEqualTo("Leon");
+        assertThat(published.path("payload").path("text").asText()).isEqualTo("Can you repeat that sign?");
+        assertThat(published.path("occurredAt").asText()).isEqualTo(NOW.toString());
+    }
+
+    @Test
+    void routesACallOfferOnlyToTheNamedParticipantInTheSameRoom() throws Exception {
+        List<String> hostOutbound = new ArrayList<>();
+        List<String> guestOutbound = new ArrayList<>();
+        RoomMembership host = registry.join(
+                participant(), hostOutbound::add, () -> { }, "host-resume", NOW.plusSeconds(300));
+        UUID guestId = UUID.fromString("bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb");
+        registry.join(
+                new RoomParticipant(MEETING_ID, guestId, "Ari", "GUEST"),
+                guestOutbound::add,
+                () -> { },
+                "guest-resume",
+                NOW.plusSeconds(300));
+        int hostBaseline = hostOutbound.size();
+        int guestBaseline = guestOutbound.size();
+        CallSignalEvent offer = objectMapper.readValue("""
+                {
+                  "schemaVersion": 1,
+                  "type": "call.offer",
+                  "signalId": "12121212-1212-4212-8212-121212121212",
+                  "callId": "34343434-3434-4434-8434-343434343434",
+                  "targetParticipantId": "%s",
+                  "payload": {"sdp": "v=0\\r\\n"}
+                }
+                """.formatted(guestId), CallSignalEvent.class);
+
+        assertThat(registry.routeCallSignal(host, offer)).isTrue();
+        assertThat(registry.routeCallSignal(host, offer)).isTrue();
+
+        assertThat(hostOutbound).hasSize(hostBaseline);
+        assertThat(guestOutbound).hasSize(guestBaseline + 1);
+        JsonNode routed = read(guestOutbound.getLast());
+        assertThat(routed.path("type").asText()).isEqualTo("call.offer");
+        assertThat(routed.path("participantId").asText()).isEqualTo(PARTICIPANT_ID.toString());
+        assertThat(routed.path("targetParticipantId").asText()).isEqualTo(guestId.toString());
+        assertThat(routed.path("payload").path("sdp").asText()).isEqualTo("v=0\r\n");
     }
 
     @Test
@@ -242,7 +327,7 @@ class InMemoryRoomRegistryTest {
     private boolean isPublicOrderedEvent(JsonNode event) {
         return switch (event.path("type").asText()) {
             case "room.snapshot", "participant.joined", "participant.updated", "participant.left",
-                    "signer.granted", "signer.released", "caption.final" -> true;
+                    "signer.granted", "signer.released", "caption.final", "chat.message" -> true;
             default -> false;
         };
     }

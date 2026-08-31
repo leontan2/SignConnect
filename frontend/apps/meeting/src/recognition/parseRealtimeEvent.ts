@@ -38,6 +38,30 @@ const PARTICIPANT_EVENT_KEYS = [
   "occurredAt"
 ] as const;
 
+const CHAT_MESSAGE_EVENT_KEYS = [
+  "schemaVersion",
+  "type",
+  "meetingId",
+  "participantId",
+  "messageId",
+  "sequence",
+  "payload",
+  "occurredAt"
+] as const;
+
+const CALL_SIGNAL_EVENT_KEYS = [
+  "schemaVersion",
+  "type",
+  "meetingId",
+  "participantId",
+  "targetParticipantId",
+  "signalId",
+  "callId",
+  "sequence",
+  "payload",
+  "occurredAt"
+] as const;
+
 const ROOM_JOINED_WITH_RESUME_KEYS = [
   "schemaVersion",
   "type",
@@ -72,6 +96,11 @@ const ROOM_CAPTION_PAYLOAD_KEYS = [
   ...CAPTION_PAYLOAD_KEYS,
   "sourceDisplayName"
 ] as const;
+const CHAT_MESSAGE_PAYLOAD_KEYS = ["text", "sourceDisplayName"] as const;
+const SDP_PAYLOAD_KEYS = ["sdp"] as const;
+const REASON_PAYLOAD_KEYS = ["reason"] as const;
+const MEDIA_STATE_PAYLOAD_KEYS = ["audioEnabled", "videoEnabled"] as const;
+const ICE_PAYLOAD_KEYS = ["candidate", "sdpMid", "sdpMLineIndex", "usernameFragment"] as const;
 
 const UNKNOWN_PAYLOAD_KEYS = [
   "reason",
@@ -101,6 +130,13 @@ const SIGNER_RELEASED_PAYLOAD_KEYS = ["requestId", "streamId", "reason"] as cons
 
 const SUPPORTED_EVENT_TYPES = new Set([
   "caption.final",
+  "chat.message",
+  "call.offer",
+  "call.answer",
+  "call.ice-candidate",
+  "call.decline",
+  "call.leave",
+  "media.state",
   "recognition.unknown",
   "recognition.status",
   "room.joined",
@@ -124,7 +160,10 @@ const ROOM_ERROR_CODES = new Set([
   "REALTIME_TICKET_EXPIRED",
   "TICKET_EXPIRED",
   "PARTICIPANT_CONNECTED",
-  "INVALID_SIGNER_EVENT"
+  "INVALID_SIGNER_EVENT",
+  "INVALID_CHAT_MESSAGE",
+  "INVALID_CALL_SIGNAL",
+  "CALL_TARGET_UNAVAILABLE"
 ]);
 const SIGNER_DENIED_REASONS = new Set(["SIGNER_UNAVAILABLE", "ALREADY_ACTIVE", "NOT_JOINED"]);
 const SIGNER_RELEASED_REASONS = new Set(["recognition_stopped", "user_request", "disconnected"]);
@@ -344,6 +383,59 @@ function isValidRoomJoined(event: JsonObject): boolean {
     && hasValidParticipantPayload(event.payload as JsonObject);
 }
 
+function isValidChatMessage(event: JsonObject): boolean {
+  if (!hasValidRoomEnvelope(event, "chat.message", CHAT_MESSAGE_EVENT_KEYS)
+    || !isUuid(event.participantId)
+    || !isUuid(event.messageId)) {
+    return false;
+  }
+  const payload = event.payload as JsonObject;
+  return hasExactKeys(payload, CHAT_MESSAGE_PAYLOAD_KEYS)
+    && hasStringLength(payload.text, 1, 500)
+    && hasStringLength(payload.sourceDisplayName, 1, 50);
+}
+
+function hasOnlyKeys(value: JsonObject, allowed: readonly string[]): boolean {
+  const allowedKeys = new Set(allowed);
+  return Reflect.ownKeys(value).every((key) => typeof key === "string" && allowedKeys.has(key));
+}
+
+function isValidCallSignal(event: JsonObject): boolean {
+  if (!hasValidRoomEnvelope(event, event.type as string, CALL_SIGNAL_EVENT_KEYS)
+    || !isUuid(event.participantId)
+    || !isUuid(event.targetParticipantId)
+    || !isUuid(event.signalId)
+    || !isUuid(event.callId)) {
+    return false;
+  }
+  const payload = event.payload as JsonObject;
+  switch (event.type) {
+    case "call.offer":
+    case "call.answer":
+      return hasExactKeys(payload, SDP_PAYLOAD_KEYS)
+        && hasStringLength(payload.sdp, 1, 65_535);
+    case "call.ice-candidate":
+      return hasOnlyKeys(payload, ICE_PAYLOAD_KEYS)
+        && hasStringLength(payload.candidate, 0, 8_192)
+        && (payload.sdpMid === undefined || payload.sdpMid === null
+          || hasStringLength(payload.sdpMid, 0, 256))
+        && (payload.sdpMLineIndex === undefined || payload.sdpMLineIndex === null
+          || isNonNegativeInteger(payload.sdpMLineIndex))
+        && (payload.usernameFragment === undefined || payload.usernameFragment === null
+          || hasStringLength(payload.usernameFragment, 0, 256));
+    case "call.decline":
+    case "call.leave":
+      return hasExactKeys(payload, REASON_PAYLOAD_KEYS)
+        && hasStringLength(payload.reason, 1, 100);
+    case "media.state":
+      return hasExactKeys(payload, MEDIA_STATE_PAYLOAD_KEYS)
+        && typeof payload.audioEnabled === "boolean"
+        && typeof payload.videoEnabled === "boolean";
+    default:
+      return false;
+  }
+}
+
 function hasValidParticipantStatusPayload(payload: JsonObject): boolean {
   return hasExactKeys(payload, PARTICIPANT_STATUS_PAYLOAD_KEYS)
     && hasStringLength(payload.displayName, 1, 50)
@@ -441,6 +533,17 @@ export function parseRealtimeEvent(input: unknown): ParseRealtimeEventResult {
     switch (candidate.type) {
       case "caption.final":
         valid = isValidCaptionFinal(candidate);
+        break;
+      case "chat.message":
+        valid = isValidChatMessage(candidate);
+        break;
+      case "call.offer":
+      case "call.answer":
+      case "call.ice-candidate":
+      case "call.decline":
+      case "call.leave":
+      case "media.state":
+        valid = isValidCallSignal(candidate);
         break;
       case "recognition.unknown":
         valid = isValidRecognitionUnknown(candidate);
