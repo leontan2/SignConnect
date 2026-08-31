@@ -1432,6 +1432,48 @@ describe("Meeting recognition product UX", () => {
     expect(within(transcript).getByText("95% confidence")).toBeVisible();
   });
 
+  it("presents consecutive recognized signs as one sentence and finalizes it after a pause", async () => {
+    const harness = makeHarness();
+    const socket = await connectSession(harness);
+    vi.useFakeTimers();
+    try {
+      const signerId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+      const streamId = "33333333-3333-4333-8333-333333333333";
+      const baseTime = Date.parse("2026-01-01T00:00:00.000Z");
+
+      act(() => {
+        for (const [index, text] of ["I", "Need", "Help."].entries()) {
+          socket.message({
+            ...captionFixture,
+            participantId: signerId,
+            captionId: `${index + 1}0000000-0000-4000-8000-000000000000`,
+            streamId,
+            sequence: index + 2,
+            occurredAt: new Date(baseTime + index * 500).toISOString(),
+            payload: {
+              ...captionFixture.payload,
+              text,
+              sourceDisplayName: "Ari"
+            }
+          });
+        }
+      });
+
+      const transcript = screen.getByRole("region", { name: "Live transcript" });
+      expect(within(transcript).getAllByRole("article")).toHaveLength(1);
+      expect(within(transcript).getByText("I need help")).toBeVisible();
+      expect(within(transcript).getByText("Composing sentence…")).toBeVisible();
+
+      act(() => vi.advanceTimersByTime(2_500));
+
+      expect(within(transcript).getByText("I need help.")).toBeVisible();
+      expect(within(transcript).getByText("Sentence complete")).toBeVisible();
+      expect(within(transcript).getAllByRole("article")).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("accepts a forward room sequence after a snapshot without reporting false disorder", async () => {
     const harness = makeHarness();
     const socket = await connectSession(harness);
@@ -1481,7 +1523,7 @@ describe("Meeting recognition product UX", () => {
     expect(screen.getByText("Not connected")).toBeVisible();
     expect(screen.queryByText("Synthetic active gesture")).not.toBeInTheDocument();
     expect(screen.queryByText(/mock integration model/i)).not.toBeInTheDocument();
-    expect(screen.getByLabelText("0 final captions")).toBeVisible();
+    expect(screen.getByLabelText("0 signed sentences")).toBeVisible();
   });
 
   it("surfaces a missing room after resume and returns to a clean room entry", async () => {
@@ -1534,7 +1576,7 @@ describe("Meeting recognition product UX", () => {
     expect(screen.getByRole("region", { name: "Open a shared room" })).toBeVisible();
     expect(screen.queryByText("Synthetic active gesture")).not.toBeInTheDocument();
     expect(screen.queryByText(/mock integration model/i)).not.toBeInTheDocument();
-    expect(screen.getByLabelText("0 final captions")).toBeVisible();
+    expect(screen.getByLabelText("0 signed sentences")).toBeVisible();
     expect(screen.getByRole("button", { name: "Turn camera on" })).toBeEnabled();
     expect(harness.video.srcObject).toBeNull();
     expect(harness.track.stop).toHaveBeenCalledOnce();

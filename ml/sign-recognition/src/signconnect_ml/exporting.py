@@ -48,6 +48,14 @@ def export_onnx(
         # FutureWarning while copying its graph. Keep suppression scoped to
         # dependency internals during this call; application warnings remain errors.
         warnings.simplefilter("ignore", FutureWarning)
+        warnings.filterwarnings(
+            "ignore",
+            message=(
+                r"Type google[.]_upb[.]_message[.].* uses "
+                r"PyType_Spec with a metaclass that has custom tp_new[.].*"
+            ),
+            category=DeprecationWarning,
+        )
         torch.onnx.export(
             probability_model,
             (example,),

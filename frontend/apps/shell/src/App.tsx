@@ -1,5 +1,5 @@
 import React, { Component, lazy, Suspense, useState, type ErrorInfo, type MouseEvent, type ReactNode } from "react";
-import { Captions, CircleHelp, LockKeyhole, Radio, Settings2, Users } from "lucide-react";
+import { Captions, CircleHelp, LockKeyhole, Settings2, Users } from "lucide-react";
 
 const MeetingApp = lazy(() => import("meeting/MeetingApp"));
 
@@ -51,18 +51,18 @@ class RemoteBoundary extends Component<RemoteBoundaryProps, RemoteBoundaryState>
 }
 
 export function App() {
-  const [activeSection, setActiveSection] = useState("camera-workspace");
+  const [activeSection, setActiveSection] = useState("meeting-room");
   const sectionTitles: Record<string, string> = {
-    "camera-workspace": "Recognition Studio",
+    "meeting-room": "Meeting room",
     "live-transcript": "Live Transcript",
     "room-participants": "Room Participants",
     "recognition-status": "Recognition Status",
     "workspace-help": "Recognition Help"
   };
 
-  function navigateToSection(event: MouseEvent<HTMLAnchorElement>, sectionId: string) {
+  function navigateToSection(event: MouseEvent<HTMLAnchorElement>, sectionId: string, activeId = sectionId) {
     event.preventDefault();
-    setActiveSection(sectionId);
+    setActiveSection(activeId);
     window.history.replaceState(null, "", `#${sectionId}`);
     window.requestAnimationFrame(() => {
       const section = document.getElementById(sectionId);
@@ -77,23 +77,13 @@ export function App() {
       <aside className="workspace-rail" aria-label="Application navigation">
         <a
           className="brand-symbol"
-          href="#camera-workspace"
+          href="#meeting-workspace"
           aria-label="SignConnect home"
-          onClick={(event) => navigateToSection(event, "camera-workspace")}
+          onClick={(event) => navigateToSection(event, "meeting-workspace", "meeting-room")}
         >
           <WaveMark />
         </a>
         <nav className="rail-navigation" aria-label="Workspace navigation">
-          <a
-            className={`sc-icon-button rail-action${activeSection === "camera-workspace" ? " active" : ""}`}
-            href="#camera-workspace"
-            aria-current={activeSection === "camera-workspace" ? "location" : undefined}
-            aria-label="Recognition studio"
-            title="Recognition studio"
-            onClick={(event) => navigateToSection(event, "camera-workspace")}
-          >
-            <Radio size={19} strokeWidth={1.7} aria-hidden="true" />
-          </a>
           <a
             className={`sc-icon-button rail-action${activeSection === "live-transcript" ? " active" : ""}`}
             href="#live-transcript"
@@ -155,7 +145,7 @@ export function App() {
 
         <main className="main-content" id="meeting-workspace">
           <RemoteBoundary>
-            <Suspense fallback={<div className="remote-state">Loading recognition studio…</div>}>
+            <Suspense fallback={<div className="remote-state">Loading meeting room…</div>}>
               <MeetingApp />
             </Suspense>
           </RemoteBoundary>

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { networkInterfaces } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -17,6 +18,26 @@ function describeRuntime(host) {
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
   return JSON.parse(result.stdout);
+}
+
+function findActivePrivateIpv4() {
+  const addresses = Object.values(networkInterfaces())
+    .flatMap((entries) => entries ?? [])
+    .filter((entry) => entry.family === "IPv4" && !entry.internal)
+    .map((entry) => entry.address);
+  const isPreferredPrivateAddress = (address) => {
+    const octets = address.split(".").map(Number);
+    return octets[0] === 10
+      || (octets[0] === 192 && octets[1] === 168);
+  };
+  const privateAddress = addresses.find(isPreferredPrivateAddress)
+    ?? addresses.find((address) => {
+      const octets = address.split(".").map(Number);
+      return octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31;
+    });
+
+  assert.ok(privateAddress, "An active private IPv4 address is required for the LAN launcher test.");
+  return privateAddress;
 }
 
 test("LAN runtime exposes one HTTP origin and keeps application services behind its gateway", () => {
@@ -140,11 +161,12 @@ test("Webpack LAN mode serves one HTTP gateway and compiles same-origin browser 
 test("LAN launcher dry run reports the private URL without starting services", {
   skip: process.platform !== "win32"
 }, () => {
+  const lanHost = findActivePrivateIpv4();
   const result = spawnSync("powershell.exe", [
     "-NoProfile",
     "-ExecutionPolicy", "Bypass",
     "-File", launcherScript,
-    "-LanHost", "192.168.1.6",
+    "-LanHost", lanHost,
     "-DryRun"
   ], {
     cwd: repositoryRoot,
@@ -153,9 +175,9 @@ test("LAN launcher dry run reports the private URL without starting services", {
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const runtime = JSON.parse(result.stdout);
-  assert.equal(runtime.url, "http://192.168.1.6:3000/");
+  assert.equal(runtime.url, `http://${lanHost}:3000/`);
   assert.deepEqual(runtime.exposedServices, [
-    { name: "HTTP gateway", address: "192.168.1.6", port: 3000 }
+    { name: "HTTP gateway", address: lanHost, port: 3000 }
   ]);
   assert.equal(runtime.clientBrowser.secureOriginOverrideRequired, true);
   assert.equal(runtime.previewToolsEnabled, false);

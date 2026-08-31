@@ -183,4 +183,47 @@ test.describe("Accessible typed and video conversation", () => {
       await host.context.close();
     }
   });
+
+  test("shows the same completed signed sentence to both meeting participants", async ({ browser }) => {
+    const signer = await newParticipant(browser);
+    const reader = await newParticipant(browser);
+    try {
+      const roomCode = await createRoom(signer.page, "Host Signer");
+      await joinRoom(reader.page, roomCode, "Guest Reader");
+      await expect(signer.page.getByLabel("People in this room").getByRole("listitem")).toHaveCount(2);
+      await enableCamera(signer.page);
+      await enableCamera(reader.page);
+
+      await signer.page.getByRole("button", { name: "Start call" }).click();
+      await expect(reader.page.getByRole("button", { name: "Accept call" })).toBeVisible();
+      await reader.page.getByRole("button", { name: "Accept call" }).click();
+      await expect(signer.page.getByLabel("Call status")).toHaveText("Connected", { timeout: 20_000 });
+      await expect(reader.page.getByLabel("Call status")).toHaveText("Connected", { timeout: 20_000 });
+
+      await signer.page.getByRole("button", { name: "Start recognition" }).click();
+
+      const signerSentence = signer.page.locator("article.sign-entry");
+      const readerSentence = reader.page.locator("article.sign-entry");
+      await expect(signerSentence).toHaveCount(1, { timeout: 20_000 });
+      await expect(readerSentence).toHaveCount(1, { timeout: 20_000 });
+      await expect(signerSentence).toContainText("I need help.", { timeout: 20_000 });
+      await expect(readerSentence).toContainText("I need help.", { timeout: 20_000 });
+      await expect(signerSentence).toContainText("Sentence complete");
+      await expect(readerSentence).toContainText("Sentence complete");
+      await expect(signerSentence).toContainText("Host Signer (you) signed");
+      await expect(readerSentence).toContainText("Host Signer signed");
+      await expect(signer.page.getByText("Need", { exact: true })).toHaveCount(0);
+      await expect(reader.page.getByText("Need", { exact: true })).toHaveCount(0);
+
+      await reader.page.getByLabel("Message the room").fill("I am here to help.");
+      await reader.page.getByRole("button", { name: "Send message" }).click();
+      await expect(conversationEntries(signer.page)).toHaveCount(2);
+      await expect(conversationEntries(reader.page)).toHaveCount(2);
+      await expect(signer.page.getByText("I am here to help.", { exact: true })).toBeVisible();
+      await expect(reader.page.getByText("I am here to help.", { exact: true })).toBeVisible();
+    } finally {
+      await reader.context.close();
+      await signer.context.close();
+    }
+  });
 });

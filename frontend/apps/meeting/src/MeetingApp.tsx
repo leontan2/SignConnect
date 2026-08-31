@@ -71,6 +71,13 @@ import {
   type SpeechRecognitionController,
   type SpeechRecognitionFactory
 } from "./speechTranscript";
+import {
+  SIGNED_SENTENCE_PAUSE_MS,
+  appendCaptionToSignedSentences,
+  finalizeAllSignedSentences,
+  finalizeSignedSentence,
+  type SignedSentence
+} from "./signedSentence";
 import { ToastViewport, useToastQueue } from "./ToastViewport";
 import "./meeting.css";
 
@@ -616,6 +623,7 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
     const [signerOwnership, setSignerOwnership] = useState<SignerOwnershipState>(INITIAL_SIGNER_STATE);
     const [liveAnnouncement, setLiveAnnouncement] = useState("");
     const [product, dispatch] = useReducer(productReducer, INITIAL_PRODUCT_STATE);
+    const [signedSentences, setSignedSentences] = useState<SignedSentence[]>([]);
     const [chatMessages, setChatMessages] = useState<ChatMessageEvent[]>([]);
     const [chatDraft, setChatDraft] = useState("");
     const [chatFeedback, setChatFeedback] = useState<string | null>(null);
@@ -684,6 +692,8 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
     const stopSpokenTranscriptRef = useRef<() => void>(() => undefined);
     const spokenEntrySequenceRef = useRef(0);
     const productRef = useRef(product);
+    const signedSentencesRef = useRef<SignedSentence[]>([]);
+    const signedSentenceTimerRef = useRef<number | null>(null);
     const transcriptListRef = useRef<HTMLDivElement>(null);
     const transcriptWasNearBottomRef = useRef(true);
     const previousTranscriptCountRef = useRef(0);
@@ -704,6 +714,62 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       setSpeechFeedback(null);
     }, []);
     stopSpokenTranscriptRef.current = stopSpokenTranscript;
+
+    const cancelSignedSentenceTimer = useCallback(() => {
+      if (signedSentenceTimerRef.current === null) return;
+      window.clearTimeout(signedSentenceTimerRef.current);
+      signedSentenceTimerRef.current = null;
+    }, []);
+
+    const replaceSignedSentences = useCallback((sentences: SignedSentence[]) => {
+      signedSentencesRef.current = sentences;
+      setSignedSentences(sentences);
+    }, []);
+
+    const announceCompletedSentences = useCallback((
+      previous: SignedSentence[],
+      next: SignedSentence[]
+    ) => {
+      for (const sentence of next) {
+        const prior = previous.find((candidate) => candidate.id === sentence.id);
+        if (sentence.status === "final" && prior?.status === "partial") {
+          announce(`${sentence.sourceDisplayName} signed ${sentence.text}`);
+        }
+      }
+    }, [announce]);
+
+    const finalizePendingSignedSentences = useCallback((finalizedAtMs = Date.now()) => {
+      cancelSignedSentenceTimer();
+      const previous = signedSentencesRef.current;
+      const next = finalizeAllSignedSentences(previous, finalizedAtMs);
+      if (next.every((sentence, index) => sentence === previous[index])) return;
+      replaceSignedSentences(next);
+      announceCompletedSentences(previous, next);
+    }, [announceCompletedSentences, cancelSignedSentenceTimer, replaceSignedSentences]);
+
+    const acceptSignedCaption = useCallback((caption: Extract<CaptionEvent, { type: "caption.final" }>) => {
+      const previous = signedSentencesRef.current;
+      const next = appendCaptionToSignedSentences(previous, caption);
+      if (next === previous) return;
+      replaceSignedSentences(next);
+      announceCompletedSentences(previous, next);
+      cancelSignedSentenceTimer();
+      const pending = [...next].reverse().find((sentence) => sentence.status === "partial");
+      if (!pending) return;
+      signedSentenceTimerRef.current = window.setTimeout(() => {
+        const beforeFinalization = signedSentencesRef.current;
+        const finalized = finalizeSignedSentence(beforeFinalization, pending.id);
+        replaceSignedSentences(finalized);
+        announceCompletedSentences(beforeFinalization, finalized);
+        signedSentenceTimerRef.current = null;
+      }, SIGNED_SENTENCE_PAUSE_MS);
+    }, [announceCompletedSentences, cancelSignedSentenceTimer, replaceSignedSentences]);
+
+    const resetSignedSentences = useCallback(() => {
+      cancelSignedSentenceTimer();
+      signedSentencesRef.current = [];
+      setSignedSentences([]);
+    }, [cancelSignedSentenceTimer]);
 
     const acceptServerEvent = useCallback((event: ServerRealtimeEvent, generation: number) => {
       if (roomGenerationRef.current !== generation) {
@@ -796,6 +862,7 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
         setDemoSpokenEntries([]);
         setSpokenEntries([]);
         setChatMessages([]);
+        resetSignedSentences();
         setChatDraft("");
         setChatFeedback(null);
         setIncomingCall(null);
@@ -848,6 +915,7 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
         return;
       }
       if (event.type === "caption.final" && event.participantId !== undefined) {
+        acceptSignedCaption(event);
         dispatch({ type: "server-event", event });
         return;
       }
@@ -867,8 +935,12 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
         && event.streamId === productRef.current.pendingRecognitionStreamId) {
         settleRecognitionGestureRef.current(event.streamId);
       }
+      if (event.type === "caption.final"
+        && event.streamId === productRef.current.pendingRecognitionStreamId) {
+        acceptSignedCaption(event);
+      }
       dispatch({ type: "server-event", event });
-    }, []);
+    }, [acceptSignedCaption, resetSignedSentences]);
 
     const realtime = useRealtimeSession({
       socketFactory: composition.socketFactory,
@@ -1058,6 +1130,7 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       onStreamChange: (streamId) => {
         const previousStreamId = recognitionStreamRef.current;
         if (streamId === null && previousStreamId !== null) {
+          finalizePendingSignedSentences();
           recentlyStoppedStreamRef.current = previousStreamId;
           dispatch({ type: "recognition-ended", streamId: previousStreamId });
         } else if (streamId !== null) {
@@ -1281,10 +1354,11 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       return () => {
         mountedRef.current = false;
         meetingRequestGenerationRef.current += 1;
+        cancelSignedSentenceTimer();
         stopSpokenTranscript();
         stopMedia();
       };
-    }, [stopMedia, stopSpokenTranscript]);
+    }, [cancelSignedSentenceTimer, stopMedia, stopSpokenTranscript]);
 
     async function toggleCamera() {
       if (cameraState === "on") {
@@ -1368,6 +1442,7 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
 
     function activateMeetingSession(session: Awaited<ReturnType<typeof createMeeting>>) {
       dispatch({ type: "reset-session" });
+      resetSignedSentences();
       stopCall("room_changed", false);
       stopSpokenTranscript();
       setSpokenEntries([]);
@@ -1531,6 +1606,7 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
 
     function clearTranscript() {
       dispatch({ type: "clear-transcript" });
+      resetSignedSentences();
       setSpokenEntries([]);
       setDemoSpokenEntries([]);
       setChatMessages([]);
@@ -1753,14 +1829,18 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
     const microphoneDevices = mediaDevices.filter((device) => device.kind === "audioinput");
     const speakerDevices = mediaDevices.filter((device) => device.kind === "audiooutput");
     const transcriptEntries = useMemo(() => [
-      ...product.captions.map((caption) => ({ kind: "sign" as const, occurredAt: caption.occurredAt, caption })),
+      ...signedSentences.map((sentence) => ({
+        kind: "sign" as const,
+        occurredAt: sentence.startedAt,
+        sentence
+      })),
       ...chatMessages.map((message) => ({ kind: "chat" as const, occurredAt: message.occurredAt, message })),
       ...spokenEntries.map((entry) => ({ kind: "speech" as const, occurredAt: entry.occurredAt, entry })),
       ...demoSpokenEntries.map((entry) => ({ kind: "speech" as const, occurredAt: entry.occurredAt, entry }))
     ].sort((left, right) => left.occurredAt.localeCompare(right.occurredAt)), [
       chatMessages,
       demoSpokenEntries,
-      product.captions,
+      signedSentences,
       spokenEntries
     ]);
     const scrollTranscriptToLatest = useCallback((focusHistory = false) => {
@@ -1803,7 +1883,7 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
       const latestEntry = transcriptEntries[currentCount - 1];
       const isCurrentParticipantEntry = currentParticipant !== null && (
         (latestEntry.kind === "chat" && latestEntry.message.participantId === currentParticipant.id)
-        || (latestEntry.kind === "sign" && latestEntry.caption.participantId === currentParticipant.id)
+        || (latestEntry.kind === "sign" && latestEntry.sentence.participantId === currentParticipant.id)
         || (latestEntry.kind === "speech"
           && !latestEntry.entry.simulated
           && latestEntry.entry.sourceDisplayName === currentParticipant.displayName)
@@ -1828,12 +1908,12 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
               : "Spoken transcript is off";
 
     return (
-      <section className="studio-workspace" aria-labelledby="meeting-title">
+      <section className="meeting-workspace-surface" aria-labelledby="meeting-title">
         <ToastViewport toasts={toasts} onDismiss={dismissToast} />
-        <header className="studio-header">
-          <div className="studio-heading">
-            <span>Live workspace</span>
-            <h1 id="meeting-title">Recognition studio</h1>
+        <header className="meeting-header">
+          <div className="meeting-heading">
+            <span>Live conversation</span>
+            <h1 id="meeting-title">Meeting room</h1>
           </div>
 
           <div className="session-cluster">
@@ -2211,7 +2291,7 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
           </section>
         )}
 
-        <div className="studio-layout">
+        <div className="meeting-layout">
           <section className="capture-console" id="camera-workspace" tabIndex={-1} aria-label="Camera workspace">
             <header className="console-header">
               <div>
@@ -2394,12 +2474,12 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
                 <Captions size={17} aria-hidden="true" />
                 <div>
                   <h2>Live transcript</h2>
-                  <span>Confirmed output</span>
+                  <span>Shared conversation</span>
                 </div>
               </div>
               <div className="transcript-header-actions">
                 <span className="transcript-count" aria-label={`${transcriptEntries.length} transcript entries`}>
-                  <span aria-label={`${product.captions.length} final captions`}>{transcriptEntries.length}</span>
+                  <span aria-label={`${signedSentences.length} signed sentences`}>{transcriptEntries.length}</span>
                 </span>
                 <button
                   type="button"
@@ -2469,7 +2549,7 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
                 <div className="caption-empty">
                   <span className="caption-empty-icon"><Captions size={21} strokeWidth={1.5} aria-hidden="true" /></span>
                   <strong>No transcript entries yet</strong>
-                  <span>Confirmed signs, room messages, and opt-in spoken notes will appear here with their speaker and time.</span>
+                  <span>Signed sentences, room messages, and opt-in spoken notes will appear here with their speaker and time.</span>
                 </div>
               ) : transcriptEntries.map((transcriptEntry) => {
                 if (transcriptEntry.kind === "chat") {
@@ -2536,19 +2616,22 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
                   );
                 }
 
-                const { caption } = transcriptEntry;
+                const { sentence } = transcriptEntry;
                 const isCurrentParticipant = currentParticipant !== null
-                  && caption.participantId === currentParticipant.id;
-                const sourceName = caption.payload.sourceDisplayName
-                  ?? (isCurrentParticipant ? currentParticipant?.displayName ?? "You" : "Participant");
+                  && sentence.participantId === currentParticipant.id;
+                const sourceName = sentence.sourceDisplayName
+                  || (isCurrentParticipant ? currentParticipant?.displayName ?? "You" : "Participant");
                 const sourceLabel = captionSourceLabel(sourceName, isCurrentParticipant);
-                const signedAt = captionOccurredAt(caption.occurredAt);
+                const signedAt = captionOccurredAt(sentence.startedAt);
                 return (
                   <article
-                    className="caption-entry sign-entry"
-                    key={caption.captionId ?? `${caption.streamId}-${caption.sequence}`}
-                    aria-label={`${sourceLabel} signed ${caption.payload.text} at ${signedAt}`}
-                    data-participant-tone={participantTone(caption.participantId ?? sourceName, isCurrentParticipant)}
+                    className={sentence.status === "partial"
+                      ? "caption-entry sign-entry is-partial"
+                      : "caption-entry sign-entry"}
+                    key={sentence.id}
+                    aria-label={`${sourceLabel} signed ${sentence.text} at ${signedAt}`}
+                    aria-busy={sentence.status === "partial"}
+                    data-participant-tone={participantTone(sentence.participantId, isCurrentParticipant)}
                   >
                     <div className="caption-meta">
                       <span className="caption-source">
@@ -2556,15 +2639,16 @@ export function createMeetingApp(composition: MeetingAppComposition = {}): React
                         <Hand size={13} aria-hidden="true" />
                         {sourceLabel} signed
                       </span>
-                      <time dateTime={caption.occurredAt} title={new Date(caption.occurredAt).toLocaleString()}>
+                      <time dateTime={sentence.startedAt} title={new Date(sentence.startedAt).toLocaleString()}>
                         at {signedAt}
                       </time>
                     </div>
-                    <p>{caption.payload.text}</p>
+                    <p>{sentence.text}</p>
                     <div className="caption-details">
-                      <span className="confidence"><Check size={11} aria-hidden="true" /> {Math.round(caption.payload.confidence * 100)}% confidence</span>
-                      <span>{caption.payload.modelVersion}</span>
-                      {caption.payload.mockModel && <span>Mock model</span>}
+                      <span>{sentence.status === "partial" ? "Composing sentence…" : "Sentence complete"}</span>
+                      <span className="confidence"><Check size={11} aria-hidden="true" /> {Math.round(sentence.confidence * 100)}% confidence</span>
+                      <span>{sentence.modelVersions.join(", ")}</span>
+                      {sentence.mockModel && <span>Mock model</span>}
                     </div>
                   </article>
                 );

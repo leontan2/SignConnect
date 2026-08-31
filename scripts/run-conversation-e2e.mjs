@@ -74,6 +74,7 @@ const apiServer = createServer(async (request, response) => {
           status: "READY",
           createdAt: new Date().toISOString()
         },
+        activeSignerId: null,
         messageIds: new Set(),
         sequence: 0,
         signalIds: new Set()
@@ -135,7 +136,7 @@ realtimeServer.on("connection", (socket, request) => {
         payload: {
           displayName: session.participant.displayName,
           role: session.participant.role,
-          activeSigner: false
+          activeSigner: room.activeSignerId === session.participant.id
         }
       }));
       socket.send(serverEvent(room, {
@@ -145,7 +146,7 @@ realtimeServer.on("connection", (socket, request) => {
             participantId: participant.id,
             displayName: participant.displayName,
             role: participant.role,
-            activeSigner: false
+            activeSigner: room.activeSignerId === participant.id
           }))
         }
       }));
@@ -155,7 +156,7 @@ realtimeServer.on("connection", (socket, request) => {
         payload: {
           displayName: session.participant.displayName,
           role: session.participant.role,
-          activeSigner: false
+          activeSigner: room.activeSignerId === session.participant.id
         }
       });
       return;
@@ -172,6 +173,73 @@ realtimeServer.on("connection", (socket, request) => {
         payload: {
           text: event.text,
           sourceDisplayName: connectedSession.participant.displayName
+        }
+      });
+      return;
+    }
+
+    if (event.type === "signer.request") {
+      if (room.activeSignerId && room.activeSignerId !== connectedSession.participant.id) return;
+      room.activeSignerId = connectedSession.participant.id;
+      socket.send(serverEvent(room, {
+        type: "signer.granted",
+        participantId: connectedSession.participant.id,
+        payload: { requestId: event.requestId, streamId: event.streamId }
+      }));
+      broadcast(room, {
+        type: "participant.updated",
+        participantId: connectedSession.participant.id,
+        payload: {
+          displayName: connectedSession.participant.displayName,
+          role: connectedSession.participant.role,
+          activeSigner: true
+        }
+      });
+      return;
+    }
+
+    if (event.type === "recognition.control" && event.action === "start") {
+      if (room.activeSignerId !== connectedSession.participant.id) return;
+      socket.send(serverEvent(room, {
+        type: "recognition.status",
+        streamId: event.streamId,
+        payload: {
+          state: "READY",
+          reason: "STARTED",
+          message: "Automated conversation fixture is ready.",
+          modelVersion: "conversation-fixture-v1",
+          mockModel: true
+        }
+      }));
+      for (const [index, text] of ["I", "Need", "Help."].entries()) {
+        broadcast(room, {
+          type: "caption.final",
+          participantId: connectedSession.participant.id,
+          captionId: randomUUID(),
+          streamId: event.streamId,
+          payload: {
+            labelId: `SENTENCE_PART_${index + 1}`,
+            text,
+            confidence: 0.94 - index * 0.01,
+            modelVersion: "conversation-fixture-v1",
+            inferenceLatencyMs: 20 + index,
+            mockModel: true,
+            sourceDisplayName: connectedSession.participant.displayName
+          }
+        });
+      }
+      return;
+    }
+
+    if (event.type === "recognition.control" && event.action === "stop") {
+      room.activeSignerId = null;
+      broadcast(room, {
+        type: "participant.updated",
+        participantId: connectedSession.participant.id,
+        payload: {
+          displayName: connectedSession.participant.displayName,
+          role: connectedSession.participant.role,
+          activeSigner: false
         }
       });
       return;
@@ -196,6 +264,7 @@ realtimeServer.on("connection", (socket, request) => {
 
   socket.on("close", () => {
     if (!connectedSession || !room.clients.delete(connectedSession.participant.id)) return;
+    if (room.activeSignerId === connectedSession.participant.id) room.activeSignerId = null;
     broadcast(room, {
       type: "participant.left",
       participantId: connectedSession.participant.id,

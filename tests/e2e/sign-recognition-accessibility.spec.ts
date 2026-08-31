@@ -19,7 +19,9 @@ const CANONICAL_CAMERA_STATES = [
 
 async function openWorkspace(page: Page): Promise<void> {
   await page.goto("/");
-  await expect(page.getByRole("heading", { level: 1, name: "Recognition studio" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Meeting room" })).toBeVisible();
+  await expect(page.getByRole("link", { name: /recognition studio/i })).toHaveCount(0);
+  await expect(page.getByText(/recognition studio/i)).toHaveCount(0);
   await expect(page.getByRole("note", { name: "Automated fixture capture notice" })).toBeVisible();
 }
 
