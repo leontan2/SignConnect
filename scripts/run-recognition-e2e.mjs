@@ -561,12 +561,20 @@ function backendJar(moduleName) {
   return path.join(backendRoot, moduleName, "target", `${moduleName}-0.1.0-SNAPSHOT.jar`);
 }
 
+function javaRuntimeArguments() {
+  if (process.platform !== "win32") return ["-Djava.awt.headless=true"];
+  return [
+    "-Djdk.net.unixdomain.tmpdir=C:\\jtmp",
+    "-Djava.awt.headless=true"
+  ];
+}
+
 function backendDefinition(name, simulatorEnabled, approvedConfiguration = null) {
   const executable = javaExecutable();
   if (name === "meeting") {
     return {
       command: executable,
-      args: ["-Djava.awt.headless=true", "-jar", backendJar("meeting-service"), "--server.address=127.0.0.1", "--server.port=8081"],
+      args: [...javaRuntimeArguments(), "-jar", backendJar("meeting-service"), "--server.address=127.0.0.1", "--server.port=8081"],
       env: sanitizedEnvironment(),
       health: "http://127.0.0.1:8081/actuator/health",
       port: 8081
@@ -574,7 +582,7 @@ function backendDefinition(name, simulatorEnabled, approvedConfiguration = null)
   }
   if (name === "inference") {
     const args = [
-      "-Djava.awt.headless=true",
+      ...javaRuntimeArguments(),
       "-jar",
       backendJar("sign-inference-service"),
       "--server.address=127.0.0.1",
@@ -596,7 +604,7 @@ function backendDefinition(name, simulatorEnabled, approvedConfiguration = null)
   }
   if (name === "realtime") {
     const args = [
-      "-Djava.awt.headless=true",
+      ...javaRuntimeArguments(),
       "-jar",
       backendJar("realtime-service"),
       "--server.address=127.0.0.1",
@@ -1119,6 +1127,20 @@ async function runLifecycleSelfTest() {
         "the default E2E stack must retain its synthetic local profile"
       );
       assert.equal(defaultInference.env.SIGN_MODEL_RESOURCE, undefined);
+
+      if (process.platform === "win32") {
+        const defaultMeeting = backendDefinition("meeting", false, null);
+        assert.equal(
+          defaultMeeting.args.includes("-Djdk.net.unixdomain.tmpdir=C:\\jtmp"),
+          true,
+          "Windows executable jars must use the short loopback-socket directory"
+        );
+        assert.equal(
+          defaultMeeting.args.some((argument) => argument.startsWith("-Djava.io.tmpdir=")),
+          false,
+          "Tomcat temporary files must retain the process default writable directory"
+        );
+      }
 
       const defaultFrontend = frontendDefinition("meeting-frontend", false, null);
       assert.equal(defaultFrontend.env.RECOGNITION_E2E_FIXTURE_ENABLED, "true");

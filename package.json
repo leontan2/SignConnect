@@ -14,6 +14,7 @@
     "build": "npm run build --workspace @signconnect/meeting && npm run build --workspace @signconnect/shell",
     "test": "npm run test --workspaces --if-present",
     "test:contracts:training": "node contracts/sign-recognition-training/v1/validate-fixtures.mjs",
+    "test:lan": "node --test scripts/lan-runtime.test.mjs",
     "test:ml": "uv run --project ml/sign-recognition --extra test --frozen pytest -W error",
     "test:e2e": "node scripts/run-recognition-e2e.mjs --project=chromium",
     "test:e2e:conversation": "node scripts/run-conversation-e2e.mjs",
@@ -25,7 +26,7 @@
     "test:release:runner:self-test": "node --test scripts/run-release-verification.test.mjs",
     "verify:release": "node scripts/run-release-verification.mjs",
     "typecheck": "tsc --noEmit -p frontend/apps/meeting/tsconfig.json && tsc --noEmit -p frontend/apps/shell/tsconfig.json",
-    "check": "npm run typecheck && npm test && npm run test:contracts:training && npm run test:ml",
+    "check": "npm run typecheck && npm test && npm run test:contracts:training && npm run test:lan && npm run test:ml",
     "check:staged": "node scripts/check-staged-files.mjs",
     "check:push": "npm run check && npm run build"
   },

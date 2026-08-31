@@ -50,6 +50,28 @@ Open `http://127.0.0.1:3000`, start a session, turn on the camera, start recogni
 
 The setup script pins and verifies the upstream source, checkpoint, and vocabulary hashes before exporting `runtime-models/asl-research/models/openhands-wlasl-slgcn-core-v2.onnx`. Downloads and generated runtime models are ignored by Git.
 
+### Test from another Windows laptop on the same network
+
+This development-only mode uses direct local-network HTTP without a certificate or external networking service. The host exposes only the shell gateway on TCP `3000`; the meeting frontend, APIs, and inference service remain bound to loopback and are reached through that gateway. Dummy-participant preview controls are disabled.
+
+On the host PC, run:
+
+```powershell
+.\scripts\start-lan-asl-research.ps1
+```
+
+The first run requests administrator approval to create the `SignConnect LAN HTTP` Windows Firewall rule. The rule is restricted to the detected local subnet and TCP `3000`; it does not expose the backend ports. The launcher detects and prints the host address, currently `http://192.168.1.6:3000/` on this network.
+
+Ordinary browsers do not grant camera or microphone access to an HTTP page reached by private IP. Copy `scripts\open-signconnect-lan-client.ps1` to the other Windows laptop, then run it with the address printed by the host launcher:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\open-signconnect-lan-client.ps1 -ServerAddress 192.168.1.6
+```
+
+The client helper opens installed Microsoft Edge or Google Chrome in a separate SignConnect-only profile and applies the secure-origin development override only to that exact URL. It does not alter the normal browser profile. Allow camera and microphone access in that window, then join the same room from both laptops.
+
+Use this mode only on a network you trust. Anyone on the permitted subnet can reach the meeting entry page while the launcher is running. Stop the services with `scripts\stop-local-asl-research.ps1`; the firewall rule can be removed later from an Administrator PowerShell with `Remove-NetFirewallRule -DisplayName 'SignConnect LAN HTTP'`.
+
 ## Run locally
 
 Prerequisites: Node.js 20+, npm 10+, a compatible JDK 21, Python 3.10-3.12, and [uv](https://docs.astral.sh/uv/). Install JavaScript dependencies with `npm install` and the locked model-development environment with `uv sync --project ml/sign-recognition --extra test`. On Windows, use a process-scoped JDK/runtime compatible with ONNX Runtime; do not replace installed JDK or System32 DLLs.

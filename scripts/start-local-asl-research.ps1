@@ -1,6 +1,9 @@
 [CmdletBinding()]
 param(
-    [string]$JavaHome = ''
+    [string]$JavaHome = '',
+    [ValidateSet('Local', 'Lan')]
+    [string]$AccessMode = 'Local',
+    [string]$LanHost = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -10,6 +13,11 @@ $runRoot = Join-Path $workspaceRoot '.run\asl-research'
 $modelPath = Join-Path $workspaceRoot 'runtime-models\asl-research\models\openhands-wlasl-slgcn-core-v2.onnx'
 $metadataPath = "$modelPath.metadata.json"
 $requiredPorts = 3000, 3001, 8081, 8082, 8083
+$lanMode = $AccessMode -eq 'Lan'
+
+if ($lanMode -and -not $LanHost) {
+    throw 'LAN mode requires LanHost.'
+}
 
 if (-not (Test-Path -LiteralPath $modelPath -PathType Leaf) -or
     -not (Test-Path -LiteralPath $metadataPath -PathType Leaf)) {
@@ -84,10 +92,21 @@ try {
     Start-LoggedProcess 'realtime-service' 'cmd.exe' `
         @('/d', '/s', '/c', 'mvnw.cmd -pl realtime-service spring-boot:run') $backendRoot
 
-    $env:MEETING_API_URL = 'http://127.0.0.1:8081'
-    $env:REALTIME_WS_URL = 'ws://127.0.0.1:8082'
-    $env:MEETING_REMOTE_URL = 'http://127.0.0.1:3001/remoteEntry.js'
-    $env:ROOM_PREVIEW_TOOLS_ENABLED = 'true'
+    if ($lanMode) {
+        $origin = "http://${LanHost}:3000"
+        $env:SIGNCONNECT_LAN_MODE = 'true'
+        $env:SIGNCONNECT_LAN_HOST = $LanHost
+        $env:MEETING_API_URL = $origin
+        $env:REALTIME_WS_URL = "ws://${LanHost}:3000"
+        $env:MEETING_REMOTE_URL = "$origin/meeting-assets/remoteEntry.js"
+        $env:ROOM_PREVIEW_TOOLS_ENABLED = 'false'
+    } else {
+        $env:SIGNCONNECT_LAN_MODE = 'false'
+        $env:MEETING_API_URL = 'http://127.0.0.1:8081'
+        $env:REALTIME_WS_URL = 'ws://127.0.0.1:8082'
+        $env:MEETING_REMOTE_URL = 'http://127.0.0.1:3001/remoteEntry.js'
+        $env:ROOM_PREVIEW_TOOLS_ENABLED = 'true'
+    }
     Start-LoggedProcess 'frontend' 'cmd.exe' @('/d', '/s', '/c', 'npm run dev') $workspaceRoot
 
     $started | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $runRoot 'processes.json') -Encoding UTF8
@@ -95,7 +114,7 @@ try {
     Wait-Endpoint 'Inference model' 'http://127.0.0.1:8083/actuator/health/readiness'
     Wait-Endpoint 'Realtime service' 'http://127.0.0.1:8082/actuator/health'
     Wait-Endpoint 'Meeting frontend' 'http://127.0.0.1:3001/remoteEntry.js'
-    Wait-Endpoint 'SignConnect shell' 'http://127.0.0.1:3000/'
+    Wait-Endpoint 'SignConnect shell' $(if ($lanMode) { "http://${LanHost}:3000/" } else { 'http://127.0.0.1:3000/' })
 } catch {
     foreach ($entry in $started) {
         taskkill /PID $entry.pid /T /F 2>$null | Out-Null
@@ -103,5 +122,9 @@ try {
     throw
 }
 
-Write-Host 'SignConnect is ready at http://127.0.0.1:3000/'
+if ($lanMode) {
+    Write-Host "SignConnect LAN is ready at http://${LanHost}:3000/"
+} else {
+    Write-Host 'SignConnect is ready at http://127.0.0.1:3000/'
+}
 Write-Host 'Use .\scripts\stop-local-asl-research.ps1 to stop all started processes.'

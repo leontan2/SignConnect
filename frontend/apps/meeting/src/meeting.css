@@ -1291,6 +1291,29 @@
     min-width: 0;
   }
 
+  .room-identity,
+  .participant-summary,
+  .participant-list,
+  .room-preview-controls {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .room-identity {
+    padding-right: 0;
+    padding-bottom: 8px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .participant-list,
+  .room-preview-controls,
+  .caption-meta {
+    flex-wrap: wrap;
+  }
+
+  .room-preview-controls { margin-left: 0; }
+
   .console-controls {
     grid-template-columns: 1fr;
   }
@@ -1324,6 +1347,7 @@
   }
   .system-health dl { grid-template-columns: 1fr; }
   .message-composer-row .sc-button { width: 100%; }
+  .room-preview-controls > span { white-space: normal; }
   .caption-entry p,
   .caption-details { margin-left: 0; }
 }
