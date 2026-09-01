@@ -1190,6 +1190,7 @@ Use this section to record decisions while working through the roadmap.
 | 2026-09-01 | Planning | Keep typed fallback available during the meeting | Recognition uncertainty must not strand either participant or terminate the exchange |
 | 2026-09-01 | Milestone 4 | Implement deterministic client-side sentence composition over public finalized sign captions | Removes the word-by-word transcript experience immediately while preserving provenance and avoiding unsupported continuous-SgSL claims |
 | 2026-09-01 | Milestone 4 | Finalize a sentence after 2.5 seconds, recognition stop, signer/stream change, or 12 parts | Provides predictable contribution boundaries and prevents unbounded or cross-speaker text merging |
+| 2026-09-01 | Milestone 4 | Keep targeted call signals outside public room ordering and carry only the latest public baseline | Prevents private WebRTC negotiation from creating sequence gaps for participants that never receive the targeted signal |
 
 ## Per-milestone completion record
 
@@ -1258,7 +1259,7 @@ Copy this template when completing a milestone:
 - Pull request or commit: Pending
 - Implementation date: 2026-09-01
 - Demonstration performed: Two isolated Chromium participants created and joined one room, established an explicitly accepted peer call, received the same composed “I need help.” signed sentence, and retained the shared typed-message reply path. The user-facing Recognition Studio destination remained removed.
-- Automated checks run: Signed-sentence unit tests, the complete 141-test frontend suite, TypeScript checks, production frontend builds, the three-scenario two-browser conversation suite covering transcript behavior, WebRTC/media synchronization/accessibility and sentence convergence, plus a running Edge check at desktop and effective-200%-zoom widths with reduced motion and no horizontal overflow or console errors.
+- Automated checks run: Signed-sentence and canonical realtime-room contract tests, the complete 143-test frontend suite, all 69 realtime-service tests, TypeScript checks, production frontend builds, the three-scenario two-browser conversation suite covering transcript behavior, WebRTC/media synchronization/accessibility and sentence convergence, plus a running Edge check at desktop and effective-200%-zoom widths with reduced motion and no horizontal overflow or console errors.
 - Known limitations: Sentence text is deterministically assembled from isolated supported-sign captions; it is not continuous SgSL recognition or translation. TURN-backed networks, a production-qualified SgSL model, and final two-physical-device acceptance remain open.
 - Follow-up work: Complete separate-device acceptance, then clear Milestone 5 governance/data gates and the Milestone 6 continuous-SgSL architecture/research gates.
 - Acceptance gate: PARTIAL — browser implementation and automated two-browser proof pass; separate physical-device acceptance remains open.

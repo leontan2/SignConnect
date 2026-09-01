@@ -52,7 +52,8 @@ public record CallSignalEvent(
         JsonNode line = value.get("sdpMLineIndex");
         JsonNode fragment = value.get("usernameFragment");
         return (mid == null || mid.isNull() || validText(mid, 0, 256))
-                && (line == null || line.isNull() || (line.canConvertToInt() && line.intValue() >= 0))
+                && (line == null || line.isNull()
+                        || (line.isIntegralNumber() && line.canConvertToInt() && line.intValue() >= 0))
                 && (fragment == null || fragment.isNull() || validText(fragment, 0, 256));
     }
 

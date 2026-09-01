@@ -324,7 +324,7 @@ public class InMemoryRoomRegistry implements RoomRegistry {
                     signal.targetParticipantId(),
                     signal.signalId(),
                     signal.callId(),
-                    room.nextSequence++,
+                    room.nextSequence - 1,
                     signal.payload(),
                     clock.instant())));
             return true;

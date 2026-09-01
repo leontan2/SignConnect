@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.signconnect.dev/realtime-room/v1/server-event.schema.json",
   "title": "SignConnect room server event v1",
-  "description": "Ordered public broadcasts consume a room-wide sequence. Join handshakes, snapshots, denials, and errors carry a baseline or private sequence and do not consume public room order.",
+  "description": "Ordered public broadcasts consume a room-wide sequence. Join handshakes, snapshots, denials, target-private call signals, and errors carry a baseline or private sequence and do not consume public room order.",
   "oneOf": [
     { "$ref": "#/$defs/roomJoined" },
     { "$ref": "#/$defs/roomSnapshot" },
@@ -12,6 +12,8 @@
     { "$ref": "#/$defs/signerDenied" },
     { "$ref": "#/$defs/signerReleased" },
     { "$ref": "#/$defs/captionFinal" },
+    { "$ref": "#/$defs/chatMessage" },
+    { "$ref": "#/$defs/callSignal" },
     { "$ref": "#/$defs/roomError" }
   ],
   "$defs": {
@@ -235,6 +237,127 @@
         "occurredAt": { "$ref": "#/$defs/occurredAt" }
       }
     },
+    "chatText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "pattern": "\\S",
+      "allOf": [
+        { "pattern": "^[^\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F]*$" }
+      ]
+    },
+    "chatMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "type", "meetingId", "participantId", "messageId", "sequence", "payload", "occurredAt"],
+      "properties": {
+        "schemaVersion": { "$ref": "#/$defs/schemaVersion" },
+        "type": { "type": "string", "const": "chat.message" },
+        "meetingId": { "$ref": "#/$defs/uuid" },
+        "participantId": { "$ref": "#/$defs/uuid" },
+        "messageId": { "$ref": "#/$defs/uuid" },
+        "sequence": { "$ref": "#/$defs/publicSequence" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["text", "sourceDisplayName"],
+          "properties": {
+            "text": { "$ref": "#/$defs/chatText" },
+            "sourceDisplayName": { "type": "string", "minLength": 1, "maxLength": 50 }
+          }
+        },
+        "occurredAt": { "$ref": "#/$defs/occurredAt" }
+      }
+    },
+    "sessionDescription": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sdp"],
+      "properties": {
+        "sdp": { "type": "string", "minLength": 1, "maxLength": 65535 }
+      }
+    },
+    "iceCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate"],
+      "properties": {
+        "candidate": { "type": "string", "maxLength": 8192 },
+        "sdpMid": { "type": ["string", "null"], "maxLength": 256 },
+        "sdpMLineIndex": { "type": ["integer", "null"], "minimum": 0 },
+        "usernameFragment": { "type": ["string", "null"], "maxLength": 256 }
+      }
+    },
+    "callReason": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason"],
+      "properties": {
+        "reason": { "type": "string", "minLength": 1, "maxLength": 100 }
+      }
+    },
+    "mediaState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["audioEnabled", "videoEnabled"],
+      "properties": {
+        "audioEnabled": { "type": "boolean" },
+        "videoEnabled": { "type": "boolean" }
+      }
+    },
+    "callSignal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "type", "meetingId", "participantId", "targetParticipantId", "signalId", "callId", "sequence", "payload", "occurredAt"],
+      "properties": {
+        "schemaVersion": { "$ref": "#/$defs/schemaVersion" },
+        "type": {
+          "type": "string",
+          "enum": ["call.offer", "call.answer", "call.ice-candidate", "call.decline", "call.leave", "media.state"]
+        },
+        "meetingId": { "$ref": "#/$defs/uuid" },
+        "participantId": { "$ref": "#/$defs/uuid" },
+        "targetParticipantId": { "$ref": "#/$defs/uuid" },
+        "signalId": { "$ref": "#/$defs/uuid" },
+        "callId": { "$ref": "#/$defs/uuid" },
+        "sequence": {
+          "$ref": "#/$defs/baselineSequence",
+          "description": "Latest public room sequence at routing time. A target-private call signal does not consume public room order."
+        },
+        "payload": { "type": "object" },
+        "occurredAt": { "$ref": "#/$defs/occurredAt" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["type"],
+            "properties": { "type": { "enum": ["call.offer", "call.answer"] } }
+          },
+          "then": { "properties": { "payload": { "$ref": "#/$defs/sessionDescription" } } }
+        },
+        {
+          "if": {
+            "required": ["type"],
+            "properties": { "type": { "const": "call.ice-candidate" } }
+          },
+          "then": { "properties": { "payload": { "$ref": "#/$defs/iceCandidate" } } }
+        },
+        {
+          "if": {
+            "required": ["type"],
+            "properties": { "type": { "enum": ["call.decline", "call.leave"] } }
+          },
+          "then": { "properties": { "payload": { "$ref": "#/$defs/callReason" } } }
+        },
+        {
+          "if": {
+            "required": ["type"],
+            "properties": { "type": { "const": "media.state" } }
+          },
+          "then": { "properties": { "payload": { "$ref": "#/$defs/mediaState" } } }
+        }
+      ]
+    },
     "roomError": {
       "type": "object",
       "additionalProperties": false,
@@ -260,7 +383,10 @@
                 "REALTIME_TICKET_EXPIRED",
                 "TICKET_EXPIRED",
                 "PARTICIPANT_CONNECTED",
-                "INVALID_SIGNER_EVENT"
+                "INVALID_SIGNER_EVENT",
+                "INVALID_CHAT_MESSAGE",
+                "INVALID_CALL_SIGNAL",
+                "CALL_TARGET_UNAVAILABLE"
               ]
             },
             "message": { "type": "string", "minLength": 1, "maxLength": 160 }

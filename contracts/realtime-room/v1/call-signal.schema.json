@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.signconnect.dev/realtime-room/v1/call-signal.schema.json",
+  "title": "SignConnect targeted call-signaling command v1",
+  "description": "Connection-authenticated WebRTC signaling routed only to targetParticipantId in the same room. Media content is never valid in this command.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "type", "signalId", "callId", "targetParticipantId", "payload"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "type": {
+      "type": "string",
+      "enum": ["call.offer", "call.answer", "call.ice-candidate", "call.decline", "call.leave", "media.state"]
+    },
+    "signalId": { "$ref": "#/$defs/uuid" },
+    "callId": { "$ref": "#/$defs/uuid" },
+    "targetParticipantId": { "$ref": "#/$defs/uuid" },
+    "payload": { "type": "object" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["type"],
+        "properties": { "type": { "enum": ["call.offer", "call.answer"] } }
+      },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/sessionDescription" } } }
+    },
+    {
+      "if": {
+        "required": ["type"],
+        "properties": { "type": { "const": "call.ice-candidate" } }
+      },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/iceCandidate" } } }
+    },
+    {
+      "if": {
+        "required": ["type"],
+        "properties": { "type": { "enum": ["call.decline", "call.leave"] } }
+      },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/callReason" } } }
+    },
+    {
+      "if": {
+        "required": ["type"],
+        "properties": { "type": { "const": "media.state" } }
+      },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/mediaState" } } }
+    }
+  ],
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "sessionDescription": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sdp"],
+      "properties": {
+        "sdp": { "type": "string", "minLength": 1, "maxLength": 65535 }
+      }
+    },
+    "iceCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate"],
+      "properties": {
+        "candidate": { "type": "string", "maxLength": 8192 },
+        "sdpMid": { "type": ["string", "null"], "maxLength": 256 },
+        "sdpMLineIndex": { "type": ["integer", "null"], "minimum": 0 },
+        "usernameFragment": { "type": ["string", "null"], "maxLength": 256 }
+      }
+    },
+    "callReason": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason"],
+      "properties": {
+        "reason": { "type": "string", "minLength": 1, "maxLength": 100 }
+      }
+    },
+    "mediaState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["audioEnabled", "videoEnabled"],
+      "properties": {
+        "audioEnabled": { "type": "boolean" },
+        "videoEnabled": { "type": "boolean" }
+      }
+    }
+  }
+}

@@ -149,6 +149,53 @@ class InMemoryRoomRegistryTest {
         assertThat(routed.path("participantId").asText()).isEqualTo(PARTICIPANT_ID.toString());
         assertThat(routed.path("targetParticipantId").asText()).isEqualTo(guestId.toString());
         assertThat(routed.path("payload").path("sdp").asText()).isEqualTo("v=0\r\n");
+        assertThat(routed.path("sequence").asLong()).isEqualTo(2L);
+
+        registry.publishChat(host, new ChatMessageEvent(
+                1,
+                "chat.message",
+                UUID.fromString("56565656-5656-4565-8565-565656565656"),
+                "The call is ready."));
+
+        assertThat(hostOutbound.stream()
+                .map(this::read)
+                .filter(this::isPublicOrderedEvent)
+                .map(event -> event.path("sequence").asLong()))
+                .containsExactly(0L, 1L, 2L, 3L);
+        assertThat(guestOutbound.stream()
+                .map(this::read)
+                .filter(this::isPublicOrderedEvent)
+                .map(event -> event.path("sequence").asLong()))
+                .containsExactly(1L, 2L, 3L);
+    }
+
+    @Test
+    void rejectsFractionalIceCandidateLineIndexesAtTheRoomBoundary() throws Exception {
+        List<String> hostOutbound = new ArrayList<>();
+        List<String> guestOutbound = new ArrayList<>();
+        RoomMembership host = registry.join(
+                participant(), hostOutbound::add, () -> { }, "host-resume", NOW.plusSeconds(300));
+        UUID guestId = UUID.fromString("bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb");
+        registry.join(
+                new RoomParticipant(MEETING_ID, guestId, "Ari", "GUEST"),
+                guestOutbound::add,
+                () -> { },
+                "guest-resume",
+                NOW.plusSeconds(300));
+        int guestBaseline = guestOutbound.size();
+        CallSignalEvent candidate = objectMapper.readValue("""
+                {
+                  "schemaVersion": 1,
+                  "type": "call.ice-candidate",
+                  "signalId": "78787878-7878-4787-8787-787878787878",
+                  "callId": "34343434-3434-4434-8434-343434343434",
+                  "targetParticipantId": "%s",
+                  "payload": {"candidate": "candidate:1", "sdpMLineIndex": 0.5}
+                }
+                """.formatted(guestId), CallSignalEvent.class);
+
+        assertThat(registry.routeCallSignal(host, candidate)).isFalse();
+        assertThat(guestOutbound).hasSize(guestBaseline);
     }
 
     @Test

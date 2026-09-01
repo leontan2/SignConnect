@@ -1,6 +1,6 @@
 # SignConnect
 
-SignConnect is a privacy-first accessibility workspace for sending a signer’s camera-derived landmarks through a local inference stack and sharing finalized captions with participants in the same ephemeral meeting room.
+SignConnect is a privacy-first accessibility workspace for two-person browser meetings with peer audio/video, typed fallback, and shared signed-caption contributions produced from browser-local camera-derived landmarks.
 
 > The default bundled ONNX model and replay capture are synthetic integration assets. An optional, reproducible OpenHands/WLASL pack recognizes ten isolated American Sign Language (ASL) concepts for local research. Neither mode is Singapore Sign Language (SgSL) or continuous translation.
 
@@ -165,4 +165,4 @@ See [the browser validation matrix](docs/validation/sign-recognition-browser-mat
 
 Real SGSL readiness remains deferred. Replacing the synthetic model requires a consented and documented SGSL dataset, signer-independent evaluation splits, class coverage and fairness evidence, calibrated confidence/stability thresholds, an updated model card, and regression evidence through the same contracts and end-to-end harness. No current screen or test result should be interpreted as an SGSL accuracy claim.
 
-Speech recognition, persistent transcripts, durable accounts, deployment infrastructure, WebRTC media, and production model training are future work outside this milestone.
+Speech recognition, persistent transcripts, durable accounts, TURN-backed deployment infrastructure, production model training, and genuine continuous SgSL transcription remain future work. The implemented WebRTC meeting is a one-to-one, peer-to-peer development slice.

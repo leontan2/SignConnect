@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "type": "chat.message",
+  "meetingId": "22222222-2222-4222-8222-222222222222",
+  "participantId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "messageId": "51515151-5151-4515-8515-515151515151",
+  "sequence": 4,
+  "payload": {
+    "text": "Can you repeat that sign?",
+    "sourceDisplayName": "Leon"
+  },
+  "occurredAt": "2026-09-01T00:00:04Z"
+}

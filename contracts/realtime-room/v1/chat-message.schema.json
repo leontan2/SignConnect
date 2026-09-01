@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.signconnect.dev/realtime-room/v1/chat-message.schema.json",
+  "title": "SignConnect typed room message command v1",
+  "description": "Connection-authenticated command for one immutable typed transcript entry. The server supplies participant identity, room ordering, and occurrence time.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "type", "messageId", "text"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "type": { "type": "string", "const": "chat.message" },
+    "messageId": { "$ref": "#/$defs/uuid" },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "pattern": "\\S",
+      "allOf": [
+        { "pattern": "^[^\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F]*$" }
+      ]
+    }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    }
+  }
+}

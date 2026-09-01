@@ -44,9 +44,16 @@ import roomJoin from "../../../../../contracts/realtime-room/v1/fixtures/room-jo
 import roomJoinResume from "../../../../../contracts/realtime-room/v1/fixtures/room-join-resume.valid.json";
 import roomJoinBothTokens from "../../../../../contracts/realtime-room/v1/fixtures/room-join-both-tokens.invalid.json";
 import roomJoinWhitespaceToken from "../../../../../contracts/realtime-room/v1/fixtures/room-join-whitespace-token.invalid.json";
+import clientCallOffer from "../../../../../contracts/realtime-room/v1/fixtures/client-call-offer.valid.json";
+import clientCallSignalRawFrame from "../../../../../contracts/realtime-room/v1/fixtures/client-call-signal-raw-frame.invalid.json";
+import clientChatMessage from "../../../../../contracts/realtime-room/v1/fixtures/client-chat-message.valid.json";
+import clientChatMessageWhitespace from "../../../../../contracts/realtime-room/v1/fixtures/client-chat-message-whitespace.invalid.json";
 import clientSignerRequest from "../../../../../contracts/realtime-room/v1/fixtures/client-signer-request.valid.json";
 import clientSignerRelease from "../../../../../contracts/realtime-room/v1/fixtures/client-signer-release.valid.json";
+import roomCallOffer from "../../../../../contracts/realtime-room/v1/fixtures/server-call-offer.valid.json";
+import roomCallSignalRawFrame from "../../../../../contracts/realtime-room/v1/fixtures/server-call-signal-raw-frame.invalid.json";
 import roomCaptionFinal from "../../../../../contracts/realtime-room/v1/fixtures/server-caption-final.valid.json";
+import roomChatMessage from "../../../../../contracts/realtime-room/v1/fixtures/server-chat-message.valid.json";
 import participantJoined from "../../../../../contracts/realtime-room/v1/fixtures/server-participant-joined.valid.json";
 import participantUpdated from "../../../../../contracts/realtime-room/v1/fixtures/server-participant-updated.valid.json";
 import participantUpdatedZeroSequence from "../../../../../contracts/realtime-room/v1/fixtures/server-participant-updated-zero-sequence.invalid.json";
@@ -65,6 +72,8 @@ import signerGranted from "../../../../../contracts/realtime-room/v1/fixtures/se
 import signerGrantedExtraLandmarks from "../../../../../contracts/realtime-room/v1/fixtures/server-signer-granted-extra-landmarks.invalid.json";
 import signerReleased from "../../../../../contracts/realtime-room/v1/fixtures/server-signer-released.valid.json";
 import roomJoinSchema from "../../../../../contracts/realtime-room/v1/room-join.schema.json";
+import callSignalSchema from "../../../../../contracts/realtime-room/v1/call-signal.schema.json";
+import chatMessageSchema from "../../../../../contracts/realtime-room/v1/chat-message.schema.json";
 import roomServerEventSchema from "../../../../../contracts/realtime-room/v1/server-event.schema.json";
 import signerRequestSchema from "../../../../../contracts/realtime-room/v1/signer-request.schema.json";
 import signerReleaseSchema from "../../../../../contracts/realtime-room/v1/signer-release.schema.json";
@@ -281,8 +290,60 @@ describe("shared realtime-room v1 contracts", () => {
     });
   });
 
-  it("validates public presence, snapshot, caption, and error events", () => {
+  it("validates typed-message client commands", () => {
+    const validate = contractValidator(chatMessageSchema as AnySchema);
+    expectFixture(validate, {
+      name: "client-chat-message.valid.json",
+      value: clientChatMessage,
+      valid: true
+    });
+    expectFixture(validate, {
+      name: "client-chat-message-whitespace.invalid.json",
+      value: clientChatMessageWhitespace,
+      valid: false
+    });
+  });
+
+  it("validates every call-signaling client command shape without media content", () => {
+    const validate = contractValidator(callSignalSchema as AnySchema);
+    const variants = [
+      clientCallOffer,
+      { ...clientCallOffer, type: "call.answer", payload: { sdp: "v=0\r\n" } },
+      {
+        ...clientCallOffer,
+        type: "call.ice-candidate",
+        payload: { candidate: "candidate:1 1 UDP 1 192.0.2.1 5000 typ host", sdpMid: "0", sdpMLineIndex: 0 }
+      },
+      { ...clientCallOffer, type: "call.decline", payload: { reason: "not_ready" } },
+      { ...clientCallOffer, type: "call.leave", payload: { reason: "user_left" } },
+      { ...clientCallOffer, type: "media.state", payload: { audioEnabled: true, videoEnabled: false } }
+    ];
+    variants.forEach((value) => expectFixture(validate, {
+      name: `${value.type}.client`,
+      value,
+      valid: true
+    }));
+    expectFixture(validate, {
+      name: "client-call-signal-raw-frame.invalid.json",
+      value: clientCallSignalRawFrame,
+      valid: false
+    });
+  });
+
+  it("validates public room events, targeted call signals, and private errors", () => {
     const validate = contractValidator(roomServerEventSchema as AnySchema);
+    const callVariants = [
+      roomCallOffer,
+      { ...roomCallOffer, type: "call.answer", payload: { sdp: "v=0\r\n" } },
+      {
+        ...roomCallOffer,
+        type: "call.ice-candidate",
+        payload: { candidate: "candidate:1 1 UDP 1 192.0.2.1 5000 typ host", usernameFragment: "abcd" }
+      },
+      { ...roomCallOffer, type: "call.decline", payload: { reason: "not_ready" } },
+      { ...roomCallOffer, type: "call.leave", payload: { reason: "user_left" } },
+      { ...roomCallOffer, type: "media.state", payload: { audioEnabled: true, videoEnabled: false } }
+    ];
     const fixtures: FixtureCase[] = [
       { name: "server-room-joined.valid.json", value: roomJoined, valid: true },
       { name: "server-room-snapshot.valid.json", value: roomSnapshot, valid: true },
@@ -298,7 +359,25 @@ describe("shared realtime-room v1 contracts", () => {
       { name: "server-signer-denied.valid.json", value: signerDenied, valid: true },
       { name: "server-signer-released.valid.json", value: signerReleased, valid: true },
       { name: "server-caption-final.valid.json", value: roomCaptionFinal, valid: true },
+      { name: "server-chat-message.valid.json", value: roomChatMessage, valid: true },
+      ...callVariants.map((value) => ({ name: `${value.type}.server`, value, valid: true })),
+      { name: "server-call-signal-raw-frame.invalid.json", value: roomCallSignalRawFrame, valid: false },
       { name: "server-room-error.valid.json", value: roomError, valid: true },
+      {
+        name: "room.error INVALID_CHAT_MESSAGE",
+        value: { ...roomError, payload: { ...roomError.payload, code: "INVALID_CHAT_MESSAGE" } },
+        valid: true
+      },
+      {
+        name: "room.error INVALID_CALL_SIGNAL",
+        value: { ...roomError, payload: { ...roomError.payload, code: "INVALID_CALL_SIGNAL" } },
+        valid: true
+      },
+      {
+        name: "room.error CALL_TARGET_UNAVAILABLE",
+        value: { ...roomError, payload: { ...roomError.payload, code: "CALL_TARGET_UNAVAILABLE" } },
+        valid: true
+      },
       { name: "server-room-error-invalid-signer-event.valid.json", value: invalidSignerRoomError, valid: true },
       { name: "server-room-error-participant-connected.valid.json", value: participantConnectedRoomError, valid: true },
       {
