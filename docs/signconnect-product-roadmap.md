@@ -908,11 +908,11 @@ This bridge removes the one-card-per-word experience for the current supported-s
 
 ## Implementation checklist
 
-- [ ] Approve a continuous-transcription ADR covering representation, capture, privacy, event revisions, latency, and failure semantics.
+- [-] Review and approve proposed ADR-0004 covering representation, capture, privacy, event revisions, latency, and failure semantics.
 - [ ] Complete Deaf-led domain, language, and caption-wording co-design.
 - [ ] Obtain approved, licensed, consented continuous SgSL data and a locked signer-independent evaluation protocol.
 - [ ] Version browser capture and inference contracts for continuous sequences and required non-manual features.
-- [ ] Implement provisional/revised/final transcript events with ordering and stale-revision tests.
+- [-] Implement provisional/revised/final transcript events with ordering and stale-revision tests. The proposed v1 wire schema and disconnected client/Java revision guards exist; server emission, reconnect snapshots, and product presentation remain gated.
 - [x] Add a bounded client-side sentence presentation bridge for ordered isolated-sign captions, with pause/source/stop/length finalization and duplicate protection.
 - [ ] Build and compare appropriate temporal recognition/translation baselines.
 - [ ] Validate semantic adequacy, unknown handling, latency, and signer-independent performance.

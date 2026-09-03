@@ -10,13 +10,9 @@ if (expected !== "absent" && expected !== "present") {
 
 const meetingRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const distributionRoot = join(meetingRoot, "dist");
-const sentinels = [
-  "Recognizer simulator",
-  "recognition.result",
-  "Hello everyone",
-  "Please repeat that",
-  "Thank you"
-];
+// This marker belongs only to the simulator component. Ordinary product copy,
+// such as a supported phrase, is not strong evidence that simulator code leaked.
+const sentinels = ["signconnect-recognition-simulator-v1"];
 
 function javascriptFiles(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {

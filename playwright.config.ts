@@ -1,6 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const e2eTestMatch = "e2e/**/*.spec.ts";
+const conversationFixtureEnabled = process.env.SIGNCONNECT_E2E_CONVERSATION_FIXTURE === "true";
+const e2eTestIgnore = conversationFixtureEnabled ? [] : ["**/accessible-conversation.spec.ts"];
 const performanceTestMatch = "performance/**/*.spec.ts";
 const fakeCameraArgs = [
   "--use-fake-device-for-media-stream",
@@ -31,6 +33,7 @@ export default defineConfig({
     {
       name: "chromium",
       testMatch: e2eTestMatch,
+      testIgnore: e2eTestIgnore,
       use: {
         ...devices["Desktop Chrome"],
         launchOptions: { args: fakeCameraArgs }
@@ -39,6 +42,7 @@ export default defineConfig({
     {
       name: "chrome",
       testMatch: e2eTestMatch,
+      testIgnore: e2eTestIgnore,
       use: {
         ...devices["Desktop Chrome"],
         channel: "chrome",
@@ -48,6 +52,7 @@ export default defineConfig({
     {
       name: "edge",
       testMatch: e2eTestMatch,
+      testIgnore: e2eTestIgnore,
       use: {
         ...devices["Desktop Edge"],
         channel: "msedge",

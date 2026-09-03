@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.signconnect.dev/continuous-transcript/v1/server-event.schema.json",
+  "title": "SignConnect continuous transcript server event v1",
+  "description": "Proposed public contribution revisions and private uncertainty feedback. No media-derived features or speculative text are allowed in uncertainty events.",
+  "oneOf": [
+    { "$ref": "#/$defs/textEvent" },
+    { "$ref": "#/$defs/cancelledEvent" },
+    { "$ref": "#/$defs/uncertainEvent" }
+  ],
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "occurredAt": { "type": "string", "format": "date-time" },
+    "modelVersion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "representationVersion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "textPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "text",
+        "confidence",
+        "modelVersion",
+        "representation",
+        "representationVersion",
+        "sourceDisplayName"
+      ],
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "pattern": "\\S",
+          "allOf": [
+            { "pattern": "^[^\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F]*$" }
+          ]
+        },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "modelVersion": { "$ref": "#/$defs/modelVersion" },
+        "representation": { "type": "string", "enum": ["direct_text", "gloss_to_text"] },
+        "representationVersion": { "$ref": "#/$defs/representationVersion" },
+        "sourceDisplayName": { "type": "string", "minLength": 1, "maxLength": 50 }
+      }
+    },
+    "textEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "transcriptVersion",
+        "type",
+        "meetingId",
+        "participantId",
+        "streamId",
+        "contributionId",
+        "revision",
+        "sequence",
+        "payload",
+        "occurredAt"
+      ],
+      "properties": {
+        "schemaVersion": { "type": "integer", "const": 1 },
+        "transcriptVersion": { "type": "integer", "const": 1 },
+        "type": {
+          "type": "string",
+          "enum": ["transcript.partial", "transcript.revised", "transcript.final"]
+        },
+        "meetingId": { "$ref": "#/$defs/uuid" },
+        "participantId": { "$ref": "#/$defs/uuid" },
+        "streamId": { "$ref": "#/$defs/uuid" },
+        "contributionId": { "$ref": "#/$defs/uuid" },
+        "revision": { "type": "integer", "minimum": 0 },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "payload": { "$ref": "#/$defs/textPayload" },
+        "occurredAt": { "$ref": "#/$defs/occurredAt" }
+      }
+    },
+    "cancelledEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "transcriptVersion",
+        "type",
+        "meetingId",
+        "participantId",
+        "streamId",
+        "contributionId",
+        "revision",
+        "sequence",
+        "payload",
+        "occurredAt"
+      ],
+      "properties": {
+        "schemaVersion": { "type": "integer", "const": 1 },
+        "transcriptVersion": { "type": "integer", "const": 1 },
+        "type": { "type": "string", "const": "transcript.cancelled" },
+        "meetingId": { "$ref": "#/$defs/uuid" },
+        "participantId": { "$ref": "#/$defs/uuid" },
+        "streamId": { "$ref": "#/$defs/uuid" },
+        "contributionId": { "$ref": "#/$defs/uuid" },
+        "revision": { "type": "integer", "minimum": 1 },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["reason", "sourceDisplayName"],
+          "properties": {
+            "reason": {
+              "type": "string",
+              "enum": ["UNCERTAIN", "OUT_OF_DOMAIN", "CAPTURE_INVALID", "MODEL_UNAVAILABLE", "SIGNER_STOPPED", "SUPERSEDED"]
+            },
+            "sourceDisplayName": { "type": "string", "minLength": 1, "maxLength": 50 }
+          }
+        },
+        "occurredAt": { "$ref": "#/$defs/occurredAt" }
+      }
+    },
+    "uncertainEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "transcriptVersion",
+        "type",
+        "meetingId",
+        "streamId",
+        "contributionId",
+        "revision",
+        "sequence",
+        "payload",
+        "occurredAt"
+      ],
+      "properties": {
+        "schemaVersion": { "type": "integer", "const": 1 },
+        "transcriptVersion": { "type": "integer", "const": 1 },
+        "type": { "type": "string", "const": "transcript.uncertain" },
+        "meetingId": { "$ref": "#/$defs/uuid" },
+        "streamId": { "$ref": "#/$defs/uuid" },
+        "contributionId": { "$ref": "#/$defs/uuid" },
+        "revision": { "type": "integer", "minimum": 0 },
+        "sequence": { "type": "integer", "minimum": 0 },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["reason", "message", "modelVersion"],
+          "properties": {
+            "reason": {
+              "type": "string",
+              "enum": ["LOW_CONFIDENCE", "OUT_OF_DOMAIN", "CAPTURE_INVALID", "MODEL_UNAVAILABLE"]
+            },
+            "message": { "type": "string", "minLength": 1, "maxLength": 160 },
+            "modelVersion": { "$ref": "#/$defs/modelVersion" }
+          }
+        },
+        "occurredAt": { "$ref": "#/$defs/occurredAt" }
+      }
+    }
+  }
+}

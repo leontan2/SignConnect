@@ -371,7 +371,8 @@ try {
     env: {
       ...process.env,
       PLAYWRIGHT_JSON_OUTPUT_FILE: "test-results/playwright/conversation-chromium.json",
-      SIGNCONNECT_E2E_BASE_URL: `http://127.0.0.1:${shellFrontendPort}`
+      SIGNCONNECT_E2E_BASE_URL: `http://127.0.0.1:${shellFrontendPort}`,
+      SIGNCONNECT_E2E_CONVERSATION_FIXTURE: "true"
     },
     stdio: "inherit",
     windowsHide: true

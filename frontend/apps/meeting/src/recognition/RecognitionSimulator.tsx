@@ -4,6 +4,7 @@ import { Send } from "lucide-react";
 import type { ClientRealtimeEvent } from "../api";
 
 const DEMO_PHRASES = ["Hello everyone", "Please repeat that", "Thank you"] as const;
+const SIMULATOR_BUNDLE_MARKER = "signconnect-recognition-simulator-v1";
 const SIMULATOR_REQUEST_ID = "11111111-1111-4111-8111-111111111111";
 const SIMULATOR_STREAM_ID = "00000000-0000-4000-8000-000000000000";
 
@@ -40,7 +41,7 @@ export default function RecognitionSimulator({
   }
 
   return (
-    <div className="simulator-panel">
+    <div className="simulator-panel" data-simulator-bundle-marker={SIMULATOR_BUNDLE_MARKER}>
       <div>
         <strong>Recognizer simulator</strong>
         <span>Development only; the server development profile must also be active.</span>

@@ -277,7 +277,8 @@ test.describe("sign-recognition full-stack milestone", () => {
       await page.waitForTimeout(500);
       await expect(transcript.getByRole("article")).toHaveCount(0);
       await expect(transcript.getByText("No transcript entries yet", { exact: true })).toBeVisible();
-      await expect(transcript.getByLabel("0 final captions")).toBeVisible();
+      await expect(transcript.getByLabel("0 transcript entries")).toBeVisible();
+      await expect(transcript.getByLabel("0 signed sentences")).toBeVisible();
       await expect(transcript.getByRole("note")).toHaveCount(0);
       await expect.poll(() => diagnostics.frames.filter(
         (frame) => frame.direction === "received" && frame.type === "caption.final"
